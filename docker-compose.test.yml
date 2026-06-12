@@ -1,0 +1,86 @@
+# =============================================================================
+# TrueSight — Stack de TEST (HTTP, port 8080, SANS TLS)
+# -----------------------------------------------------------------------------
+# Objectif : tester TrueSight sur un VPS qui héberge déjà autre chose (ex. n8n
+# sur 80/443) SANS rien casser. Aucun port système touché : seul 8080 est publié.
+#
+#   - Accès dashboard : http://<hôte>:8080
+#   - Conteneurs nommés « truesight-test-* », réseau + volume isolés.
+#
+# Démarrage :  docker compose -f docker-compose.test.yml up -d --build
+# Arrêt     :  docker compose -f docker-compose.test.yml down
+#
+# ⚠️ TEST UNIQUEMENT : pas de TLS (HTTP en clair). Pour la production, utiliser
+#    docker-compose.yml (nginx TLS) une fois le nom de domaine/certificat en place.
+# =============================================================================
+
+services:
+
+  db:
+    image: postgres:16
+    container_name: truesight-test-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: truesight
+      POSTGRES_PASSWORD: truesight
+      POSTGRES_DB: truesight
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truesight -d truesight"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - truesight_test
+
+  web:
+    build: ./server
+    container_name: truesight-test-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    expose:
+      - "8000"
+    networks:
+      - truesight_test
+
+  relay:
+    build: ./relay
+    container_name: truesight-test-relay
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    expose:
+      - "8765"
+    networks:
+      - truesight_test
+
+  nginx:
+    image: nginx:alpine
+    container_name: truesight-test-nginx
+    restart: unless-stopped
+    depends_on:
+      - web
+      - relay
+    ports:
+      # Publie UNIQUEMENT le port haut 8080 sur l'hôte (80/443 laissés à n8n).
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx.test.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - truesight_test
+
+volumes:
+  pgdata_test:
+
+networks:
+  truesight_test:
+    driver: bridge

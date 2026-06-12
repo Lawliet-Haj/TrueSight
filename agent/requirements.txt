@@ -1,4 +1,4 @@
-# Dépendances de l'agent ParcVue (Windows, Python 3.12)
+# Dépendances de l'agent TrueSight (Windows, Python 3.12)
 # ----------------------------------------------------------------------------
 # Client HTTP sortant (poll vers le serveur), avec gestion fine des timeouts.
 requests>=2.31,<3.0

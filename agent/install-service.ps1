@@ -1,20 +1,20 @@
 # ============================================================================
-# ParcVue - Installation de l'agent Windows en service
+# TrueSight - Installation de l'agent Windows en service
 # ----------------------------------------------------------------------------
 # Ce script (à exécuter en ADMINISTRATEUR) :
-#   1. crée le dossier C:\ProgramData\ParcVue ;
-#   2. y copie l'exécutable parcvue-agent.exe et le fichier config.ini ;
-#   3. installe le service Windows "ParcVueAgent" (compte LocalSystem / SYSTEM) ;
+#   1. crée le dossier C:\ProgramData\TrueSight ;
+#   2. y copie l'exécutable truesight-agent.exe et le fichier config.ini ;
+#   3. installe le service Windows "TrueSightAgent" (compte LocalSystem / SYSTEM) ;
 #   4. configure le redémarrage automatique en cas d'échec ;
 #   5. démarre le service.
 #
 # Paramètres :
-#   -ExePath   Chemin de l'exécutable (défaut : .\dist\parcvue-agent.exe)
+#   -ExePath   Chemin de l'exécutable (défaut : .\dist\truesight-agent.exe)
 #   -ConfigPath Chemin du config.ini source (défaut : .\config.ini puis config.example.ini)
 #
 # Exemple :
 #   .\install-service.ps1
-#   .\install-service.ps1 -ExePath "C:\build\parcvue-agent.exe" -ConfigPath "C:\gpo\config.ini"
+#   .\install-service.ps1 -ExePath "C:\build\truesight-agent.exe" -ConfigPath "C:\gpo\config.ini"
 # ============================================================================
 
 param(
@@ -26,8 +26,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 # --- Constantes ----------------------------------------------------------------
-$ServiceName = "ParcVueAgent"
-$DataDir     = "C:\ProgramData\ParcVue"
+$ServiceName = "TrueSightAgent"
+$DataDir     = "C:\ProgramData\TrueSight"
 $scriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # --- 1. Vérifie les droits administrateur -------------------------------------
@@ -38,15 +38,15 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
-Write-Host "=== Installation de l'agent ParcVue ===" -ForegroundColor Cyan
+Write-Host "=== Installation de l'agent TrueSight ===" -ForegroundColor Cyan
 
 # --- 2. Résout les chemins source ---------------------------------------------
 if (-not $ExePath) {
-    $ExePath = Join-Path $scriptDir "dist\parcvue-agent.exe"
+    $ExePath = Join-Path $scriptDir "dist\truesight-agent.exe"
 }
 if (-not (Test-Path $ExePath)) {
     Write-Host "Exécutable introuvable : $ExePath" -ForegroundColor Red
-    Write-Host "Lancer d'abord .\build.ps1 pour produire parcvue-agent.exe." -ForegroundColor Yellow
+    Write-Host "Lancer d'abord .\build.ps1 pour produire truesight-agent.exe." -ForegroundColor Yellow
     exit 1
 }
 
@@ -75,7 +75,7 @@ Write-Host "Restriction des droits d'accès au dossier de données..." -Foregrou
 & icacls $DataDir /inheritance:r | Out-Null
 & icacls $DataDir /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 
-$targetExe    = Join-Path $DataDir "parcvue-agent.exe"
+$targetExe    = Join-Path $DataDir "truesight-agent.exe"
 $targetConfig = Join-Path $DataDir "config.ini"
 
 Write-Host "Copie de l'exécutable..." -ForegroundColor Yellow
@@ -129,12 +129,12 @@ Start-Service -Name $ServiceName
 Start-Sleep -Seconds 2
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
-    Write-Host "=== Service ParcVue installé et démarré ===" -ForegroundColor Green
+    Write-Host "=== Service TrueSight installé et démarré ===" -ForegroundColor Green
     Write-Host "Dossier de données : $DataDir" -ForegroundColor Green
-    Write-Host "Journal : $DataDir\parcvue-agent.log" -ForegroundColor Green
+    Write-Host "Journal : $DataDir\truesight-agent.log" -ForegroundColor Green
 } else {
     $status = if ($svc) { $svc.Status } else { "absent" }
     Write-Host "ÉCHEC : le service est installé mais son état est : $status" -ForegroundColor Red
-    Write-Host "Consulter $DataDir\parcvue-agent.log pour le diagnostic." -ForegroundColor Yellow
+    Write-Host "Consulter $DataDir\truesight-agent.log pour le diagnostic." -ForegroundColor Yellow
     exit 1
 }

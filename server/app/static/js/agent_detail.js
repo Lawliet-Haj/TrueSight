@@ -1,4 +1,4 @@
-// ParcVue — fiche poste : inventaire, graphiques CPU/RAM (24 h), console de commande.
+// TrueSight — fiche poste : inventaire, graphiques CPU/RAM (24 h), console de commande.
 // Rendu adapté au thème sombre « poste de pilotage ». La logique remote vit dans remote.js.
 (function () {
   "use strict";

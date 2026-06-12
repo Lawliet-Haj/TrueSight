@@ -1,6 +1,6 @@
-# ParcVue Remote — Bureau à distance sur-mesure (spec)
+# TrueSight Remote — Bureau à distance sur-mesure (spec)
 
-> Prise de contrôle du bureau d'un poste depuis le navigateur, intégrée à ParcVue.
+> Prise de contrôle du bureau d'un poste depuis le navigateur, intégrée à TrueSight.
 > Sur-mesure, **outbound-only** (l'agent ne reçoit jamais de connexion entrante).
 > Cible : ~20 images/s (plus si possible). Latence acceptable, pas de temps réel strict.
 >
@@ -107,7 +107,7 @@ JSON compact ou binaire :
 ## 8. Performance & évolution
 
 - Cible 20 i/s atteinte par : tuiles+delta, turbojpeg, downscale adaptatif, threads capture/encode/envoi séparés.
-- **Évolution future** (si besoin de fluidité supérieure / multi-écran lourd / transfert de fichiers) : passer le transport en **WebRTC** (H.264 matériel, latence < 1 s) via `aiortc` + STUN/TURN, ou basculer cette brique sur **MeshCentral**. Le reste de ParcVue est inchangé.
+- **Évolution future** (si besoin de fluidité supérieure / multi-écran lourd / transfert de fichiers) : passer le transport en **WebRTC** (H.264 matériel, latence < 1 s) via `aiortc` + STUN/TURN, ou basculer cette brique sur **MeshCentral**. Le reste de TrueSight est inchangé.
 
 ---
 
@@ -118,4 +118,4 @@ JSON compact ou binaire :
 3. **R3 — Perf** : tuiles+delta, turbojpeg, backpressure, downscale adaptatif → ~20 i/s.
 4. **R4 — Confort** : multi-écran, indicateur de visionnage + consentement, audit complet.
 
-*ParcVue Remote — à valider, puis intégration après la V1.*
+*TrueSight Remote — à valider, puis intégration après la V1.*

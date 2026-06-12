@@ -1,6 +1,6 @@
 """Lecture de la configuration (config.ini) et de l'état (state.json) de l'agent.
 
-- En production : tout se trouve sous ``C:\\ProgramData\\ParcVue\\``
+- En production : tout se trouve sous ``C:\\ProgramData\\TrueSight\\``
   (config.ini poussé par GPO, state.json généré après enrôlement, logs).
 - En développement : on travaille dans le dossier courant.
 
@@ -22,7 +22,7 @@ import platform
 import socket
 import sys
 
-_logger = logging.getLogger("parcvue.config")
+_logger = logging.getLogger("truesight.config")
 
 # ----------------------------------------------------------------------------
 # Imports Windows tolérants : l'agent ne doit jamais crasher si un module
@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - pywin32 absent.
 
 
 # Répertoire de données en production.
-PROD_DATA_DIR = r"C:\ProgramData\ParcVue"
+PROD_DATA_DIR = r"C:\ProgramData\TrueSight"
 
 # Marqueur de chiffrement DPAPI dans state.json (préfixe de la valeur token).
 _DPAPI_PREFIX = "dpapi:"
@@ -55,16 +55,16 @@ def get_data_dir() -> str:
     """Détermine le répertoire de données (config/state/logs).
 
     Priorité :
-      1. variable d'environnement ``PARCVUE_DATA_DIR`` (utile pour les tests),
-      2. ``C:\\ProgramData\\ParcVue`` si présent / créable (production),
+      1. variable d'environnement ``TRUESIGHT_DATA_DIR`` (utile pour les tests),
+      2. ``C:\\ProgramData\\TrueSight`` si présent / créable (production),
       3. dossier courant (développement).
     """
-    override = os.environ.get("PARCVUE_DATA_DIR")
+    override = os.environ.get("TRUESIGHT_DATA_DIR")
     if override:
         try:
             os.makedirs(override, exist_ok=True)
         except OSError as exc:  # On loggue mais on continue.
-            _logger.warning("Impossible de créer PARCVUE_DATA_DIR=%s : %s", override, exc)
+            _logger.warning("Impossible de créer TRUESIGHT_DATA_DIR=%s : %s", override, exc)
         return override
 
     # En production (Windows), on privilégie ProgramData.
@@ -93,7 +93,7 @@ def get_state_path() -> str:
 
 def get_log_path() -> str:
     """Chemin absolu du fichier de log de l'agent."""
-    return os.path.join(get_data_dir(), "parcvue-agent.log")
+    return os.path.join(get_data_dir(), "truesight-agent.log")
 
 
 # ----------------------------------------------------------------------------
@@ -212,7 +212,7 @@ def _dpapi_encrypt(plaintext: str) -> str | None:
     try:
         blob = win32crypt.CryptProtectData(
             plaintext.encode("utf-8"),
-            "ParcVue agent token",  # description
+            "TrueSight agent token",  # description
             None, None, None,
             # 0x4 = CRYPTPROTECT_LOCAL_MACHINE : lié à la machine, pas à l'utilisateur
             # (l'agent tourne en SYSTEM, le contexte utilisateur n'est pas garanti).

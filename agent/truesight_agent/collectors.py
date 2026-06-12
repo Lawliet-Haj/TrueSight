@@ -1,4 +1,4 @@
-"""Collecteurs de l'agent ParcVue : métriques, matériel, logiciels.
+"""Collecteurs de l'agent TrueSight : métriques, matériel, logiciels.
 
 Chaque fonction renvoie une structure conforme au SPEC :
 - ``collect_metrics()``  → dict du SPEC 2.2 (heartbeat),
@@ -19,7 +19,7 @@ import time
 
 import psutil
 
-_logger = logging.getLogger("parcvue.collectors")
+_logger = logging.getLogger("truesight.collectors")
 
 # ----------------------------------------------------------------------------
 # Imports Windows tolérants.

@@ -1,10 +1,10 @@
-# ParcVue
+# TrueSight
 
 > Mini-RMM sur-mesure pour superviser et administrer le parc PC Windows de
 > Medicofi / Tire-Lait Express. Un « mini-NinjaOne » limité aux fonctions
 > réellement utiles.
 
-ParcVue donne une vue temps quasi réel de 100+ postes Windows : inventaire
+TrueSight donne une vue temps quasi réel de 100+ postes Windows : inventaire
 matériel et logiciel, métriques live (CPU / RAM / disque / uptime / utilisateur
 connecté), état en ligne / hors-ligne, alertes (via n8n) et exécution de lignes
 de commande à distance (PowerShell / cmd) avec journal d'audit.
@@ -28,7 +28,7 @@ de commande à distance (PowerShell / cmd) avec journal d'audit.
 ```
    100+ PC Windows                       VPS (Docker)
  ┌───────────────────┐            ┌──────────────────────────────┐
- │  Agent ParcVue    │   HTTPS    │  Nginx (TLS / Let's Encrypt)  │
+ │  Agent TrueSight    │   HTTPS    │  Nginx (TLS / Let's Encrypt)  │
  │ (service Windows) │ ─────────► │            │                 │
  │  • inventaire     │   (poll)   │   API Flask (gunicorn)        │ ──► n8n
  │  • métriques      │ ◄───────── │   + Dashboard web             │   (alertes)
@@ -72,9 +72,9 @@ parc-monitoring/
 ├── agent/                     ← agent Windows (Python → .exe)
 │   ├── requirements.txt
 │   ├── config.example.ini
-│   ├── build.ps1              ← build PyInstaller → parcvue-agent.exe
+│   ├── build.ps1              ← build PyInstaller → truesight-agent.exe
 │   ├── install-service.ps1    ← installation du service Windows
-│   └── parcvue_agent/         ← code de l'agent (collectors, client, runner…)
+│   └── truesight_agent/         ← code de l'agent (collectors, client, runner…)
 └── deploy/                    ← déploiement
     ├── nginx.conf             ← reverse proxy TLS
     ├── gpo-install.ps1        ← déploiement de masse de l'agent par GPO
@@ -113,7 +113,7 @@ directement sans nginx, ajoutez temporairement un mapping de port au service
 Connectez-vous avec `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
 Pour tester un agent en local (machine Windows), voir `agent/config.example.ini`
-et lancez `python -m parcvue_agent` depuis le dossier `agent/` (mode console).
+et lancez `python -m truesight_agent` depuis le dossier `agent/` (mode console).
 
 ---
 
@@ -151,7 +151,7 @@ Volontairement **hors V1** :
 
 - **Bureau à distance** — explicitement souhaité « à terme » : à intégrer via
   **RustDesk** ou **MeshCentral** (on ne réinvente pas la roue). Le dashboard
-  ParcVue déclenchera et affichera la session.
+  TrueSight déclenchera et affichera la session.
 - Durcissement des commandes admin : groupes de postes, double validation des
   commandes destructives, bibliothèque de scripts.
 - État antivirus / Windows Update.

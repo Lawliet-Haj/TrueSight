@@ -1,5 +1,5 @@
 -- ============================================================================
--- ParcVue — schéma PostgreSQL 16 (référence / déploiement manuel)
+-- TrueSight — schéma PostgreSQL 16 (référence / déploiement manuel)
 -- Équivalent au schéma créé par SQLAlchemy via db.create_all() (cf. SPEC §1).
 -- Les noms de tables et de colonnes sont NORMATIFS.
 -- ============================================================================

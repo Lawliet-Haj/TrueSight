@@ -1,4 +1,4 @@
-"""Paquet de l'agent Windows ParcVue.
+"""Paquet de l'agent Windows TrueSight.
 
 L'agent interroge (poll) le serveur en HTTPS sortant ; il n'écoute jamais.
 Il collecte l'inventaire matériel/logiciel, envoie des métriques (heartbeat),
@@ -9,4 +9,4 @@ récupère les commandes en attente et renvoie leurs résultats.
 __version__ = "1.0.0"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
-SERVICE_NAME = "ParcVueAgent"
+SERVICE_NAME = "TrueSightAgent"

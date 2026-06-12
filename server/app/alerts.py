@@ -15,7 +15,7 @@ from .extensions import db
 from .models import Agent, Alert, AlertRule, Metric
 from .models import utcnow
 
-_logger = logging.getLogger("parcvue.alerts")
+_logger = logging.getLogger("truesight.alerts")
 
 # Délai d'attente court pour ne jamais bloquer la boucle de fond.
 _N8N_TIMEOUT_SECONDS = 5

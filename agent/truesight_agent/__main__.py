@@ -1,8 +1,8 @@
-"""Point d'entrée du paquet : ``python -m parcvue_agent`` et exécutable .exe.
+"""Point d'entrée du paquet : ``python -m truesight_agent`` et exécutable .exe.
 
 Deux contextes sont gérés automatiquement :
 
-1. **Console / débogage** (``python -m parcvue_agent``) : lance l'agent en mode
+1. **Console / débogage** (``python -m truesight_agent``) : lance l'agent en mode
    console, avec les options :
      - ``--enroll-only`` : effectue uniquement l'enrôlement puis quitte ;
      - ``--version``     : affiche la version et quitte.
@@ -17,7 +17,7 @@ Deux contextes sont gérés automatiquement :
    le service (via CreateProcessAsUser, cf. remote/launcher.py) ; elle n'est pas
    destinée à un usage manuel.
 
-En production, l'agent tourne en service Windows (voir parcvue_agent/service.py
+En production, l'agent tourne en service Windows (voir truesight_agent/service.py
 et install-service.ps1) ; le mode console sert au diagnostic.
 """
 
@@ -35,8 +35,8 @@ _SERVICE_COMMANDS = {"install", "update", "remove", "start", "stop", "restart", 
 def build_parser() -> argparse.ArgumentParser:
     """Construit l'analyseur d'arguments du mode console."""
     parser = argparse.ArgumentParser(
-        prog="parcvue_agent",
-        description="Agent de supervision ParcVue (mode console / débogage).",
+        prog="truesight_agent",
+        description="Agent de supervision TrueSight (mode console / débogage).",
     )
     parser.add_argument(
         "--enroll-only",
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"ParcVue Agent {__version__}",
+        version=f"TrueSight Agent {__version__}",
         help="Affiche la version de l'agent et quitte.",
     )
     return parser
@@ -73,7 +73,7 @@ def _run_remote_helper(argv: list[str]) -> int:
     remote/launcher.py). Bloque jusqu'à la fin de la session.
     """
     parser = argparse.ArgumentParser(
-        prog="parcvue_agent remote-helper",
+        prog="truesight_agent remote-helper",
         description="Helper de bureau à distance (usage interne).",
     )
     parser.add_argument("--token", required=True, help="Jeton de session (usage unique).")

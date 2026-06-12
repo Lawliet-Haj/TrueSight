@@ -1,10 +1,10 @@
-# ParcVue — Document de conception
+# TrueSight — Document de conception
 
 > Outil web de supervision et de gestion du parc PC de Medicofi / Tire-Lait Express.
 > Un « mini-NinjaOne » sur-mesure, limité aux fonctions réellement utiles.
 >
 > **Statut** : brouillon à valider — *2026-06-11*
-> **Nom de code** : ParcVue (provisoire)
+> **Nom de code** : TrueSight (provisoire)
 
 ---
 
@@ -42,7 +42,7 @@ Ces exclusions gardent le projet maîtrisable. La ligne de commande à distance 
                             ┌────────────────────────────────────┐
    100+ PC Windows          │           VPS (OVH/Scaleway)         │
  ┌───────────────────┐      │                                      │
- │  Agent ParcVue    │      │   ┌──────────────────────────────┐   │
+ │  Agent TrueSight    │      │   ┌──────────────────────────────┐   │
  │  (service Windows)│ HTTPS│   │  Nginx (TLS / Let's Encrypt)  │   │
  │                   │◄────►│   └───────────────┬──────────────┘   │
  │  • inventaire     │ poll │                   │                  │
@@ -87,7 +87,7 @@ C'est le modèle des RMM sérieux (Tactical RMM, NinjaOne…).
 
 > **Pourquoi pas Odoo ?** Odoo n'est pas conçu pour encaisser de la télémétrie haute fréquence
 > (100 agents × heartbeat/30 s = ~3 req/s en continu, plus les pics de commandes). On garde
-> ParcVue **totalement séparé** pour ne pas alourdir l'ERP. Une passerelle de lecture seule
+> TrueSight **totalement séparé** pour ne pas alourdir l'ERP. Une passerelle de lecture seule
 > vers Odoo reste possible plus tard (afficher l'inventaire dans une fiche).
 
 > **Pourquoi Flask et pas FastAPI ?** Le modèle est du *polling* court, pas du WebSocket
@@ -311,7 +311,7 @@ alerts
 > reste hors V1.
 
 ### Pistes ultérieures (hors périmètre v1) — explicitement souhaitées « à terme »
-- **Bureau à distance / prise de contrôle graphique** — *demandé par l'utilisateur* : à intégrer via **RustDesk** ou **MeshCentral** (pas réinventé). Le dashboard ParcVue déclenchera/affichera la session.
+- **Bureau à distance / prise de contrôle graphique** — *demandé par l'utilisateur* : à intégrer via **RustDesk** ou **MeshCentral** (pas réinventé). Le dashboard TrueSight déclenchera/affichera la session.
 - **Durcissement de la ligne de commande admin** (groupes de postes, double validation, bibliothèque de scripts).
 - État antivirus / Windows Update.
 - Lecture seule de l'inventaire dans une fiche Odoo.
@@ -329,4 +329,4 @@ alerts
 
 ---
 
-*Document de conception ParcVue — à valider puis on attaque la Phase 1.*
+*Document de conception TrueSight — à valider puis on attaque la Phase 1.*

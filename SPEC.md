@@ -1,4 +1,4 @@
-# ParcVue — SPEC (contrat technique, source de vérité)
+# TrueSight — SPEC (contrat technique, source de vérité)
 
 > Ce document fait foi pour TOUS les composants (serveur, agent, déploiement).
 > Toute divergence entre le code et ce SPEC est un bug. Version V1.
@@ -254,7 +254,7 @@ Effets : upsert `command_results`, `commands.status = done` (ou `error` si exit_
 ### 4.1 Serveur — variables d'environnement (`.env`)
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg://parcvue:parcvue@db:5432/parcvue` | connexion Postgres |
+| `DATABASE_URL` | `postgresql+psycopg://truesight:truesight@db:5432/truesight` | connexion Postgres |
 | `SECRET_KEY` | (obligatoire) | sessions Flask |
 | `ENROLLMENT_TOKEN` | (obligatoire) | secret d'enrôlement partagé |
 | `N8N_WEBHOOK_URL` | (vide) | URL webhook alertes ; si vide → pas d'envoi |
@@ -281,7 +281,7 @@ inventory_interval_hours = 12
 ```json
 { "agent_id": "uuid", "agent_token": "..." }
 ```
-Emplacement prod : `C:\ProgramData\ParcVue\` (config + state + logs). En dev : dossier courant.
+Emplacement prod : `C:\ProgramData\TrueSight\` (config + state + logs). En dev : dossier courant.
 
 ---
 
@@ -337,11 +337,11 @@ parc-monitoring/
 ├── agent/
 │   ├── requirements.txt
 │   ├── config.example.ini
-│   ├── build.ps1                ← PyInstaller → parcvue-agent.exe
+│   ├── build.ps1                ← PyInstaller → truesight-agent.exe
 │   ├── install-service.ps1      ← installe le service (NSSM/pywin32)
-│   └── parcvue_agent/
+│   └── truesight_agent/
 │       ├── __init__.py
-│       ├── __main__.py          ← `python -m parcvue_agent`
+│       ├── __main__.py          ← `python -m truesight_agent`
 │       ├── config.py            ← lecture config.ini + state.json
 │       ├── client.py            ← session HTTP (requests), retries, auth
 │       ├── enroll.py            ← flux d'enrôlement

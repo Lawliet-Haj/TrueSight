@@ -1,4 +1,4 @@
-// ParcVue — Bureau à distance (VIEWER). Conforme à REMOTE.md (itération R1+R2).
+// TrueSight — Bureau à distance (VIEWER). Conforme à REMOTE.md (itération R1+R2).
 //
 // Flux :
 //   1. Clic « Prendre la main » → POST /api/v1/agents/<id>/remote-session (admin)

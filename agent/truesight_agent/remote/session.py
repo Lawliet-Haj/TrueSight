@@ -31,7 +31,7 @@ import time
 from . import capture as capture_mod
 from . import inject as inject_mod
 
-_logger = logging.getLogger("parcvue.remote.session")
+_logger = logging.getLogger("truesight.remote.session")
 
 # Import tolérant de websocket-client (la session échoue proprement si absent).
 try:
@@ -238,7 +238,7 @@ class RemoteSession:
 
         # Thread d'envoi (trames) ; la boucle principale reçoit les entrées.
         self._send_thread = threading.Thread(
-            target=self._send_loop, name="parcvue-remote-send", daemon=True
+            target=self._send_loop, name="truesight-remote-send", daemon=True
         )
         self._send_thread.start()
 

@@ -27,7 +27,7 @@ import ctypes
 import logging
 from ctypes import wintypes
 
-_logger = logging.getLogger("parcvue.remote.inject")
+_logger = logging.getLogger("truesight.remote.inject")
 
 # ctypes.windll n'existe que sous Windows ; import tolérant pour la doc/CI.
 try:

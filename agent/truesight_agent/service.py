@@ -1,18 +1,18 @@
-"""Service Windows de l'agent ParcVue (pywin32).
+"""Service Windows de l'agent TrueSight (pywin32).
 
-Encapsule le runner dans un service Windows nommé ``ParcVueAgent`` :
+Encapsule le runner dans un service Windows nommé ``TrueSightAgent`` :
 - ``SvcDoRun``  : crée le runner et lance les boucles ;
 - ``SvcStop``   : déclenche l'arrêt propre du runner.
 
 Installation / contrôle (en administrateur) :
-    python -m parcvue_agent.service install
-    python -m parcvue_agent.service start
-    python -m parcvue_agent.service stop
-    python -m parcvue_agent.service remove
+    python -m truesight_agent.service install
+    python -m truesight_agent.service start
+    python -m truesight_agent.service stop
+    python -m truesight_agent.service remove
 
 En production, le service est généralement installé via l'exécutable .exe
 (voir install-service.ps1). Le mode console reste accessible via
-``python -m parcvue_agent``.
+``python -m truesight_agent``.
 """
 
 from __future__ import annotations
@@ -47,19 +47,19 @@ except ImportError:  # pragma: no cover - hors Windows / pywin32 absent.
 
 from . import runner as runner_module
 
-_logger = logging.getLogger("parcvue.service")
+_logger = logging.getLogger("truesight.service")
 
 
-class ParcVueService(_ServiceFrameworkBase):  # type: ignore[misc]
-    """Définition du service Windows ParcVue."""
+class TrueSightService(_ServiceFrameworkBase):  # type: ignore[misc]
+    """Définition du service Windows TrueSight."""
 
     # Nom interne du service (utilisé par sc.exe / install-service.ps1).
-    _svc_name_ = "ParcVueAgent"
+    _svc_name_ = "TrueSightAgent"
     # Nom affiché dans la console des services.
-    _svc_display_name_ = "Agent ParcVue"
+    _svc_display_name_ = "Agent TrueSight"
     # Description visible dans services.msc.
     _svc_description_ = (
-        "Agent de supervision ParcVue : inventaire matériel/logiciel, "
+        "Agent de supervision TrueSight : inventaire matériel/logiciel, "
         "métriques et exécution de commandes à distance."
     )
 
@@ -72,7 +72,7 @@ class ParcVueService(_ServiceFrameworkBase):  # type: ignore[misc]
     def SvcStop(self) -> None:
         """Demande d'arrêt du service (appelée par le gestionnaire de services)."""
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        _logger.info("Service ParcVue : arrêt demandé par le SCM.")
+        _logger.info("Service TrueSight : arrêt demandé par le SCM.")
         if self._runner is not None:
             self._runner.stop()
         # Réveille SvcDoRun.
@@ -88,18 +88,18 @@ class ParcVueService(_ServiceFrameworkBase):  # type: ignore[misc]
         )
         try:
             runner_module.setup_logging(console=False)
-            _logger.info("Service ParcVue : démarrage.")
+            _logger.info("Service TrueSight : démarrage.")
             self._runner = runner_module.create_runner()
             # run() est bloquant jusqu'à l'arrêt (SvcStop appelle runner.stop()).
             self._runner.run()
         except Exception as exc:  # noqa: BLE001 - on journalise toute erreur fatale.
-            _logger.error("Service ParcVue : erreur fatale : %s", exc)
+            _logger.error("Service TrueSight : erreur fatale : %s", exc)
             try:
-                servicemanager.LogErrorMsg(f"Agent ParcVue : erreur fatale : {exc}")
+                servicemanager.LogErrorMsg(f"Agent TrueSight : erreur fatale : {exc}")
             except Exception:  # noqa: BLE001
                 pass
         finally:
-            _logger.info("Service ParcVue : arrêté.")
+            _logger.info("Service TrueSight : arrêté.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -127,12 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(argv) == 1:
         # Lancé sans argument par le SCM : on démarre la boucle de dispatch.
         servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(ParcVueService)
+        servicemanager.PrepareToHostSingle(TrueSightService)
         servicemanager.StartServiceCtrlDispatcher()
         return 0
 
     # Délègue à pywin32 la gestion des sous-commandes (install, start, ...).
-    win32serviceutil.HandleCommandLine(ParcVueService, argv=argv)
+    win32serviceutil.HandleCommandLine(TrueSightService, argv=argv)
     return 0
 
 

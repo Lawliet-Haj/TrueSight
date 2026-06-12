@@ -1,5 +1,5 @@
 # =============================================================================
-# ParcVue — Orchestration Docker Compose (production VPS)
+# TrueSight — Orchestration Docker Compose (production VPS)
 # -----------------------------------------------------------------------------
 # Quatre services :
 #   - db    : PostgreSQL 16 (stockage inventaire, métriques, commandes, audit)
@@ -18,33 +18,33 @@ services:
   # ---------------------------------------------------------------------------
   db:
     image: postgres:16
-    container_name: parcvue-db
+    container_name: truesight-db
     restart: unless-stopped
     environment:
       # Ces valeurs doivent rester cohérentes avec DATABASE_URL dans .env
-      POSTGRES_USER: parcvue
-      POSTGRES_PASSWORD: parcvue
-      POSTGRES_DB: parcvue
+      POSTGRES_USER: truesight
+      POSTGRES_PASSWORD: truesight
+      POSTGRES_DB: truesight
     volumes:
       # Volume nommé : les données survivent aux recréations de conteneur
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       # Le service web n'attend que lorsque Postgres répond réellement
-      test: ["CMD-SHELL", "pg_isready -U parcvue -d parcvue"]
+      test: ["CMD-SHELL", "pg_isready -U truesight -d truesight"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
     # Pas de ports exposés vers l'hôte : la base reste interne au réseau Compose
     networks:
-      - parcvue
+      - truesight
 
   # ---------------------------------------------------------------------------
   # Application Flask (API agent + API dashboard + pages HTML), via gunicorn
   # ---------------------------------------------------------------------------
   web:
     build: ./server
-    container_name: parcvue-web
+    container_name: truesight-web
     restart: unless-stopped
     depends_on:
       db:
@@ -57,7 +57,7 @@ services:
       # Port interne uniquement : seul nginx y accède (pas publié sur l'hôte)
       - "8000"
     networks:
-      - parcvue
+      - truesight
 
   # ---------------------------------------------------------------------------
   # Relais WebSocket (bureau à distance) — asyncio + lib « websockets »
@@ -68,7 +68,7 @@ services:
   # (lecture SQL simple via DATABASE_URL, pas d'ORM).
   relay:
     build: ./relay
-    container_name: parcvue-relay
+    container_name: truesight-relay
     restart: unless-stopped
     depends_on:
       db:
@@ -83,14 +83,14 @@ services:
       # Nginx proxifie /ws/remote/ vers http://relay:8765 (mise à niveau WebSocket).
       - "8765"
     networks:
-      - parcvue
+      - truesight
 
   # ---------------------------------------------------------------------------
   # Reverse proxy Nginx (TLS / Let's Encrypt)
   # ---------------------------------------------------------------------------
   nginx:
     image: nginx:alpine
-    container_name: parcvue-nginx
+    container_name: truesight-nginx
     restart: unless-stopped
     depends_on:
       - web
@@ -106,7 +106,7 @@ services:
       # Racine web pour le challenge HTTP-01 d'ACME (renouvellement certbot)
       - certbot-www:/var/www/certbot
     networks:
-      - parcvue
+      - truesight
 
 # -----------------------------------------------------------------------------
 # Volumes nommés
@@ -119,5 +119,5 @@ volumes:
 # Réseau interne dédié
 # -----------------------------------------------------------------------------
 networks:
-  parcvue:
+  truesight:
     driver: bridge

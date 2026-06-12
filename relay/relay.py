@@ -1,4 +1,4 @@
-"""ParcVue Remote — relais WebSocket de bureau à distance (cf. REMOTE.md §2).
+"""TrueSight Remote — relais WebSocket de bureau à distance (cf. REMOTE.md §2).
 
 Serveur asyncio autonome (lib ``websockets``) écoutant sur 0.0.0.0:8765.
 Nginx proxifie ``/ws/remote/agent`` et ``/ws/remote/viewer`` vers ce service.
@@ -34,7 +34,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s relay: %(message)s",
 )
-logger = logging.getLogger("parcvue.relay")
+logger = logging.getLogger("truesight.relay")
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -55,7 +55,7 @@ def _dsn_from_env() -> str:
     SQLAlchemy utilise un préfixe ``postgresql+psycopg://`` ; psycopg attend
     ``postgresql://`` (sans ``+psycopg``). On normalise donc le DSN.
     """
-    url = os.environ.get("DATABASE_URL", "postgresql://parcvue:parcvue@db:5432/parcvue")
+    url = os.environ.get("DATABASE_URL", "postgresql://truesight:truesight@db:5432/truesight")
     return url.replace("postgresql+psycopg://", "postgresql://").replace(
         "postgres+psycopg://", "postgresql://"
     )
@@ -333,7 +333,7 @@ async def main():
         except NotImplementedError:  # pragma: no cover - Windows
             pass
 
-    logger.info("Relais ParcVue Remote en écoute sur %s:%s", LISTEN_HOST, LISTEN_PORT)
+    logger.info("Relais TrueSight Remote en écoute sur %s:%s", LISTEN_HOST, LISTEN_PORT)
     async with websockets.serve(
         handle_connection,
         LISTEN_HOST,
@@ -343,7 +343,7 @@ async def main():
         ping_timeout=20,
     ):
         await stop.wait()
-    logger.info("Relais ParcVue Remote arrêté")
+    logger.info("Relais TrueSight Remote arrêté")
 
 
 if __name__ == "__main__":

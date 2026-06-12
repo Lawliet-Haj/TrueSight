@@ -1,4 +1,4 @@
-"""Configuration du serveur ParcVue.
+"""Configuration du serveur TrueSight.
 
 Toutes les valeurs sont lues depuis l'environnement (cf. SPEC §4.1).
 Les variables marquées obligatoires lèvent une erreur si absentes en production ;
@@ -43,7 +43,7 @@ class Config:
     # --- Base de données -------------------------------------------------
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
-        "postgresql+psycopg://parcvue:parcvue@db:5432/parcvue",
+        "postgresql+psycopg://truesight:truesight@db:5432/truesight",
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -84,7 +84,7 @@ class Config:
     ALERT_RAM_HIGH_PCT = _get_float("ALERT_RAM_HIGH_PCT", 90.0)
 
     # --- Admin initial ---------------------------------------------------
-    ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@parcvue.local")
+    ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@truesight.local")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
     # --- Limite de troncature des sorties de commande (1 Mo) ------------

@@ -17,7 +17,7 @@ from .extensions import db
 from .models import Metric
 from .models import utcnow
 
-_logger = logging.getLogger("parcvue.tasks")
+_logger = logging.getLogger("truesight.tasks")
 
 _LOOP_INTERVAL_SECONDS = 60
 _PURGE_INTERVAL_SECONDS = 24 * 3600
@@ -39,10 +39,10 @@ def start_background(app):
         _started = True
 
     thread = threading.Thread(
-        target=_run_loop, args=(app,), name="parcvue-background", daemon=True
+        target=_run_loop, args=(app,), name="truesight-background", daemon=True
     )
     thread.start()
-    _logger.info("Thread de fond ParcVue démarré.")
+    _logger.info("Thread de fond TrueSight démarré.")
 
 
 def _run_loop(app):

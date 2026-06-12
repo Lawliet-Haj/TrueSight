@@ -9,7 +9,7 @@ Responsabilités :
   - sauter la trame si elle est identique à la précédente (hash) — un bureau
     statique ne génère donc presque aucune donnée ;
   - produire un flux de trames au format du CONTRAT REMOTE : en-tête 8 octets
-    (cf. ``parcvue_agent.remote.__init__``) suivi des octets JPEG.
+    (cf. ``truesight_agent.remote.__init__``) suivi des octets JPEG.
 
 Cible : ~15-20 images/s. Le module est tolérant aux erreurs : une trame qui
 échoue est journalisée et ignorée, la capture continue.
@@ -30,7 +30,7 @@ from typing import Iterator
 
 from . import FRAME_HEADER_SIZE, MSG_TYPE_FULL_FRAME, PROTOCOL_VERSION
 
-_logger = logging.getLogger("parcvue.remote.capture")
+_logger = logging.getLogger("truesight.remote.capture")
 
 # Bornes de qualité JPEG (CONTRAT : set_quality 1..100).
 _MIN_QUALITY = 1

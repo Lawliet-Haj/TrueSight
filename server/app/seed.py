@@ -15,7 +15,7 @@ from .models import AlertRule, User
 from .models import utcnow
 from .security import hash_password
 
-_logger = logging.getLogger("parcvue.seed")
+_logger = logging.getLogger("truesight.seed")
 
 
 def ensure_admin():

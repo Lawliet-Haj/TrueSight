@@ -1,4 +1,4 @@
-# ParcVue — image du serveur Flask (API + dashboard), servi par gunicorn.
+# TrueSight — image du serveur Flask (API + dashboard), servi par gunicorn.
 FROM python:3.12-slim
 
 # Évite les fichiers .pyc et force la sortie non bufferisée (logs lisibles).
@@ -21,9 +21,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY . /app
 
 # Utilisateur non-root pour limiter la surface d'attaque.
-RUN useradd --create-home --uid 10001 parcvue \
-    && chown -R parcvue:parcvue /app
-USER parcvue
+RUN useradd --create-home --uid 10001 truesight \
+    && chown -R truesight:truesight /app
+USER truesight
 
 EXPOSE 8000
 

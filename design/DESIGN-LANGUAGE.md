@@ -1,4 +1,4 @@
-# ParcVue — système de design (« poste de pilotage »)
+# TrueSight — système de design (« poste de pilotage »)
 
 > Identité visuelle de référence. Le prototype `design/prototype.html` en est l'implémentation.
 > Toutes les pages du dashboard doivent appliquer ces tokens. Thème **sombre**.

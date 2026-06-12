@@ -1,4 +1,4 @@
-"""Module « Bureau à distance » de l'agent ParcVue.
+"""Module « Bureau à distance » de l'agent TrueSight.
 
 Ce paquet isole toute la logique de prise de contrôle du bureau (R1 + R2) :
 

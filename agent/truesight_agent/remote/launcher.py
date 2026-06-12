@@ -43,7 +43,7 @@ import threading
 from .. import config as cfg
 from . import session as session_mod
 
-_logger = logging.getLogger("parcvue.remote.launcher")
+_logger = logging.getLogger("truesight.remote.launcher")
 
 # Imports pywin32 tolérants (le module doit s'importer hors Windows).
 try:
@@ -85,14 +85,14 @@ def is_session_zero() -> bool:
 def _helper_command(token: str, ws_url: str) -> list[str]:
     """Construit la ligne de commande du helper à lancer dans la session active.
 
-    - Exécutable figé (.exe) : ``parcvue-agent.exe remote-helper --token .. --ws-url ..``
-    - Mode développement (python -m) : ``python -m parcvue_agent remote-helper ...``
+    - Exécutable figé (.exe) : ``truesight-agent.exe remote-helper --token .. --ws-url ..``
+    - Mode développement (python -m) : ``python -m truesight_agent remote-helper ...``
     """
     args = ["remote-helper", "--token", token, "--ws-url", ws_url]
     if cfg.is_frozen():
         return [sys.executable, *args]
     # Dev : relancer l'interpréteur sur le paquet.
-    return [sys.executable, "-m", "parcvue_agent", *args]
+    return [sys.executable, "-m", "truesight_agent", *args]
 
 
 def _launch_in_active_session(token: str, ws_url: str) -> bool:
@@ -187,7 +187,7 @@ def _run_session_inline(token: str, ws_url: str, verify_tls: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             _logger.error("Session inline interrompue : %s", exc)
 
-    thread = threading.Thread(target=_target, name="parcvue-remote-session", daemon=True)
+    thread = threading.Thread(target=_target, name="truesight-remote-session", daemon=True)
     thread.start()
 
 

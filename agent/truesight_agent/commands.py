@@ -19,7 +19,7 @@ import logging
 import subprocess
 import time
 
-_logger = logging.getLogger("parcvue.commands")
+_logger = logging.getLogger("truesight.commands")
 
 # Timeout par défaut si le serveur n'en fournit pas (cf. SPEC : 120 s).
 DEFAULT_TIMEOUT_SECONDS = 120

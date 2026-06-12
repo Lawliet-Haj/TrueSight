@@ -1,4 +1,4 @@
-// ParcVue — page Parc : KPIs instrumentés + tableau du parc, rafraîchi toutes les 10 s.
+// TrueSight — page Parc : KPIs instrumentés + tableau du parc, rafraîchi toutes les 10 s.
 // Données : GET /api/v1/agents → [{id,hostname,os_version,status,last_seen_at,cpu_pct,ram_used_pct,tags,is_active}]
 (function () {
   "use strict";

@@ -1,4 +1,4 @@
-"""Flux d'enrôlement de l'agent ParcVue.
+"""Flux d'enrôlement de l'agent TrueSight.
 
 Au premier démarrage (ou si l'état local est absent), l'agent appelle
 ``POST /api/v1/enroll`` avec son empreinte machine et reçoit en retour un
@@ -17,7 +17,7 @@ import logging
 from . import __version__, config as cfg
 from .client import ApiClient
 
-_logger = logging.getLogger("parcvue.enroll")
+_logger = logging.getLogger("truesight.enroll")
 
 
 def ensure_enrolled(

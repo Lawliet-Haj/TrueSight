@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}ParcVue{% endblock %} — ParcVue</title>
+  <title>{% block title %}TrueSight{% endblock %} — TrueSight</title>
 
   <!-- Polices : Hanken Grotesk (UI) + JetBrains Mono (chiffres / mono) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -23,7 +23,7 @@
 
   <!-- Rail gauche : navigation par icônes -->
   <aside class="rail">
-    <a href="{{ url_for('web.agents_page') }}" class="brandmark" title="ParcVue"><span></span></a>
+    <a href="{{ url_for('web.agents_page') }}" class="brandmark" title="TrueSight"><span></span></a>
 
     <a href="{{ url_for('web.agents_page') }}"
        class="navi {% if request.endpoint in ('web.agents_page', 'web.agent_detail_page') %}on{% endif %}"
@@ -88,7 +88,7 @@
       <div class="s" id="sb-agents">agents&nbsp;<b>—</b>&nbsp;reportent</div>
       <div class="s">heartbeat&nbsp;<b>45 s</b></div>
       <div class="s" id="sb-queue">file commandes&nbsp;<b>0</b></div>
-      <div class="end">ParcVue v1.0 · supervision parc Medicofi / Tire-Lait Express</div>
+      <div class="end">TrueSight v1.0 · supervision parc Medicofi / Tire-Lait Express</div>
     </footer>
   </div>
 </div>

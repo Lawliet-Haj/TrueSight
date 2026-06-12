@@ -1,7 +1,7 @@
 # ============================================================================
-# ParcVue - Build de l'agent Windows en exécutable .exe (PyInstaller)
+# TrueSight - Build de l'agent Windows en exécutable .exe (PyInstaller)
 # ----------------------------------------------------------------------------
-# Produit "parcvue-agent.exe" (mode --onefile) à partir du paquet parcvue_agent.
+# Produit "truesight-agent.exe" (mode --onefile) à partir du paquet truesight_agent.
 # L'exécutable embarque le service Windows ET le mode console.
 #
 # Prérequis :
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $scriptDir
 
-Write-Host "=== Build de l'agent ParcVue ===" -ForegroundColor Cyan
+Write-Host "=== Build de l'agent TrueSight ===" -ForegroundColor Cyan
 
 # 1. Vérifie la présence de PyInstaller.
 Write-Host "Vérification de PyInstaller..." -ForegroundColor Yellow
@@ -36,8 +36,8 @@ foreach ($dir in @("build", "dist", "__pycache__")) {
         Remove-Item -Recurse -Force $dir -Confirm:$false
     }
 }
-if (Test-Path "parcvue-agent.spec") {
-    Remove-Item -Force "parcvue-agent.spec" -Confirm:$false
+if (Test-Path "truesight-agent.spec") {
+    Remove-Item -Force "truesight-agent.spec" -Confirm:$false
 }
 
 # 3. Imports cachés nécessaires (modules chargés dynamiquement par pywin32/WMI).
@@ -78,26 +78,26 @@ foreach ($imp in $hiddenImports) {
 
 # 4. Lance PyInstaller en mode --onefile.
 #    Le point d'entrée est __main__.py du paquet ; le service est inclus via
-#    les hidden-imports + l'import de parcvue_agent.service par le runner.
+#    les hidden-imports + l'import de truesight_agent.service par le runner.
 Write-Host "Compilation de l'exécutable (cela peut prendre un moment)..." -ForegroundColor Yellow
 
 # Fichier d'amorçage : importe le paquet et délègue selon le contexte
 # (lancé par le SCM => service ; sinon => console).
-$entryPoint = Join-Path $scriptDir "parcvue_agent\__main__.py"
+$entryPoint = Join-Path $scriptDir "truesight_agent\__main__.py"
 
 pyinstaller `
     --onefile `
-    --name "parcvue-agent" `
+    --name "truesight-agent" `
     --console `
     --paths "$scriptDir" `
     @hiddenArgs `
     --collect-submodules "win32com" `
     --collect-submodules "mss" `
-    --collect-submodules "parcvue_agent" `
+    --collect-submodules "truesight_agent" `
     "$entryPoint"
 
 # 5. Vérifie le résultat.
-$exePath = Join-Path $scriptDir "dist\parcvue-agent.exe"
+$exePath = Join-Path $scriptDir "dist\truesight-agent.exe"
 if (Test-Path $exePath) {
     Write-Host "=== Build réussi ===" -ForegroundColor Green
     Write-Host "Exécutable : $exePath" -ForegroundColor Green

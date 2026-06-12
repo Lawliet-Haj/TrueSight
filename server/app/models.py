@@ -1,4 +1,4 @@
-"""Modèles de données ParcVue (cf. SPEC §1).
+"""Modèles de données TrueSight (cf. SPEC §1).
 
 Les noms de tables et de colonnes sont NORMATIFS — ils correspondent exactement
 au schéma du SPEC. Les UUID sont générés côté Python (default=uuid4).

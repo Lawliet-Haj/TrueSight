@@ -1,4 +1,4 @@
-"""Client HTTP de l'agent ParcVue (couche réseau).
+"""Client HTTP de l'agent TrueSight (couche réseau).
 
 Toutes les requêtes sortent en HTTPS vers le serveur. Le client :
 - réutilise une session ``requests`` (keep-alive),
@@ -22,7 +22,7 @@ import requests
 
 from . import __version__
 
-_logger = logging.getLogger("parcvue.client")
+_logger = logging.getLogger("truesight.client")
 
 # Base de tous les endpoints (SPEC section 0).
 API_BASE = "/api/v1"
@@ -65,7 +65,7 @@ class ApiResult:
 
 
 class ApiClient:
-    """Client HTTP réutilisable vers le serveur ParcVue."""
+    """Client HTTP réutilisable vers le serveur TrueSight."""
 
     # Timeouts (connexion, lecture) en secondes.
     DEFAULT_TIMEOUT = (10, 30)
@@ -86,7 +86,7 @@ class ApiClient:
 
         self._session = requests.Session()
         self._session.headers.update({
-            "User-Agent": f"ParcVue-Agent/{__version__}",
+            "User-Agent": f"TrueSight-Agent/{__version__}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         })

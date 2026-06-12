@@ -1,4 +1,4 @@
-"""Boucle principale de l'agent ParcVue.
+"""Boucle principale de l'agent TrueSight.
 
 Trois boucles tournent en threads démon :
   1. heartbeat  — envoie les métriques toutes les ``heartbeat_interval`` s et
@@ -37,7 +37,7 @@ _REMOTE_START_COOLDOWN_SECONDS = 3.0
 # pour lesquels le runner n'a pas de handle de fin de session.
 _REMOTE_SESSION_DEDUP_TTL = 70.0
 
-_logger = logging.getLogger("parcvue.runner")
+_logger = logging.getLogger("truesight.runner")
 
 # Intervalle de réessai quand l'enrôlement ou la config échoue (secondes).
 _BOOTSTRAP_RETRY_SECONDS = 30
@@ -51,7 +51,7 @@ def setup_logging(console: bool = False) -> None:
     Le fichier de log est placé dans le répertoire de données (ProgramData en
     prod, dossier courant en dev).
     """
-    root = logging.getLogger("parcvue")
+    root = logging.getLogger("truesight")
     root.setLevel(logging.INFO)
 
     # Évite les handlers en double si setup_logging est rappelé.
@@ -354,7 +354,7 @@ class AgentRunner:
     # -- Démarrage des boucles ------------------------------------------------
     def run(self) -> None:
         """Lance l'agent : enrôlement puis boucles, jusqu'à l'arrêt."""
-        _logger.info("Démarrage de l'agent ParcVue v%s.", __version__)
+        _logger.info("Démarrage de l'agent TrueSight v%s.", __version__)
         _logger.info("Serveur : %s (verify_tls=%s)", self.config.server_url, self.config.verify_tls)
 
         # 1. Enrôlement (bloquant avec réessai).
@@ -365,9 +365,9 @@ class AgentRunner:
 
         # 2. Lancement des trois boucles en threads démon.
         loops = [
-            ("parcvue-heartbeat", self._heartbeat_loop),
-            ("parcvue-commands", self._commands_loop),
-            ("parcvue-inventory", self._inventory_loop),
+            ("truesight-heartbeat", self._heartbeat_loop),
+            ("truesight-commands", self._commands_loop),
+            ("truesight-inventory", self._inventory_loop),
         ]
         for name, target in loops:
             thread = threading.Thread(target=self._guarded_loop, args=(name, target), daemon=True, name=name)
@@ -415,7 +415,7 @@ class AgentRunner:
             except RuntimeError:
                 pass
         self.client.close()
-        _logger.info("Agent ParcVue arrêté proprement.")
+        _logger.info("Agent TrueSight arrêté proprement.")
 
 
 # ----------------------------------------------------------------------------

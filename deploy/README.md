@@ -1,6 +1,6 @@
-# ParcVue — Procédures de déploiement
+# TrueSight — Procédures de déploiement
 
-Ce dossier regroupe tout le nécessaire pour mettre ParcVue en production :
+Ce dossier regroupe tout le nécessaire pour mettre TrueSight en production :
 
 - `nginx.conf` — configuration du reverse proxy TLS.
 - `gpo-install.ps1` — déploiement de masse de l'agent par GPO.
@@ -149,8 +149,8 @@ sudo certbot renew --dry-run
 
 # Recharge nginx après renouvellement effectif
 echo 'docker compose -f /chemin/vers/parc-monitoring/docker-compose.yml exec nginx nginx -s reload' \
-  | sudo tee /etc/letsencrypt/renewal-hooks/deploy/parcvue-reload.sh
-sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/parcvue-reload.sh
+  | sudo tee /etc/letsencrypt/renewal-hooks/deploy/truesight-reload.sh
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/truesight-reload.sh
 ```
 
 ### 1.7 Exploitation
@@ -158,7 +158,7 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/parcvue-reload.sh
 - **Sauvegardes PostgreSQL** (quotidiennes, à planifier via cron) :
 
   ```bash
-  docker compose exec -T db pg_dump -U parcvue parcvue | gzip > parcvue-$(date +%F).sql.gz
+  docker compose exec -T db pg_dump -U truesight truesight | gzip > truesight-$(date +%F).sql.gz
   ```
 
 - **Mises à jour applicatives** :
@@ -175,16 +175,16 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/parcvue-reload.sh
 
 ## 2. Déploiement de l'agent par GPO
 
-L'agent est un exécutable Windows (`parcvue-agent.exe`, construit via PyInstaller
+L'agent est un exécutable Windows (`truesight-agent.exe`, construit via PyInstaller
 — voir `agent/build.ps1`) qui tourne en **service Windows** sous le compte
 **SYSTEM**. Il n'ouvre aucun port entrant : il **sort** en HTTPS vers le serveur.
 
 ### 2.1 Préparer le partage réseau
 
 Sur un serveur de fichiers du domaine, créez un dossier de déploiement, par ex.
-`\\srv-fichiers\Deploiement\ParcVue`, contenant :
+`\\srv-fichiers\Deploiement\TrueSight`, contenant :
 
-- `parcvue-agent.exe` — l'exécutable de l'agent ;
+- `truesight-agent.exe` — l'exécutable de l'agent ;
 - `config.ini` — la configuration de référence poussée aux postes.
 
 Exemple de `config.ini` (voir `agent/config.example.ini`) :
@@ -211,13 +211,13 @@ Dans `deploy/gpo-install.ps1`, ajustez la variable `$SourceShare` pour qu'elle
 pointe vers votre partage :
 
 ```powershell
-$SourceShare = '\\srv-fichiers\Deploiement\ParcVue'
+$SourceShare = '\\srv-fichiers\Deploiement\TrueSight'
 ```
 
 ### 2.3 Créer la GPO
 
 1. Console **Gestion des stratégies de groupe** (`gpmc.msc`).
-2. Créez une GPO (ex. « Déploiement ParcVue ») liée à l'OU des postes cibles.
+2. Créez une GPO (ex. « Déploiement TrueSight ») liée à l'OU des postes cibles.
 3. **Configuration ordinateur → Stratégies → Paramètres Windows → Scripts
    (démarrage/arrêt) → Démarrage**.
 4. Onglet **Scripts PowerShell** → **Ajouter** → désignez `gpo-install.ps1`
@@ -231,14 +231,14 @@ $SourceShare = '\\srv-fichiers\Deploiement\ParcVue'
 ### 2.4 Déclencher et vérifier
 
 - Forcer l'application sur un poste de test : `gpupdate /force` puis redémarrer.
-- Vérifier le service : `Get-Service ParcVueAgent`.
-- Consulter le journal local : `C:\ProgramData\ParcVue\gpo-install.log`.
+- Vérifier le service : `Get-Service TrueSightAgent`.
+- Consulter le journal local : `C:\ProgramData\TrueSight\gpo-install.log`.
 - Au premier lancement, l'agent s'**enrôle** automatiquement (échange du
   `enrollment_token` contre un token unique) puis apparaît dans le dashboard.
 
 ### 2.5 Mises à jour de l'agent
 
-Déposez simplement une nouvelle version de `parcvue-agent.exe` sur le partage.
+Déposez simplement une nouvelle version de `truesight-agent.exe` sur le partage.
 Au prochain démarrage des postes, le script détecte le fichier plus récent, le
 recopie et **redémarre** le service automatiquement.
 

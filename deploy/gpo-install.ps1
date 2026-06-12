@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    ParcVue — Deploiement de masse de l'agent par GPO (script de demarrage).
+    TrueSight — Deploiement de masse de l'agent par GPO (script de demarrage).
 
 .DESCRIPTION
     Script idempotent destine a etre execute via une GPO « Script de demarrage
     de l'ordinateur » (compte SYSTEM) sur 100+ postes Windows.
 
     Il realise, de maniere sure et repetable :
-      1. Cree le repertoire d'installation C:\ProgramData\ParcVue\.
-      2. Copie parcvue-agent.exe + config.ini depuis un partage reseau, UNIQUEMENT
+      1. Cree le repertoire d'installation C:\ProgramData\TrueSight\.
+      2. Copie truesight-agent.exe + config.ini depuis un partage reseau, UNIQUEMENT
          si la source est plus recente que la cible (deploiement de mise a jour).
-      3. Installe le service Windows « ParcVueAgent » s'il n'existe pas encore.
+      3. Installe le service Windows « TrueSightAgent » s'il n'existe pas encore.
       4. Demarre le service (et le redemarre si l'executable a ete mis a jour).
 
     Idempotence : relancer le script a chaque demarrage est sans effet de bord ;
@@ -24,7 +24,7 @@
     - A adapter : la variable $SourceShare (partage reseau lisible par les postes).
     - Le partage doit etre accessible en lecture par « Ordinateurs du domaine »
       (le compte machine SYSTEM lit le partage, pas l'utilisateur).
-    - Journalise dans C:\ProgramData\ParcVue\gpo-install.log.
+    - Journalise dans C:\ProgramData\TrueSight\gpo-install.log.
 #>
 
 # Arrete le script a la premiere erreur non geree (robustesse).
@@ -35,20 +35,20 @@ $ErrorActionPreference = 'Stop'
 # =============================================================================
 
 # Partage reseau contenant l'executable et la config de reference.
-# Exemple : \\srv-fichiers\Deploiement\ParcVue
-$SourceShare = '\\srv-fichiers\Deploiement\ParcVue'
+# Exemple : \\srv-fichiers\Deploiement\TrueSight
+$SourceShare = '\\srv-fichiers\Deploiement\TrueSight'
 
 # Noms des fichiers sources sur le partage.
-$SourceExeName    = 'parcvue-agent.exe'
+$SourceExeName    = 'truesight-agent.exe'
 $SourceConfigName = 'config.ini'
 
 # Nom et libelle du service Windows.
-$ServiceName        = 'ParcVueAgent'
-$ServiceDisplayName = 'ParcVue Agent'
-$ServiceDescription = 'Agent de supervision du parc ParcVue (inventaire, metriques, commandes a distance).'
+$ServiceName        = 'TrueSightAgent'
+$ServiceDisplayName = 'TrueSight Agent'
+$ServiceDescription = 'Agent de supervision du parc TrueSight (inventaire, metriques, commandes a distance).'
 
-# Repertoire d'installation local (prod : C:\ProgramData\ParcVue).
-$InstallDir = Join-Path $env:ProgramData 'ParcVue'
+# Repertoire d'installation local (prod : C:\ProgramData\TrueSight).
+$InstallDir = Join-Path $env:ProgramData 'TrueSight'
 
 # =============================================================================
 # Initialisation & journalisation
@@ -69,10 +69,10 @@ function Write-Log {
     Write-Output $line
 }
 
-Write-Log '=== Demarrage du script de deploiement ParcVue ==='
+Write-Log '=== Demarrage du script de deploiement TrueSight ==='
 
 # Chemins cibles locaux.
-$TargetExe    = Join-Path $InstallDir 'parcvue-agent.exe'
+$TargetExe    = Join-Path $InstallDir 'truesight-agent.exe'
 $TargetConfig = Join-Path $InstallDir 'config.ini'
 
 # Chemins sources sur le partage.
@@ -146,7 +146,7 @@ $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -eq $service) {
     Write-Log "Service « $ServiceName » absent : installation en cours."
 
-    # L'executable embarque un mode service (parcvue_agent.service via pywin32).
+    # L'executable embarque un mode service (truesight_agent.service via pywin32).
     # On l'enregistre en demarrage automatique, sous le compte LocalSystem.
     #
     # binPath inclut l'argument « run-service » attendu par le wrapper de service
@@ -198,5 +198,5 @@ else {
     exit 1
 }
 
-Write-Log '=== Fin du script de deploiement ParcVue ==='
+Write-Log '=== Fin du script de deploiement TrueSight ==='
 exit 0

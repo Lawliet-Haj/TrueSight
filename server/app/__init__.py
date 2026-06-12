@@ -1,4 +1,4 @@
-"""App factory ParcVue (cf. SPEC §7).
+"""App factory TrueSight (cf. SPEC §7).
 
 ``create_app()`` :
 - charge la configuration depuis l'environnement ;

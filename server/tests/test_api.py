@@ -1,4 +1,4 @@
-"""Tests d'intégration ParcVue (chemin nominal).
+"""Tests d'intégration TrueSight (chemin nominal).
 
 Utilise le client de test Flask + SQLite en mémoire (TestConfig).
 Couvre : enroll, heartbeat, inventory, création de commande (admin), poll agent,

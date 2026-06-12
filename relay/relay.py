@@ -263,7 +263,13 @@ async def _relay_loop(ws, peer_getter):
     async for message in ws:
         peer = peer_getter()
         if peer is None:
-            break
+            # Pair pas encore connecté : le viewer arrive TOUJOURS avant l'agent
+            # (qui ne se connecte qu'après avoir reçu la signalisation). On ignore
+            # le message et on garde la connexion ouverte en attente d'appariement,
+            # au lieu de fermer. Les messages d'amorçage éventuellement perdus
+            # (ex. request_keyframe) sont sans conséquence : l'agent envoie une
+            # keyframe dès sa connexion.
+            continue
         try:
             await peer.send(message)
         except Exception:

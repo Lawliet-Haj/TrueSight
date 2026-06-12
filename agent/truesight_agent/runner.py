@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import sys
 import threading
 import time
 
@@ -73,14 +74,14 @@ def setup_logging(console: bool = False) -> None:
         file_handler.setFormatter(fmt)
         root.addHandler(file_handler)
     except OSError as exc:  # noqa: BLE001 - on continue même sans fichier.
-        # On ne peut pas écrire le fichier (droits) : on garde la console.
+        # On ne peut pas écrire le fichier (droits) : on bascule console si possible.
         console = True
-        _fallback = logging.StreamHandler()
-        _fallback.setFormatter(fmt)
-        root.addHandler(_fallback)
         root.warning("Journal fichier indisponible (%s), bascule console.", exc)
 
-    if console:
+    # Handler console — UNIQUEMENT si une sortie standard existe. Sous pythonw.exe
+    # (tâche planifiée / service, fenêtre cachée), sys.stderr est None : ajouter un
+    # StreamHandler provoquerait des erreurs d'émission. Le fichier suffit alors.
+    if console and getattr(sys, "stderr", None) is not None:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(fmt)
         root.addHandler(stream_handler)
@@ -456,6 +457,39 @@ class AgentRunner:
 
 
 # ----------------------------------------------------------------------------
+# Garde mono-instance
+# ----------------------------------------------------------------------------
+# Le handle du mutex est conservé pour toute la durée de vie du process (sinon le
+# ramasse-miettes le libérerait et la garde sauterait).
+_singleton_handle = None
+
+
+def _acquire_single_instance() -> bool:
+    """Acquiert le mutex mono-instance. Renvoie False si un agent tourne déjà.
+
+    Évite qu'un second agent (ex. process manuel + tâche planifiée) ne tourne en
+    parallèle dans la même session. Hors Windows / sans pywin32, la garde est
+    inactive (renvoie True).
+    """
+    global _singleton_handle
+    try:
+        import win32event
+        import win32api
+        import winerror
+    except Exception:  # noqa: BLE001 - pas de garde sans pywin32.
+        return True
+    try:
+        handle = win32event.CreateMutex(None, False, "TrueSightAgentSingleton")
+        if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+            return False
+        _singleton_handle = handle
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Garde mono-instance indisponible (%s), on continue.", exc)
+        return True
+
+
+# ----------------------------------------------------------------------------
 # Points d'entrée
 # ----------------------------------------------------------------------------
 def run(console: bool = False, enroll_only: bool = False) -> int:
@@ -484,6 +518,12 @@ def run(console: bool = False, enroll_only: bool = False) -> int:
             return 0
         runner.client.close()
         return 1
+
+    # Garde mono-instance : si un agent tourne déjà dans cette session, on sort.
+    if not _acquire_single_instance():
+        _logger.warning("Un agent TrueSight tourne déjà dans cette session — arrêt de cette instance.")
+        runner.client.close()
+        return 0
 
     try:
         runner.run()

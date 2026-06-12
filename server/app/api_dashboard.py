@@ -4,6 +4,7 @@ Toutes les routes nécessitent une session authentifiée (``login_required``).
 La création de commandes et le journal d'audit sont réservés aux administrateurs
 (``admin_required``).
 """
+import re
 import uuid
 from datetime import timedelta
 
@@ -418,6 +419,11 @@ def create_remote_session(agent_id):
     ``remote_sessions``, écrit l'audit ``remote.start`` et renvoie 201 avec le jeton
     EN CLAIR + l'URL WebSocket viewer. Le jeton ne sera plus jamais renvoyé ensuite
     (TTL court, usage unique). Cf. CONTRAT REMOTE.
+
+    Body JSON optionnel : ``{"kind": "remote"|"terminal", "shell": "powershell"|"cmd"}``.
+    ``kind`` vaut 'remote' par défaut (absent ou inconnu → 'remote'). Quand
+    ``kind == 'terminal'``, ``shell`` vaut 'powershell' par défaut. Le ``ws_url``
+    (chemin ``/ws/remote/viewer``) reste INCHANGÉ quel que soit le ``kind``.
     """
     aid = _parse_uuid(agent_id)
     if aid is None:
@@ -426,12 +432,25 @@ def create_remote_session(agent_id):
     if agent is None:
         return jsonify({"error": "agent introuvable"}), 404
 
+    data = request.get_json(silent=True) or {}
+    kind = (data.get("kind") or "remote").strip().lower()
+    if kind not in ("remote", "terminal"):
+        kind = "remote"
+
+    shell = None
+    if kind == "terminal":
+        shell = (data.get("shell") or "powershell").strip().lower()
+        if shell not in ("powershell", "cmd"):
+            shell = "powershell"
+
     token = generate_session_token()
     sess = RemoteSession(
         agent_id=aid,
         admin_user_id=g.user.id,
         token_hash=hash_token(token),
         status="requested",
+        kind=kind,
+        shell=shell,
         requested_at=utcnow(),
     )
     db.session.add(sess)
@@ -445,14 +464,22 @@ def create_remote_session(agent_id):
         action="remote.start",
         user_id=g.user.id,
         target_agent=aid,
-        details={"session_id": str(sess.id)},
+        details={"session_id": str(sess.id), "kind": kind},
         commit=False,
     )
     db.session.commit()
 
     ws_url = f"{_ws_base_url()}/ws/remote/viewer?token={token}"
     return (
-        jsonify({"session_id": str(sess.id), "token": token, "ws_url": ws_url}),
+        jsonify(
+            {
+                "session_id": str(sess.id),
+                "token": token,
+                "ws_url": ws_url,
+                "kind": kind,
+                "shell": shell,
+            }
+        ),
         201,
     )
 
@@ -481,3 +508,92 @@ def get_remote_session(session_id):
         ),
         200,
     )
+
+
+# --------------------------------------------------------------------------
+# POST /agents/<id>/quick-action — action rapide (admin)
+# --------------------------------------------------------------------------
+# Actions rapides : chaque action est traduite en une commande shell exécutée
+# par l'agent via le pipeline de commandes existant (le résultat se lit comme
+# une commande normale via GET /api/v1/commands/<id>). Toutes utilisent ``cmd``.
+_QUICK_ACTIONS = {
+    "lock": "rundll32.exe user32.dll,LockWorkStation",
+    "restart": 'shutdown /r /t 5 /c "TrueSight: redemarrage demande"',
+    "logoff": "shutdown /l",
+    # 'message' est construit dynamiquement à partir du champ ``text``.
+}
+
+
+def _clean_message_text(value: str) -> str:
+    """Nettoie le texte d'un message : retire guillemets doubles et caractères de
+    contrôle/sauts de ligne, puis tronque à 240 caractères."""
+    if not isinstance(value, str):
+        return ""
+    # Supprime les guillemets doubles (évite de casser la commande msg).
+    cleaned = value.replace('"', "")
+    # Supprime les caractères de contrôle (dont \r\n\t).
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", cleaned)
+    cleaned = cleaned.strip()
+    return cleaned[:240]
+
+
+@bp.post("/agents/<agent_id>/quick-action")
+@admin_required
+def quick_action(agent_id):
+    """Lance une action rapide sur un agent (admin only).
+
+    Body : ``{"action": "lock"|"restart"|"logoff"|"message", "text": "..."}``.
+    ``text`` n'est requis que pour l'action 'message'. L'action est mappée vers
+    une commande shell ``cmd`` puis matérialisée comme une ligne ``Command``
+    ``pending`` (exactement comme la création de commande normale), avec un audit
+    ``command.quickaction``. Renvoie 201 ``{"command_id": "..."}``.
+    """
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip().lower()
+
+    if action not in ("lock", "restart", "logoff", "message"):
+        return jsonify({"error": "action invalide (lock, restart, logoff, message)"}), 400
+
+    if action == "message":
+        text = _clean_message_text(data.get("text") or "")
+        if not text:
+            return jsonify({"error": "text requis pour l'action message"}), 400
+        command_text = f'msg * "{text}"'
+        timeout_seconds = 15
+    else:
+        command_text = _QUICK_ACTIONS[action]
+        timeout_seconds = 30
+
+    cmd = Command(
+        agent_id=aid,
+        created_by=g.user.id,
+        shell="cmd",
+        command_text=command_text,
+        status="pending",
+        timeout_seconds=timeout_seconds,
+        created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()  # obtient l'id avant l'audit
+
+    write_audit(
+        action="command.quickaction",
+        user_id=g.user.id,
+        target_agent=aid,
+        details={
+            "command_id": str(cmd.id),
+            "action": action,
+            "command_text": command_text,
+        },
+        commit=False,
+    )
+    db.session.commit()
+
+    return jsonify({"command_id": str(cmd.id)}), 201

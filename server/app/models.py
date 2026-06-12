@@ -266,6 +266,13 @@ class RemoteSession(db.Model):
     status: Mapped[str] = mapped_column(
         Text, default="requested", nullable=False, index=True
     )
+    # Nature de la session : 'remote' = bureau à distance (capture écran),
+    # 'terminal' = terminal interactif (shell PTY). L'agent lit ``kind`` pour
+    # décider entre capture vs terminal. Le relais WebSocket est identique dans
+    # les deux cas (mêmes chemins /ws/remote/agent et /ws/remote/viewer).
+    kind: Mapped[str] = mapped_column(Text, default="remote", nullable=False)
+    # Shell utilisé quand ``kind == 'terminal'`` ('powershell' ou 'cmd').
+    shell: Mapped[str | None] = mapped_column(Text)
     requested_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     ended_at: Mapped[datetime | None] = mapped_column(TZDateTime)

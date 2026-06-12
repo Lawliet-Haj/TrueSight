@@ -153,19 +153,24 @@ class AgentRunner:
 
     # -- Bureau à distance ----------------------------------------------------
     def _maybe_start_remote_session(self, remote_session) -> None:
-        """Démarre une session de bureau à distance si le serveur la demande.
+        """Démarre une session distante si le serveur la demande.
 
         ``remote_session`` est le champ renvoyé par le heartbeat ET par le poll
-        commandes (CONTRAT REMOTE) : ``{session_id, token, ws_url}`` ou None.
+        commandes (CONTRAT REMOTE) : ``{session_id, token, ws_url, kind, shell}``
+        ou None. Le champ ``kind`` distingue :
+          - ``'remote'`` (ou absent) : bureau à distance (capture écran +
+            injection) — délégué au launcher (thread inline ou helper session 0) ;
+          - ``'terminal'`` : shell interactif (PowerShell/cmd) via PTY, relayé
+            en texte JSON — exécuté INLINE dans un thread du process agent (un
+            shell n'a aucune contrainte de session 0, contrairement à la capture).
 
-        Garanties :
+        Garanties (communes aux deux types) :
           - une seule session active à la fois (verrou + mémorisation du
             ``session_id``) ;
           - déduplication : si la même demande revient sur plusieurs cycles
             (heartbeat + commandes), on ne relance pas ;
           - cooldown anti-rafale ;
-          - jamais bloquant, jamais crash (le lancement est délégué au launcher
-            qui exécute en thread / lance un helper).
+          - jamais bloquant, jamais crash (lancement délégué / thread démon).
         """
         if not remote_session or not isinstance(remote_session, dict):
             return
@@ -173,12 +178,15 @@ class AgentRunner:
         session_id = remote_session.get("session_id")
         token = remote_session.get("token")
         ws_url = remote_session.get("ws_url")
+        kind = (remote_session.get("kind") or "remote").lower()
+        shell = (remote_session.get("shell") or "powershell").lower()
         if not session_id or not token:
-            _logger.warning("Demande de bureau à distance incomplète, ignorée : %s",
+            _logger.warning("Demande de session distante incomplète, ignorée : %s",
                             {k: ("***" if k == "token" else v) for k, v in remote_session.items()})
             return
 
         # Repli : si le serveur n'a pas fourni de ws_url, on le reconstruit.
+        # Le chemin agent est le même pour les deux types (/ws/remote/agent).
         if not ws_url:
             ws_url = self.client.remote_agent_ws_url(token)
 
@@ -192,28 +200,57 @@ class AgentRunner:
             self._remote_last_started = now
             self._remote_active_session_id = session_id
 
-        _logger.info("Bureau à distance : démarrage de la session %s.", session_id)
+        _logger.info("Session distante : démarrage de %s (kind=%s).", session_id, kind)
         try:
-            # Import différé : évite de charger mss/ctypes si la fonction n'est
-            # jamais sollicitée (et n'empêche pas l'agent de démarrer si une
-            # dépendance remote manque).
-            from .remote import launcher as remote_launcher
-            started = remote_launcher.start_session(token, ws_url, verify_tls=self.config.verify_tls)
+            if kind == "terminal":
+                started = self._start_terminal_inline(token, ws_url, shell)
+            else:
+                # Import différé : évite de charger mss/ctypes si la fonction
+                # n'est jamais sollicitée (et n'empêche pas l'agent de démarrer
+                # si une dépendance remote manque).
+                from .remote import launcher as remote_launcher
+                started = remote_launcher.start_session(
+                    token, ws_url, verify_tls=self.config.verify_tls
+                )
             if not started:
-                _logger.warning("Session de bureau à distance %s non démarrée.", session_id)
+                _logger.warning("Session distante %s non démarrée.", session_id)
                 # On libère le verrou de session pour autoriser une nouvelle tentative.
                 with self._remote_lock:
                     if self._remote_active_session_id == session_id:
                         self._remote_active_session_id = None
             else:
                 # Démarrée : on oublie l'id après le TTL pour autoriser une
-                # future session (le launcher n'expose pas de handle de fin).
+                # future session (pas de handle de fin pour helper / thread).
                 self._schedule_remote_dedup_reset(session_id)
         except Exception as exc:  # noqa: BLE001 - jamais bloquant pour l'agent.
-            _logger.error("Démarrage du bureau à distance impossible : %s", exc)
+            _logger.error("Démarrage de la session distante impossible : %s", exc)
             with self._remote_lock:
                 if self._remote_active_session_id == session_id:
                     self._remote_active_session_id = None
+
+    def _start_terminal_inline(self, token: str, ws_url: str, shell: str) -> bool:
+        """Lance une session de terminal INLINE (thread démon du process agent).
+
+        Contrairement à la capture écran, le terminal n'a pas besoin de la session
+        interactive de l'utilisateur : un shell tourne très bien dans le process
+        de l'agent. On l'exécute donc directement dans un thread démon. Renvoie
+        True si le thread a démarré (le lancement ne bloque jamais l'appelant).
+        """
+        def _target() -> None:
+            try:
+                # Import différé : ne charge pywinpty que si un terminal est demandé.
+                from .terminal import session as terminal_session
+                terminal_session.run(
+                    token, ws_url, shell=shell, verify_tls=self.config.verify_tls
+                )
+            except Exception as exc:  # noqa: BLE001 - jamais fatal pour l'agent.
+                _logger.error("Session terminal inline interrompue : %s", exc)
+
+        thread = threading.Thread(
+            target=_target, name="truesight-terminal-session", daemon=True
+        )
+        thread.start()
+        return True
 
     def _schedule_remote_dedup_reset(self, session_id: str) -> None:
         """Oublie ``session_id`` du dédoublonnage après le TTL (thread minuteur)."""

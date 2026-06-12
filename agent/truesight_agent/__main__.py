@@ -67,18 +67,28 @@ def _looks_like_service_invocation(argv: list[str]) -> bool:
 
 
 def _run_remote_helper(argv: list[str]) -> int:
-    """Lance la session de bureau à distance (sous-commande ``remote-helper``).
+    """Lance une session distante (sous-commande ``remote-helper``).
 
     Invoquée par le service dans la session interactive de l'utilisateur (voir
-    remote/launcher.py). Bloque jusqu'à la fin de la session.
+    remote/launcher.py) pour le bureau à distance. Bloque jusqu'à la fin.
+
+    Par défaut (``--kind remote``), démarre la capture/injection (module remote).
+    Pour cohérence avec le terminal, ``--kind terminal --shell <powershell|cmd>``
+    démarre une session de terminal PTY. En pratique le terminal tourne INLINE
+    dans le process agent (cf. runner) et n'a pas besoin de ce helper ; ce chemin
+    n'existe que par cohérence / diagnostic.
     """
     parser = argparse.ArgumentParser(
         prog="truesight_agent remote-helper",
-        description="Helper de bureau à distance (usage interne).",
+        description="Helper de session distante (usage interne).",
     )
     parser.add_argument("--token", required=True, help="Jeton de session (usage unique).")
     parser.add_argument("--ws-url", required=True, dest="ws_url",
                         help="URL WebSocket du relais (wss://.../ws/remote/agent?token=...).")
+    parser.add_argument("--kind", default="remote", choices=["remote", "terminal"],
+                        help="Type de session : 'remote' (bureau) ou 'terminal' (shell PTY).")
+    parser.add_argument("--shell", default="powershell", choices=["powershell", "cmd"],
+                        help="Shell à lancer si --kind terminal.")
     # argv[2:] : on saute le nom du programme et la sous-commande 'remote-helper'.
     args = parser.parse_args(argv[2:])
 
@@ -92,6 +102,12 @@ def _run_remote_helper(argv: list[str]) -> int:
         verify_tls = cfg.load_config().verify_tls
     except (FileNotFoundError, ValueError):
         pass
+
+    if args.kind == "terminal":
+        from .terminal import session as terminal_session
+        return terminal_session.run(
+            args.token, args.ws_url, shell=args.shell, verify_tls=verify_tls
+        )
 
     from .remote import session as remote_session
     return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls)

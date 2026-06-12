@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS remote_sessions (
     admin_user_id UUID REFERENCES users (id),
     token_hash    TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'requested',
+    kind          TEXT NOT NULL DEFAULT 'remote',  -- 'remote' (bureau) ou 'terminal'
+    shell         TEXT,                            -- 'powershell' ou 'cmd' si kind='terminal'
     requested_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at    TIMESTAMPTZ,
     ended_at      TIMESTAMPTZ

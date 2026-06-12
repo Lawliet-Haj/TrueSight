@@ -109,8 +109,10 @@ def _remote_session_for_agent(agent: Agent, ws_path: str) -> dict | None:
 
     Sélectionne la session ``requested`` la plus récente de l'agent. Si elle a
     dépassé le TTL d'appariement (~60 s), elle est marquée ``expired`` et on
-    renvoie None. Sinon on renvoie {session_id, token, ws_url} où ``ws_url``
-    pointe vers ``ws_path`` (côté agent : ``/ws/remote/agent``).
+    renvoie None. Sinon on renvoie {session_id, token, ws_url, kind, shell} où
+    ``ws_url`` pointe vers ``ws_path`` (côté agent : ``/ws/remote/agent``).
+    L'agent lit ``kind`` pour décider entre capture écran ('remote') et terminal
+    interactif ('terminal'), et ``shell`` indique le shell à lancer dans ce dernier cas.
 
     Le jeton en clair provient du cache mémoire (la base ne stocke que le hash) ;
     s'il n'est plus disponible (ex. redémarrage worker), la session est inexploitable
@@ -152,6 +154,8 @@ def _remote_session_for_agent(agent: Agent, ws_path: str) -> dict | None:
         "session_id": str(sess.id),
         "token": token,
         "ws_url": f"{_ws_base_url()}{ws_path}?token={token}",
+        "kind": sess.kind,
+        "shell": sess.shell,
     }
 
 

@@ -16,6 +16,11 @@ mss>=9.0,<10.0
 pillow>=10.0,<12.0
 # Client WebSocket synchrone (session wss vers le relais).
 websocket-client>=1.7,<2.0
+# ----------------------------------------------------------------------------
+# Terminal interactif (module terminal/) :
+# PTY ConPTY pour lancer un vrai shell PowerShell/cmd dont l'E/S transite par
+# le même relais WebSocket (façon SSH-dans-le-navigateur).
+pywinpty>=2.0,<3.0
 # Encodage JPEG accéléré (libjpeg-turbo) — OPTIONNEL : si présent, utilisé en
 # priorité ; tire numpy. Décommenter pour de meilleures performances/CPU.
 # Nécessite la lib native libjpeg-turbo installée sur le poste.

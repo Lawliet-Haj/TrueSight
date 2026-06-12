@@ -61,6 +61,9 @@ button{font-family:inherit}
 .navi.on{color:var(--signal);background:var(--bg-3)}
 .navi.on::before{content:"";position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:3px;background:var(--signal);box-shadow:0 0 8px var(--signal)}
 .navi svg{width:19px;height:19px}
+/* item « à venir » : visuellement désactivé (tooltip « Bientôt » conservé au survol) */
+.navi.disabled{opacity:.3;cursor:not-allowed;color:var(--faint)}
+.navi.disabled:hover{background:none;color:var(--faint)}
 .rail .spacer{flex:1}
 
 /* ---- colonne principale ---- */
@@ -319,6 +322,66 @@ textarea.input{
 /* fullscreen : le canvas occupe tout l'écran */
 .rscreen:fullscreen{aspect-ratio:auto;width:100vw;height:100vh}
 .rscreen:fullscreen #pv-remote-canvas{width:100vw;height:100vh}
+
+/* ---------------------------------------------------------------------------
+   Zone de travail à onglets (bureau / terminal / commande)
+   --------------------------------------------------------------------------- */
+.workzone{margin-bottom:18px;display:flex;flex-direction:column}
+.tablist{display:flex;gap:2px;padding:0 8px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--bg-3),var(--bg-2))}
+.tab{
+  position:relative;display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 18px;
+  background:none;border:none;cursor:pointer;color:var(--dim);font-family:var(--font-ui);
+  font-size:13px;font-weight:600;letter-spacing:.01em;transition:.16s;
+}
+.tab svg{width:16px;height:16px;color:var(--faint);transition:.16s}
+.tab:hover{color:var(--text)}
+.tab:hover svg{color:var(--dim)}
+.tab[aria-selected="true"]{color:var(--signal)}
+.tab[aria-selected="true"] svg{color:var(--signal)}
+.tab[aria-selected="true"]::after{
+  content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;
+  background:var(--signal);box-shadow:0 0 8px var(--signal);
+}
+.tab:focus-visible{outline:none;box-shadow:inset 0 0 0 1px var(--signal-dim)}
+.tabpanel{padding:14px;min-height:60vh;display:flex;flex-direction:column}
+.tabpanel.hidden{display:none}
+
+/* Bureau à distance dans l'onglet : occupe toute la hauteur disponible */
+.tabpanel .rwin{margin:0;flex:1;display:flex;flex-direction:column}
+.tabpanel .rscreen{aspect-ratio:auto;flex:1;min-height:0}
+.tabpanel .rfoot{flex:none}
+
+/* ---------------------------------------------------------------------------
+   Terminal interactif (xterm.js)
+   --------------------------------------------------------------------------- */
+.termwin{flex:1;display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden;background:#05080a;box-shadow:0 14px 40px -18px rgba(0,0,0,.9)}
+.termscreen{flex:1;min-height:0;position:relative;background:#05080a;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.term-mount{position:absolute;inset:0;padding:8px 10px}
+.term-mount .xterm{height:100%}
+.termscreen .placeholder{position:relative;z-index:1;text-align:center;color:var(--faint);font-size:12.5px;padding:24px;max-width:80%}
+.termscreen .placeholder svg{width:34px;height:34px;color:var(--signal-dim);margin-bottom:10px;opacity:.7}
+.termscreen .placeholder .t{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;color:var(--dim)}
+.termwin .rfoot{align-items:center}
+.termwin .rfoot .grow{flex:1}
+.termwin .rfoot .field-label{flex:none}
+.termwin .rfoot select.input{flex:none}
+.termwin .rfoot .btn{flex:none}
+/* la barre de défilement xterm aux couleurs de la charte */
+.term-mount .xterm-viewport::-webkit-scrollbar{width:9px;height:9px}
+.term-mount .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:9px;border:2px solid #05080a}
+
+/* ---------------------------------------------------------------------------
+   Commande ponctuelle + actions rapides
+   --------------------------------------------------------------------------- */
+.cmdwin{flex:1;display:flex;flex-direction:column}
+.quick-actions{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.quick-actions .field-label{display:block;margin-bottom:9px}
+.quick-row{display:flex;gap:8px;flex-wrap:wrap}
+.btn.quick{height:38px}
+.btn.quick[data-action="restart"]:hover,.btn.quick[data-action="logoff"]:hover{color:var(--warn);border-color:rgba(245,184,61,.4)}
+.quick-msg{display:flex;gap:8px;margin-top:10px}
+.quick-msg .input{flex:1}
+.quick-msg.hidden{display:none}
 
 /* ---------------------------------------------------------------------------
    Barre d'état (bas)

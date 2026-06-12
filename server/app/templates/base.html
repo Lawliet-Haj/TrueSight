@@ -13,6 +13,11 @@
   <!-- Chart.js via CDN (cf. SPEC §7 : pas de build node) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
+  <!-- xterm.js via CDN (terminal interactif du bureau à distance) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body{% if not (user is defined and user) %} class="auth-body"{% endif %}>
@@ -29,11 +34,8 @@
        class="navi {% if request.endpoint in ('web.agents_page', 'web.agent_detail_page') %}on{% endif %}"
        title="Parc"><svg><use href="#i-grid"/></svg></a>
 
-    <a href="{{ url_for('web.agents_page') }}" class="navi" title="Supervision"><svg><use href="#i-activity"/></svg></a>
-    <div class="navi" title="Bureau à distance"><svg><use href="#i-screen"/></svg></div>
-    <div class="navi" title="Commandes"><svg><use href="#i-terminal"/></svg></div>
-    <div class="navi" title="Alertes"><svg><use href="#i-bell"/></svg></div>
-    <div class="navi" title="Inventaire"><svg><use href="#i-box"/></svg></div>
+    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-bell"/></svg></div>
+    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-box"/></svg></div>
 
     <div class="spacer"></div>
 
@@ -42,7 +44,7 @@
        class="navi {% if request.endpoint == 'web.audit_page' %}on{% endif %}"
        title="Journal d'audit"><svg><use href="#i-shield"/></svg></a>
     {% endif %}
-    <div class="navi" title="Réglages"><svg><use href="#i-cog"/></svg></div>
+    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-cog"/></svg></div>
   </aside>
 
   <div class="main">
@@ -133,6 +135,9 @@
   <symbol id="i-hand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M8 11V6a1.5 1.5 0 013 0v5M11 11V5a1.5 1.5 0 013 0v6M14 11V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-1a6 6 0 01-5.2-3l-2-3.5a1.5 1.5 0 012.5-1.6L8 13"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 10-2 6m2 .5V13h-4.5"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 10.5V8a4 4 0 018 0v2.5M12 14.5v2.5"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v8M7.5 6.5a8 8 0 109 0"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-4 4v-4H4a1 1 0 01-1-1V6a1 1 0 011-1z"/></symbol>
 </defs></svg>
 
 {% block scripts %}{% endblock %}

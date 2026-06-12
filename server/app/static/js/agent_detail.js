@@ -264,6 +264,54 @@
   var swFilter = document.getElementById("sw-filter");
   if (swFilter) swFilter.addEventListener("input", renderSoftware);
 
+  // --- Affichage / polling d'une commande (partagé console + actions rapides) ---
+  function cmdStatusLabel(s) {
+    return {
+      pending: "en attente",
+      dispatched: "transmise à l'agent",
+      running: "en cours",
+      done: "terminée",
+      error: "erreur",
+      timeout: "délai dépassé",
+    }[s] || s;
+  }
+
+  function renderCmdResult(outputEl, data) {
+    var r = (data && data.result) || {};
+    var lines = [];
+    lines.push("Code de sortie : " + (r.exit_code != null ? r.exit_code : "—"));
+    if (r.duration_seconds != null) lines.push("Durée : " + r.duration_seconds + " s");
+    lines.push("");
+    if (r.stdout) { lines.push("--- STDOUT ---"); lines.push(r.stdout); }
+    if (r.stderr) { lines.push(""); lines.push("--- STDERR ---"); lines.push(r.stderr); }
+    outputEl.textContent = lines.join("\n");
+    outputEl.classList.remove("hidden");
+  }
+
+  // Sonde un command_id jusqu'à son état final. statusEl / outputEl / onDone optionnels.
+  function pollCommand(commandId, statusEl, outputEl, onDone) {
+    var attempts = 0;
+    var timer = setInterval(async function () {
+      attempts++;
+      try {
+        var resp = await fetch("/api/v1/commands/" + commandId, { headers: { Accept: "application/json" } });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        var data = await resp.json();
+        if (statusEl) statusEl.textContent = "Statut : " + cmdStatusLabel(data.status);
+        if (["done", "error", "timeout"].indexOf(data.status) !== -1) {
+          clearInterval(timer);
+          if (outputEl) renderCmdResult(outputEl, data);
+          if (onDone) onDone(data);
+        }
+      } catch (e) {
+        // On continue le polling malgré une erreur ponctuelle.
+      }
+      // Arrêt de sécurité après ~5 minutes de polling.
+      if (attempts > 150) { clearInterval(timer); if (onDone) onDone(null); }
+    }, 2000);
+    return timer;
+  }
+
   // --- Console de commande (admin uniquement) ---
   function setupConsole() {
     var runBtn = document.getElementById("cmd-run");
@@ -298,74 +346,138 @@
           return;
         }
         statusEl.textContent = "Commande mise en file (en attente d'exécution)…";
-        pollResult(data.command_id);
+        pollTimer = pollCommand(data.command_id, statusEl, outputEl, function () { runBtn.disabled = false; });
       } catch (e) {
         statusEl.textContent = "Erreur réseau lors de l'envoi.";
         runBtn.disabled = false;
       }
     });
+  }
 
-    function pollResult(commandId) {
-      var attempts = 0;
-      pollTimer = setInterval(async function () {
-        attempts++;
-        try {
-          var resp = await fetch("/api/v1/commands/" + commandId, { headers: { Accept: "application/json" } });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          var data = await resp.json();
-          statusEl.textContent = "Statut : " + statusLabel(data.status);
-          if (["done", "error", "timeout"].indexOf(data.status) !== -1) {
-            clearInterval(pollTimer); pollTimer = null;
-            runBtn.disabled = false;
-            showResult(data);
-          }
-        } catch (e) {
-          // On continue le polling malgré une erreur ponctuelle.
+  // --- Actions rapides (admin uniquement) ---
+  function setupQuickActions() {
+    var buttons = document.querySelectorAll(".quick-actions .btn.quick");
+    if (!buttons.length) return;
+    var statusEl = document.getElementById("cmd-status");
+    var outputEl = document.getElementById("cmd-output");
+    var msgBox = document.getElementById("qa-message-box");
+    var msgInput = document.getElementById("qa-message-text");
+    var msgSend = document.getElementById("qa-message-send");
+
+    var labels = {
+      lock: "Verrouiller la session",
+      restart: "Redémarrer le poste",
+      logoff: "Déconnecter la session",
+      message: "Envoyer un message",
+    };
+
+    async function runQuickAction(action, text) {
+      if (action !== "message") {
+        if (!window.confirm(labels[action] + " ?\n\nCette action sera exécutée sur le poste.")) return;
+      }
+      if (statusEl) statusEl.textContent = "Envoi de l'action…";
+      if (outputEl) outputEl.classList.add("hidden");
+      var body = { action: action };
+      if (text) body.text = text;
+      try {
+        var resp = await fetch("/api/v1/agents/" + AGENT_ID + "/quick-action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(body),
+        });
+        var data = await resp.json();
+        if (!resp.ok) {
+          if (statusEl) statusEl.textContent = "Erreur : " + (data.error || resp.status);
+          return;
         }
-        // Arrêt de sécurité après ~5 minutes de polling.
-        if (attempts > 150) { clearInterval(pollTimer); pollTimer = null; runBtn.disabled = false; }
-      }, 2000);
+        if (statusEl) statusEl.textContent = "Action mise en file (en attente d'exécution)…";
+        if (data.command_id) {
+          pollCommand(data.command_id, statusEl, outputEl);
+        } else if (data.result || data.status) {
+          // Réponse synchrone éventuelle.
+          if (statusEl) statusEl.textContent = "Statut : " + cmdStatusLabel(data.status || "done");
+          if (outputEl && data.result) renderCmdResult(outputEl, data);
+        }
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Erreur réseau lors de l'envoi.";
+      }
     }
 
-    function statusLabel(s) {
-      return {
-        pending: "en attente",
-        dispatched: "transmise à l'agent",
-        running: "en cours",
-        done: "terminée",
-        error: "erreur",
-        timeout: "délai dépassé",
-      }[s] || s;
-    }
+    buttons.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var action = b.getAttribute("data-action");
+        if (action === "message") {
+          if (msgBox) msgBox.classList.toggle("hidden");
+          if (msgInput && msgBox && !msgBox.classList.contains("hidden")) msgInput.focus();
+          return;
+        }
+        runQuickAction(action);
+      });
+    });
 
-    function showResult(data) {
-      var r = data.result || {};
-      var lines = [];
-      lines.push("Code de sortie : " + (r.exit_code != null ? r.exit_code : "—"));
-      if (r.duration_seconds != null) lines.push("Durée : " + r.duration_seconds + " s");
-      lines.push("");
-      if (r.stdout) { lines.push("--- STDOUT ---"); lines.push(r.stdout); }
-      if (r.stderr) { lines.push(""); lines.push("--- STDERR ---"); lines.push(r.stderr); }
-      outputEl.textContent = lines.join("\n");
-      outputEl.classList.remove("hidden");
+    if (msgSend) {
+      msgSend.addEventListener("click", function () {
+        var text = (msgInput ? msgInput.value : "").trim();
+        if (!text) { if (msgInput) msgInput.focus(); return; }
+        runQuickAction("message", text);
+        if (msgInput) msgInput.value = "";
+        if (msgBox) msgBox.classList.add("hidden");
+      });
+    }
+    if (msgInput) {
+      msgInput.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); if (msgSend) msgSend.click(); }
+      });
     }
   }
 
-  // Si la page est ouverte avec #console, on défile vers la console.
-  function scrollToAnchor() {
-    var hash = window.location.hash;
-    if (hash === "#console" || hash === "#remote") {
-      var el = document.querySelector(hash);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  // --- Onglets de la zone de travail (bureau / terminal / commande) ---
+  function setupTabs() {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll(".workzone .tab"));
+    if (!tabs.length) return;
+
+    function activate(name) {
+      tabs.forEach(function (t) {
+        var on = t.getAttribute("data-tab") === name;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        t.classList.toggle("active", on);
+        var panel = document.getElementById("panel-" + t.getAttribute("data-tab"));
+        if (panel) panel.classList.toggle("hidden", !on);
+      });
+      // Prévient les composants actifs du changement d'onglet (ex. terminal → re-fit).
+      document.dispatchEvent(new CustomEvent("ts:tab-activated", { detail: { tab: name } }));
     }
+
+    tabs.forEach(function (t) {
+      t.addEventListener("click", function () { activate(t.getAttribute("data-tab")); });
+      t.addEventListener("keydown", function (ev) {
+        var idx = tabs.indexOf(t);
+        if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+          ev.preventDefault();
+          var next = ev.key === "ArrowRight" ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+          tabs[next].focus();
+          activate(tabs[next].getAttribute("data-tab"));
+        }
+      });
+    });
+
+    // Activation par ancre (#terminal / #console / #remote) à l'ouverture.
+    var hash = window.location.hash;
+    if (hash === "#console") activate("command");
+    else if (hash === "#terminal") activate("terminal");
+    else activate("remote");
   }
 
   // --- Initialisation ---
   loadDetail();
   loadMetrics();
   loadSoftware();
-  if (IS_ADMIN) setupConsole();
-  scrollToAnchor();
+  if (IS_ADMIN) {
+    setupConsole();
+    setupQuickActions();
+    setupTabs();
+  }
 
   setInterval(loadDetail, DETAIL_REFRESH_MS);
   setInterval(loadMetrics, 60000);

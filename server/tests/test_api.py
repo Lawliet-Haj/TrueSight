@@ -28,6 +28,21 @@ def app():
         db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def _reset_enroll_rate_limit():
+    """Réinitialise le rate-limiter mémoire de /enroll entre les tests.
+
+    Le compteur ``_enroll_hits`` est un état global de module (par IP, fenêtre
+    glissante de 60 s) : sans réinitialisation, l'accumulation des enrôlements
+    des différents tests finit par déclencher le 429 et rend la suite dépendante
+    de l'ordre d'exécution.
+    """
+    from app import api_agent
+
+    api_agent._enroll_hits.clear()
+    yield
+
+
 @pytest.fixture()
 def client(app):
     """Client de test Flask."""
@@ -370,3 +385,91 @@ def test_remote_session_signaled_to_agent(client, admin_session):
     hb_rs = hb.get_json()["remote_session"]
     assert hb_rs is not None
     assert hb_rs["session_id"] == expected_session_id
+
+
+# --------------------------------------------------------------------------
+# Terminal interactif (remote sessions kind='terminal')
+# --------------------------------------------------------------------------
+def test_remote_session_terminal_create(client, admin_session):
+    """Une session kind='terminal' shell='powershell' : 201 + kind/shell renvoyés."""
+    agent_id, _ = _enroll(client, "MACHINE-TERMINAL")
+
+    resp = admin_session.post(
+        f"/api/v1/agents/{agent_id}/remote-session",
+        json={"kind": "terminal", "shell": "powershell"},
+    )
+    assert resp.status_code == 201, resp.get_data(as_text=True)
+    data = resp.get_json()
+    assert data["kind"] == "terminal"
+    assert data["shell"] == "powershell"
+    # Le ws_url reste sur le chemin viewer, inchangé par le kind.
+    assert data["ws_url"].endswith(f"/ws/remote/viewer?token={data['token']}")
+
+
+def test_remote_session_default_kind_remote(client, admin_session):
+    """Sans body, kind vaut 'remote' et shell est nul."""
+    agent_id, _ = _enroll(client, "MACHINE-DEFAULT-KIND")
+    resp = admin_session.post(f"/api/v1/agents/{agent_id}/remote-session")
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["kind"] == "remote"
+    assert data["shell"] is None
+
+
+def test_remote_session_terminal_signaled_to_agent(client, admin_session):
+    """GET /commands renvoie remote_session avec kind quand une session terminal est demandée."""
+    agent_id, token = _enroll(client, "MACHINE-TERMINAL-SIGNAL")
+
+    admin_session.post(
+        f"/api/v1/agents/{agent_id}/remote-session",
+        json={"kind": "terminal", "shell": "cmd"},
+    )
+
+    poll = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token))
+    rs = poll.get_json()["remote_session"]
+    assert rs is not None
+    assert rs["kind"] == "terminal"
+    assert rs["shell"] == "cmd"
+
+
+# --------------------------------------------------------------------------
+# Actions rapides (quick-action)
+# --------------------------------------------------------------------------
+def test_quick_action_lock(client, admin_session):
+    """Une action rapide 'lock' (admin) : 201 + command_id + command_text attendu."""
+    agent_id, token = _enroll(client, "MACHINE-QUICK-LOCK")
+
+    resp = admin_session.post(
+        f"/api/v1/agents/{agent_id}/quick-action", json={"action": "lock"}
+    )
+    assert resp.status_code == 201, resp.get_data(as_text=True)
+    command_id = resp.get_json()["command_id"]
+
+    # La commande créée a le bon command_text et le shell cmd.
+    poll = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token))
+    cmds = poll.get_json()["commands"]
+    assert len(cmds) == 1
+    assert cmds[0]["id"] == command_id
+    assert cmds[0]["shell"] == "cmd"
+    assert cmds[0]["command_text"] == "rundll32.exe user32.dll,LockWorkStation"
+
+
+def test_quick_action_requires_admin(client):
+    """Une action rapide sans session admin est refusée (401/403)."""
+    agent_id, _ = _enroll(client, "MACHINE-QUICK-NOADMIN")
+    resp = client.post(
+        f"/api/v1/agents/{agent_id}/quick-action",
+        json={"action": "lock"},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_quick_action_message_requires_text(client, admin_session):
+    """Une action 'message' sans texte renvoie 400."""
+    agent_id, _ = _enroll(client, "MACHINE-QUICK-MSG")
+    resp = admin_session.post(
+        f"/api/v1/agents/{agent_id}/quick-action",
+        json={"action": "message", "text": ""},
+    )
+    assert resp.status_code == 400

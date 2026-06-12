@@ -61,6 +61,9 @@ $hiddenImports = @(
     "PIL",
     "PIL.Image",
     "websocket",
+    # --- Terminal interactif : PTY ConPTY (pywinpty) ---
+    # Sans cet import, l'exe ne pourrait pas lancer le shell PTY relayé.
+    "winpty",
     # pywin32 pour le helper en session active (CreateProcessAsUser).
     "win32ts",
     "win32profile",
@@ -93,6 +96,7 @@ pyinstaller `
     @hiddenArgs `
     --collect-submodules "win32com" `
     --collect-submodules "mss" `
+    --collect-submodules "winpty" `
     --collect-submodules "truesight_agent" `
     "$entryPoint"
 

@@ -29,9 +29,145 @@
        data-is-admin="{{ '1' if is_admin else '0' }}"
        class="hidden"></div>
 
+  {% if is_admin %}
+  {# ============================================================
+     Zone de travail à onglets — prioritaire, sans scroll.
+     Bureau à distance · Terminal · Commande ponctuelle (admin).
+     ============================================================ #}
+  <section class="workzone panel" style="animation-delay:.02s">
+    <div class="tablist" role="tablist" aria-label="Zone de travail du poste">
+      <button class="tab" id="tab-remote" role="tab" type="button"
+              aria-selected="true" aria-controls="panel-remote" data-tab="remote">
+        <svg><use href="#i-screen"/></svg>Bureau à distance
+      </button>
+      <button class="tab" id="tab-terminal" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-terminal" data-tab="terminal" tabindex="-1">
+        <svg><use href="#i-terminal"/></svg>Terminal
+      </button>
+      <button class="tab" id="tab-command" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-command" data-tab="command" tabindex="-1">
+        <svg><use href="#i-play"/></svg>Commande ponctuelle
+      </button>
+    </div>
+
+    <!-- Onglet : Bureau à distance -->
+    <div class="tabpanel" id="panel-remote" role="tabpanel" aria-labelledby="tab-remote">
+      <div class="rwin" id="remote">
+        <div class="rbar" id="remote-bar">
+          <span class="rec"><i></i><span id="remote-rec-label">HORS LIGNE</span></span>
+          <span class="name" id="remote-user">en attente de session</span>
+          <span class="stat">
+            <span><b id="remote-fps">0</b> fps</span>
+            <span class="sep">·</span>
+            <span><b id="remote-latency">—</b> ms</span>
+            <span class="sep">·</span>
+            <span>écran <b id="remote-monitor">1</b></span>
+          </span>
+        </div>
+
+        <div class="rscreen" id="remote-screen">
+          <canvas id="pv-remote-canvas" width="1280" height="800" tabindex="0"></canvas>
+          <div class="placeholder" id="remote-placeholder">
+            <svg><use href="#i-screen"/></svg>
+            <div class="t">Aucune session active</div>
+            <div style="margin-top:6px;font-size:12px">Cliquez sur « Prendre la main » pour ouvrir le bureau du poste.</div>
+          </div>
+        </div>
+
+        <div class="remote-monitors hidden" id="remote-monitors">
+          <span class="field-label">Écran</span>
+        </div>
+
+        <div class="remote-error" id="remote-error"></div>
+
+        <div class="rfoot">
+          <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
+          <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
+          <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>
+          <button class="btn danger hidden" id="remote-stop" type="button"><svg><use href="#i-stop"/></svg>Fin de session</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onglet : Terminal interactif -->
+    <div class="tabpanel hidden" id="panel-terminal" role="tabpanel" aria-labelledby="tab-terminal">
+      <div class="termwin" id="terminal">
+        <div class="rbar" id="terminal-bar">
+          <span class="rec"><i></i><span id="terminal-state-label">HORS LIGNE</span></span>
+          <span class="name">session interactive</span>
+          <span class="stat">
+            <span><b id="terminal-latency">—</b> ms</span>
+          </span>
+        </div>
+
+        <div class="termscreen" id="terminal-screen">
+          <div class="placeholder" id="terminal-placeholder">
+            <svg><use href="#i-terminal"/></svg>
+            <div class="t">Aucune session de terminal</div>
+            <div style="margin-top:6px;font-size:12px">Choisissez un shell puis ouvrez le terminal pour saisir des commandes en direct.</div>
+          </div>
+        </div>
+
+        <div class="remote-error" id="terminal-error"></div>
+
+        <div class="rfoot">
+          <span class="field-label">Shell</span>
+          <select id="terminal-shell" class="input">
+            <option value="powershell">PowerShell</option>
+            <option value="cmd">cmd</option>
+          </select>
+          <span class="grow"></span>
+          <button class="btn go" id="terminal-open" type="button"><svg><use href="#i-play"/></svg>Ouvrir le terminal</button>
+          <button class="btn danger hidden" id="terminal-close" type="button"><svg><use href="#i-stop"/></svg>Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onglet : Commande ponctuelle (one-shot + actions rapides) -->
+    <div class="tabpanel hidden" id="panel-command" role="tabpanel" aria-labelledby="tab-command">
+      <div class="cmdwin" id="console">
+        <!-- Actions rapides -->
+        <div class="quick-actions">
+          <span class="field-label">Actions rapides</span>
+          <div class="quick-row">
+            <button class="btn quick" id="qa-lock" type="button" data-action="lock"><svg><use href="#i-lock"/></svg>Verrouiller</button>
+            <button class="btn quick" id="qa-restart" type="button" data-action="restart"><svg><use href="#i-power"/></svg>Redémarrer</button>
+            <button class="btn quick" id="qa-logoff" type="button" data-action="logoff"><svg><use href="#i-unplug"/></svg>Déconnecter</button>
+            <button class="btn quick" id="qa-message" type="button" data-action="message"><svg><use href="#i-message"/></svg>Message</button>
+          </div>
+          <div class="quick-msg hidden" id="qa-message-box">
+            <input type="text" id="qa-message-text" class="input" placeholder="Message à afficher sur le poste…">
+            <button class="btn go" id="qa-message-send" type="button">Envoyer</button>
+          </div>
+        </div>
+
+        <!-- Console one-shot -->
+        <div class="console-row">
+          <span class="field-label">Shell</span>
+          <select id="cmd-shell" class="input">
+            <option value="powershell">PowerShell</option>
+            <option value="cmd">cmd</option>
+          </select>
+          <span class="field-label" style="margin-left:6px">Délai (s)</span>
+          <input id="cmd-timeout" type="number" value="120" min="1" max="3600" class="input w-sm">
+        </div>
+        <textarea id="cmd-text" rows="3" class="input" placeholder="Ex. Get-Service spooler"></textarea>
+        <div class="console-row" style="margin-top:12px;margin-bottom:0">
+          <button id="cmd-run" class="btn go"><svg><use href="#i-play"/></svg>Exécuter</button>
+          <span id="cmd-status" class="cmd-status"></span>
+        </div>
+        <pre id="cmd-output" class="cmd-output hidden"></pre>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ============================================================
+     Infos du poste (compactes) sous la zone de travail.
+     ============================================================ #}
   <div class="grid-3">
     <!-- Inventaire matériel -->
-    <div class="panel" style="animation-delay:.02s">
+    <div class="panel" style="animation-delay:.06s">
       <div class="phead"><svg class="ico"><use href="#i-box"/></svg><h2>Matériel</h2></div>
       <div class="pbody">
         <dl id="hardware" class="dl">
@@ -41,7 +177,7 @@
     </div>
 
     <!-- Graphiques métriques -->
-    <div class="panel" style="animation-delay:.06s">
+    <div class="panel" style="animation-delay:.1s">
       <div class="phead">
         <svg class="ico"><use href="#i-activity"/></svg>
         <h2>Métriques · 24 h</h2>
@@ -60,79 +196,8 @@
     </div>
   </div>
 
-  <!-- Bureau à distance -->
-  {% if is_admin %}
-  <div class="panel remote-panel" id="remote" style="animation-delay:.1s;margin-bottom:14px">
-    <div class="phead">
-      <svg class="ico"><use href="#i-screen"/></svg>
-      <h2>Bureau à distance</h2>
-      <span class="tag" id="remote-host-tag">{{ agent_hostname }}</span>
-    </div>
-
-    <div class="rwin">
-      <div class="rbar" id="remote-bar">
-        <span class="rec"><i></i><span id="remote-rec-label">HORS LIGNE</span></span>
-        <span class="name" id="remote-user">en attente de session</span>
-        <span class="stat">
-          <span><b id="remote-fps">0</b> fps</span>
-          <span class="sep">·</span>
-          <span><b id="remote-latency">—</b> ms</span>
-          <span class="sep">·</span>
-          <span>écran <b id="remote-monitor">1</b></span>
-        </span>
-      </div>
-
-      <div class="rscreen" id="remote-screen">
-        <canvas id="pv-remote-canvas" width="1280" height="800" tabindex="0"></canvas>
-        <div class="placeholder" id="remote-placeholder">
-          <svg><use href="#i-screen"/></svg>
-          <div class="t">Aucune session active</div>
-          <div style="margin-top:6px;font-size:12px">Cliquez sur « Prendre la main » pour ouvrir le bureau du poste.</div>
-        </div>
-      </div>
-
-      <div class="remote-monitors hidden" id="remote-monitors">
-        <span class="field-label">Écran</span>
-      </div>
-
-      <div class="remote-error" id="remote-error"></div>
-
-      <div class="rfoot">
-        <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
-        <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
-        <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>
-        <button class="btn danger hidden" id="remote-stop" type="button"><svg><use href="#i-stop"/></svg>Fin de session</button>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Console de commande (admin) -->
-  {% if is_admin %}
-  <div class="panel" id="console" style="animation-delay:.14s;margin-bottom:14px">
-    <div class="phead"><svg class="ico"><use href="#i-terminal"/></svg><h2>Console de commande à distance</h2></div>
-    <div class="pbody">
-      <div class="console-row">
-        <span class="field-label">Shell</span>
-        <select id="cmd-shell" class="input">
-          <option value="powershell">PowerShell</option>
-          <option value="cmd">cmd</option>
-        </select>
-        <span class="field-label" style="margin-left:6px">Délai (s)</span>
-        <input id="cmd-timeout" type="number" value="120" min="1" max="3600" class="input w-sm">
-      </div>
-      <textarea id="cmd-text" rows="3" class="input" placeholder="Ex. Get-Service spooler"></textarea>
-      <div class="console-row" style="margin-top:12px;margin-bottom:0">
-        <button id="cmd-run" class="btn go"><svg><use href="#i-play"/></svg>Exécuter</button>
-        <span id="cmd-status" class="cmd-status"></span>
-      </div>
-      <pre id="cmd-output" class="cmd-output hidden"></pre>
-    </div>
-  </div>
-  {% endif %}
-
   <!-- Logiciels installés -->
-  <div class="panel" style="animation-delay:.18s">
+  <div class="panel" style="animation-delay:.14s">
     <div class="phead">
       <svg class="ico"><use href="#i-box"/></svg>
       <h2>Logiciels installés</h2>
@@ -163,6 +228,7 @@
 <script src="{{ url_for('static', filename='js/agent_detail.js') }}"></script>
 {% if is_admin %}
 <script src="{{ url_for('static', filename='js/remote.js') }}"></script>
+<script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
 {% endif %}
 {% endif %}
 {% endblock %}

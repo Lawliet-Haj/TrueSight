@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ParcVue{% endblock %} — ParcVue</title>
+
+  <!-- Polices : Hanken Grotesk (UI) + JetBrains Mono (chiffres / mono) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <!-- Chart.js via CDN (cf. SPEC §7 : pas de build node) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body{% if not (user is defined and user) %} class="auth-body"{% endif %}>
+
+{% if user is defined and user %}
+{# ========================= Application (utilisateur connecté) ========================= #}
+<div class="app">
+
+  <!-- Rail gauche : navigation par icônes -->
+  <aside class="rail">
+    <a href="{{ url_for('web.agents_page') }}" class="brandmark" title="ParcVue"><span></span></a>
+
+    <a href="{{ url_for('web.agents_page') }}"
+       class="navi {% if request.endpoint in ('web.agents_page', 'web.agent_detail_page') %}on{% endif %}"
+       title="Parc"><svg><use href="#i-grid"/></svg></a>
+
+    <a href="{{ url_for('web.agents_page') }}" class="navi" title="Supervision"><svg><use href="#i-activity"/></svg></a>
+    <div class="navi" title="Bureau à distance"><svg><use href="#i-screen"/></svg></div>
+    <div class="navi" title="Commandes"><svg><use href="#i-terminal"/></svg></div>
+    <div class="navi" title="Alertes"><svg><use href="#i-bell"/></svg></div>
+    <div class="navi" title="Inventaire"><svg><use href="#i-box"/></svg></div>
+
+    <div class="spacer"></div>
+
+    {% if user.role == 'admin' %}
+    <a href="{{ url_for('web.audit_page') }}"
+       class="navi {% if request.endpoint == 'web.audit_page' %}on{% endif %}"
+       title="Journal d'audit"><svg><use href="#i-shield"/></svg></a>
+    {% endif %}
+    <div class="navi" title="Réglages"><svg><use href="#i-cog"/></svg></div>
+  </aside>
+
+  <div class="main">
+    <!-- Topbar : wordmark + pastille LIVE + recherche + utilisateur -->
+    <header class="topbar">
+      <div class="wordmark">PARC<b>VUE</b></div>
+      <span class="live"><i></i>LIVE</span>
+      <label class="search">
+        <svg><use href="#i-search"/></svg>
+        <input type="text" id="global-search" placeholder="Rechercher un poste, un utilisateur…" autocomplete="off">
+        <kbd>/</kbd>
+      </label>
+      <div class="right">
+        <div class="region"><span class="g"></span>relais&nbsp;<b>OVH·GRA</b></div>
+        <div class="user-block">
+          <div class="user-meta">
+            <span class="em" title="{{ user.email }}">{{ user.email }}</span>
+            <span class="ro {% if user.role == 'admin' %}admin{% endif %}">{{ 'administrateur' if user.role == 'admin' else 'lecture seule' }}</span>
+          </div>
+          <div class="avatar">{{ user.email[:2] | upper }}</div>
+          <a href="{{ url_for('web.logout') }}" class="logout-link" title="Déconnexion"><svg><use href="#i-logout"/></svg></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="scroll">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flashes">
+            {% for category, message in messages %}
+              <div class="flash {{ 'error' if category == 'error' else 'info' if category == 'info' else '' }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </div>
+
+    <!-- Barre d'état : télémétrie système -->
+    <footer class="statusbar">
+      <div class="s"><span class="g"></span><b>Relais connecté</b></div>
+      <div class="s" id="sb-agents">agents&nbsp;<b>—</b>&nbsp;reportent</div>
+      <div class="s">heartbeat&nbsp;<b>45 s</b></div>
+      <div class="s" id="sb-queue">file commandes&nbsp;<b>0</b></div>
+      <div class="end">ParcVue v1.0 · supervision parc Medicofi / Tire-Lait Express</div>
+    </footer>
+  </div>
+</div>
+
+{% else %}
+{# ========================= Pages d'authentification (non connecté) ========================= #}
+<div class="auth-wrap">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flashes" style="max-width:380px;width:100%;position:absolute;top:24px">
+        {% for category, message in messages %}
+          <div class="flash {{ 'error' if category == 'error' else 'info' if category == 'info' else '' }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% block content_auth %}{% endblock %}
+</div>
+{% endif %}
+
+<!-- Jeu d'icônes ligne (SVG <symbol> + <use>) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-grid" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3 8 4-16 3 8h4"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M7 9l3 3-3 3M13 15h4"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 19a2 2 0 004 0"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/></symbol>
+  <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M21 21l-4.3-4.3"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="9.5" y="9.5" width="5" height="5" fill="currentColor"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></symbol>
+  <symbol id="i-hdd" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5 11l2.5-6h9L19 11M16.5 15.5h.01"/></symbol>
+  <symbol id="i-unplug" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M7 12l5 5-3 3-5-5zM17 12l-5-5 3-3 5 5zM4 20l3-3M20 4l-3 3M15 9l-2 2"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M15 4h3a1 1 0 011 1v14a1 1 0 01-1 1h-3M10 8l-4 4 4 4M6 12h11"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M11 6l-6 6 6 6M5 12h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 4H5a1 1 0 00-1 1v4M15 4h4a1 1 0 011 1v4M9 20H5a1 1 0 01-1-1v-4M15 20h4a1 1 0 001-1v-4"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M8 11V6a1.5 1.5 0 013 0v5M11 11V5a1.5 1.5 0 013 0v6M14 11V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-1a6 6 0 01-5.2-3l-2-3.5a1.5 1.5 0 012.5-1.6L8 13"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 10-2 6m2 .5V13h-4.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 8v4l3 2"/></symbol>
+</defs></svg>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

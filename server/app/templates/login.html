@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Connexion{% endblock %}
+
+{% block content_auth %}
+<div class="auth-card">
+  <div class="auth-brand">
+    <span class="mk"><span></span></span>
+    <span class="wm">PARC<b>VUE</b></span>
+  </div>
+  <p class="auth-sub">Supervision du parc — accès réservé</p>
+
+  <form method="post" action="{{ url_for('web.login') }}" class="auth-form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="field">
+      <label for="email">Adresse e-mail</label>
+      <input type="email" id="email" name="email" required autofocus autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn go full">Se connecter</button>
+  </form>
+</div>
+{% endblock %}

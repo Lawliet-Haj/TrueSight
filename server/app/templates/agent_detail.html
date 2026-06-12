@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{{ agent_hostname if not not_found else 'Poste introuvable' }}{% endblock %}
+
+{% block content %}
+{% if not_found %}
+  <div class="panel">
+    <div class="pbody" style="text-align:center;padding:46px 20px">
+      <h1 style="font-size:18px;margin-bottom:8px">Poste introuvable</h1>
+      <p class="text-dim" style="margin-bottom:16px">L'agent demandé n'existe pas ou a été supprimé.</p>
+      <a href="{{ url_for('web.agents_page') }}" class="btn" style="display:inline-flex">Retour au parc</a>
+    </div>
+  </div>
+{% else %}
+  <div class="page-head">
+    <div style="display:flex;align-items:center;gap:14px">
+      <a href="{{ url_for('web.agents_page') }}" class="btn-ico" title="Retour au parc"><svg><use href="#i-arrow-left"/></svg></a>
+      <div>
+        <div class="label">Fiche poste</div>
+        <h1 id="title-hostname" class="mono">{{ agent_hostname }}</h1>
+      </div>
+      <span id="status-badge" class="badge off">…</span>
+    </div>
+    <span id="last-seen" class="seen"></span>
+  </div>
+
+  <!-- Données injectées pour le JS -->
+  <div id="page-data"
+       data-agent-id="{{ agent_id }}"
+       data-is-admin="{{ '1' if is_admin else '0' }}"
+       class="hidden"></div>
+
+  <div class="grid-3">
+    <!-- Inventaire matériel -->
+    <div class="panel" style="animation-delay:.02s">
+      <div class="phead"><svg class="ico"><use href="#i-box"/></svg><h2>Matériel</h2></div>
+      <div class="pbody">
+        <dl id="hardware" class="dl">
+          <div class="dl-loading">Chargement…</div>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Graphiques métriques -->
+    <div class="panel" style="animation-delay:.06s">
+      <div class="phead">
+        <svg class="ico"><use href="#i-activity"/></svg>
+        <h2>Métriques · 24 h</h2>
+        <span class="tag" id="current-metrics"></span>
+      </div>
+      <div class="pbody">
+        <div class="chart-block">
+          <div class="lbl">CPU %</div>
+          <div class="chart-wrap"><canvas id="chart-cpu"></canvas></div>
+        </div>
+        <div class="chart-block">
+          <div class="lbl">RAM %</div>
+          <div class="chart-wrap"><canvas id="chart-ram"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bureau à distance -->
+  {% if is_admin %}
+  <div class="panel remote-panel" id="remote" style="animation-delay:.1s;margin-bottom:14px">
+    <div class="phead">
+      <svg class="ico"><use href="#i-screen"/></svg>
+      <h2>Bureau à distance</h2>
+      <span class="tag" id="remote-host-tag">{{ agent_hostname }}</span>
+    </div>
+
+    <div class="rwin">
+      <div class="rbar" id="remote-bar">
+        <span class="rec"><i></i><span id="remote-rec-label">HORS LIGNE</span></span>
+        <span class="name" id="remote-user">en attente de session</span>
+        <span class="stat">
+          <span><b id="remote-fps">0</b> fps</span>
+          <span class="sep">·</span>
+          <span><b id="remote-latency">—</b> ms</span>
+          <span class="sep">·</span>
+          <span>écran <b id="remote-monitor">1</b></span>
+        </span>
+      </div>
+
+      <div class="rscreen" id="remote-screen">
+        <canvas id="pv-remote-canvas" width="1280" height="800" tabindex="0"></canvas>
+        <div class="placeholder" id="remote-placeholder">
+          <svg><use href="#i-screen"/></svg>
+          <div class="t">Aucune session active</div>
+          <div style="margin-top:6px;font-size:12px">Cliquez sur « Prendre la main » pour ouvrir le bureau du poste.</div>
+        </div>
+      </div>
+
+      <div class="remote-monitors hidden" id="remote-monitors">
+        <span class="field-label">Écran</span>
+      </div>
+
+      <div class="remote-error" id="remote-error"></div>
+
+      <div class="rfoot">
+        <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
+        <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
+        <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>
+        <button class="btn danger hidden" id="remote-stop" type="button"><svg><use href="#i-stop"/></svg>Fin de session</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Console de commande (admin) -->
+  {% if is_admin %}
+  <div class="panel" id="console" style="animation-delay:.14s;margin-bottom:14px">
+    <div class="phead"><svg class="ico"><use href="#i-terminal"/></svg><h2>Console de commande à distance</h2></div>
+    <div class="pbody">
+      <div class="console-row">
+        <span class="field-label">Shell</span>
+        <select id="cmd-shell" class="input">
+          <option value="powershell">PowerShell</option>
+          <option value="cmd">cmd</option>
+        </select>
+        <span class="field-label" style="margin-left:6px">Délai (s)</span>
+        <input id="cmd-timeout" type="number" value="120" min="1" max="3600" class="input w-sm">
+      </div>
+      <textarea id="cmd-text" rows="3" class="input" placeholder="Ex. Get-Service spooler"></textarea>
+      <div class="console-row" style="margin-top:12px;margin-bottom:0">
+        <button id="cmd-run" class="btn go"><svg><use href="#i-play"/></svg>Exécuter</button>
+        <span id="cmd-status" class="cmd-status"></span>
+      </div>
+      <pre id="cmd-output" class="cmd-output hidden"></pre>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Logiciels installés -->
+  <div class="panel" style="animation-delay:.18s">
+    <div class="phead">
+      <svg class="ico"><use href="#i-box"/></svg>
+      <h2>Logiciels installés</h2>
+      <span class="tag" style="margin-left:auto;margin-right:12px"></span>
+      <input type="text" id="sw-filter" class="input" placeholder="Filtrer…" style="margin-left:auto">
+    </div>
+    <div class="scroll-y sticky-head">
+      <table>
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Version</th>
+            <th>Éditeur</th>
+            <th>Installé le</th>
+          </tr>
+        </thead>
+        <tbody id="software-body">
+          <tr><td colspan="4" class="empty-cell">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if not not_found %}
+<script src="{{ url_for('static', filename='js/agent_detail.js') }}"></script>
+{% if is_admin %}
+<script src="{{ url_for('static', filename='js/remote.js') }}"></script>
+{% endif %}
+{% endif %}
+{% endblock %}

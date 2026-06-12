@@ -1,0 +1,25 @@
+# =============================================================================
+# ParcVue — Fichiers ignorés par Git
+# =============================================================================
+
+# --- Secrets & configuration locale ------------------------------------------
+# Le .env contient SECRET_KEY, ENROLLMENT_TOKEN, mots de passe : jamais commité.
+.env
+
+# --- Python -------------------------------------------------------------------
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# --- Build / packaging agent (PyInstaller) ------------------------------------
+build/
+dist/
+*.spec
+
+# --- État runtime de l'agent (contient agent_id + agent_token) ----------------
+state.json
+
+# --- Journaux -----------------------------------------------------------------
+*.log

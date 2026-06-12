@@ -1,0 +1,13 @@
+# ParcVue — dépendances du serveur (Flask 3 / SQLAlchemy 2 / psycopg 3)
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
+gunicorn==23.0.0
+Werkzeug==3.0.4
+pyotp==2.9.0
+requests==2.32.3
+qrcode[pil]==7.4.2
+
+# Dépendances de test (utilisées par tests/test_api.py)
+pytest==8.3.3

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Parc{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="label">Supervision · temps réel</div>
+    <h1>Parc de postes</h1>
+    <p class="sub">Actualisation automatique toutes les 10 secondes</p>
+  </div>
+</div>
+
+<!-- KPIs instrumentés (alimentés par agents.js) -->
+<section class="kpis">
+  <div class="kpi accent">
+    <div class="lbl"><span class="d" style="background:var(--ok);box-shadow:0 0 8px var(--ok)"></span>En ligne</div>
+    <div class="val" id="count-online">0</div>
+    <div class="sub" id="kpi-online-sub">postes joignables</div>
+    <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="var(--ok)" stroke-width="1.6" points="0,22 12,18 24,20 36,12 48,15 60,8 72,11 84,6"/></svg>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><span class="d" style="background:#46545f"></span>Hors ligne</div>
+    <div class="val" id="count-offline">0</div>
+    <div class="sub" id="kpi-offline-sub">sans heartbeat récent</div>
+    <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="#5A6773" stroke-width="1.6" points="0,8 12,12 24,9 36,14 48,12 60,18 72,15 84,20"/></svg>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><span class="d" style="background:var(--warn);box-shadow:0 0 8px var(--warn)"></span>En alerte</div>
+    <div class="val" id="count-alert">0</div>
+    <div class="sub" id="kpi-alert-sub">CPU ou RAM élevés</div>
+    <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="var(--warn)" stroke-width="1.6" points="0,18 12,18 24,14 36,16 48,9 60,12 72,7 84,10"/></svg>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><svg><use href="#i-cpu"/></svg>Disponibilité</div>
+    <div class="val" id="count-avail">—<small>%</small></div>
+    <div class="sub" id="kpi-avail-sub">postes supervisés</div>
+    <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="var(--signal)" stroke-width="1.6" points="0,12 12,10 24,11 36,7 48,9 60,6 72,8 84,5"/></svg>
+  </div>
+</section>
+
+<!-- Tableau du parc -->
+<div class="panel fleet">
+  <div class="phead">
+    <svg class="ico"><use href="#i-grid"/></svg>
+    <h2>Parc — temps réel</h2>
+    <span class="tag" id="fleet-count">— postes</span>
+  </div>
+  <div class="scroll-y sticky-head">
+    <table>
+      <thead>
+        <tr>
+          <th>Poste</th>
+          <th>Système</th>
+          <th>CPU</th>
+          <th>RAM</th>
+          <th>Tags</th>
+          <th>Dernière activité</th>
+          <th class="num">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="agents-body">
+        <tr><td colspan="7" class="empty-cell">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Champ de filtre déporté dans la barre de recherche (topbar). On garde un input caché
+     compatible avec l'ancienne logique (#filter) que agents.js synchronise. -->
+<input type="hidden" id="filter" value="">
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/agents.js') }}"></script>
+{% endblock %}

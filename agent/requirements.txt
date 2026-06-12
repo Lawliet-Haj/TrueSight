@@ -1,0 +1,26 @@
+# Dépendances de l'agent ParcVue (Windows, Python 3.12)
+# ----------------------------------------------------------------------------
+# Client HTTP sortant (poll vers le serveur), avec gestion fine des timeouts.
+requests>=2.31,<3.0
+# Métriques système : CPU, RAM, disques, uptime, sessions utilisateur.
+psutil>=5.9,<6.0
+# Accès aux API Windows : service Windows, DPAPI (win32crypt), registre, etc.
+pywin32>=306
+# Inventaire matériel via WMI (Win32_ComputerSystem, Win32_BIOS, ...).
+WMI>=1.5.1
+# ----------------------------------------------------------------------------
+# Bureau à distance (module remote/) :
+# Capture d'écran rapide (multi-moniteurs).
+mss>=9.0,<10.0
+# Encodage JPEG des trames (repli si PyTurboJPEG absent) + downscale.
+pillow>=10.0,<12.0
+# Client WebSocket synchrone (session wss vers le relais).
+websocket-client>=1.7,<2.0
+# Encodage JPEG accéléré (libjpeg-turbo) — OPTIONNEL : si présent, utilisé en
+# priorité ; tire numpy. Décommenter pour de meilleures performances/CPU.
+# Nécessite la lib native libjpeg-turbo installée sur le poste.
+# PyTurboJPEG>=1.7
+# numpy>=1.26  # requis par PyTurboJPEG (chemin TurboJPEG.encode).
+# ----------------------------------------------------------------------------
+# Outil de build (développement uniquement) : production de l'exécutable .exe.
+pyinstaller>=6.3

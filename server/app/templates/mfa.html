@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Vérification MFA{% endblock %}
+
+{% block content_auth %}
+<div class="auth-card">
+  <div class="auth-brand">
+    <span class="mk"><span></span></span>
+    <span class="wm">PARC<b>VUE</b></span>
+  </div>
+  <p class="auth-sub">Vérification en deux étapes — saisissez le code à 6 chiffres de votre application d'authentification.</p>
+
+  <form method="post" action="{{ url_for('web.mfa') }}" class="auth-form">
+    <div class="field">
+      <label for="code">Code TOTP</label>
+      <input type="text" id="code" name="code" required autofocus inputmode="numeric"
+             pattern="[0-9 ]*" maxlength="9" autocomplete="one-time-code" class="code-input">
+    </div>
+    <button type="submit" class="btn go full">Valider</button>
+    <a href="{{ url_for('web.logout') }}" class="auth-cancel">Annuler</a>
+  </form>
+</div>
+{% endblock %}

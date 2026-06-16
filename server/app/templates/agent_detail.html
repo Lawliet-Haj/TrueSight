@@ -48,6 +48,10 @@
               aria-selected="false" aria-controls="panel-command" data-tab="command" tabindex="-1">
         <svg><use href="#i-play"/></svg>Commande ponctuelle
       </button>
+      <button class="tab" id="tab-processes" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-processes" data-tab="processes" tabindex="-1">
+        <svg><use href="#i-activity"/></svg>Processus
+      </button>
     </div>
 
     <!-- Onglet : Bureau à distance -->
@@ -163,6 +167,32 @@
           <span id="cmd-status" class="cmd-status"></span>
         </div>
         <pre id="cmd-output" class="cmd-output hidden"></pre>
+      </div>
+    </div>
+
+    <!-- Onglet : Processus (top CPU/RAM + arrêt) -->
+    <div class="tabpanel hidden" id="panel-processes" role="tabpanel" aria-labelledby="tab-processes">
+      <div class="proc-win">
+        <div class="console-row" style="margin-bottom:12px">
+          <button class="btn go" id="proc-load" type="button"><svg><use href="#i-refresh"/></svg>Charger les processus</button>
+          <span id="proc-status" class="cmd-status"></span>
+        </div>
+        <div class="scroll-y sticky-head" style="max-height:none">
+          <table>
+            <thead>
+              <tr>
+                <th>Processus</th>
+                <th class="num">PID</th>
+                <th class="num">CPU (s)</th>
+                <th class="num">Mémoire (Mo)</th>
+                <th class="num">Action</th>
+              </tr>
+            </thead>
+            <tbody id="proc-body">
+              <tr><td colspan="5" class="empty-cell">Cliquez sur « Charger les processus ».</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>

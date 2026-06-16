@@ -472,6 +472,98 @@
       });
   }
 
+  // --- Processus (top CPU/RAM + arrêt), via le pipeline de commandes (admin) ---
+  function setupProcesses() {
+    var loadBtn = document.getElementById("proc-load");
+    if (!loadBtn) return;
+    var statusEl = document.getElementById("proc-status");
+    var body = document.getElementById("proc-body");
+    var PROC_CMD =
+      "Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 " +
+      "Name,Id,@{n='CPU';e={[math]::Round($_.CPU,1)}}," +
+      "@{n='RAM_MB';e={[math]::Round($_.WorkingSet64/1MB,0)}} | ConvertTo-Json -Compress";
+
+    // Soumet une commande PowerShell et résout avec son résultat final.
+    function runForResult(text, timeout) {
+      return fetch("/api/v1/agents/" + AGENT_ID + "/commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ shell: "powershell", command_text: text, timeout_seconds: timeout }),
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          return new Promise(function (resolve) { pollCommand(d.command_id, null, null, resolve); });
+        });
+      });
+    }
+
+    function render(procs) {
+      if (!procs.length) { body.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucun processus.</td></tr>'; return; }
+      body.innerHTML = procs.map(function (p) {
+        var name = p.Name || "—";
+        var pid = p.Id;
+        var cpu = p.CPU != null ? p.CPU : "—";
+        var ram = p.RAM_MB != null ? p.RAM_MB : "—";
+        return "<tr>" +
+          '<td class="mono">' + esc(name) + "</td>" +
+          '<td class="num mono text-dim">' + esc(pid) + "</td>" +
+          '<td class="num mono">' + esc(cpu) + "</td>" +
+          '<td class="num mono">' + esc(ram) + "</td>" +
+          '<td class="num"><button class="btn xs danger proc-kill" data-pid="' + esc(pid) +
+            '" data-name="' + esc(name) + '">Tuer</button></td>' +
+          "</tr>";
+      }).join("");
+      Array.prototype.forEach.call(body.querySelectorAll(".proc-kill"), function (b) {
+        b.addEventListener("click", function () { killProc(b.getAttribute("data-pid"), b.getAttribute("data-name")); });
+      });
+    }
+
+    function load() {
+      statusEl.textContent = "Chargement des processus…";
+      loadBtn.disabled = true;
+      body.innerHTML = '<tr><td colspan="5" class="empty-cell">Récupération…</td></tr>';
+      runForResult(PROC_CMD, 30).then(function (data) {
+        loadBtn.disabled = false;
+        var r = (data && data.result) || {};
+        if (!data || data.status !== "done") {
+          statusEl.textContent = "Échec : " + cmdStatusLabel(data ? data.status : "?");
+          body.innerHTML = '<tr><td colspan="5" class="empty-cell err-cell">' + esc((r.stderr || "Pas de résultat").split("\n")[0]) + "</td></tr>";
+          return;
+        }
+        var procs;
+        try { procs = JSON.parse(r.stdout || "[]"); } catch (e) {
+          body.innerHTML = '<tr><td colspan="5" class="empty-cell err-cell">Réponse illisible.</td></tr>';
+          return;
+        }
+        if (!Array.isArray(procs)) procs = [procs];
+        statusEl.textContent = procs.length + " processus (triés par temps CPU)";
+        render(procs);
+      }).catch(function (e) {
+        loadBtn.disabled = false;
+        statusEl.textContent = "Erreur : " + e.message;
+      });
+    }
+
+    function killProc(pid, name) {
+      var pidNum = parseInt(pid, 10);
+      if (isNaN(pidNum)) return;  // garde-fou (le PID doit être numérique)
+      if (!window.confirm("Tuer le processus « " + name + " » (PID " + pidNum + ") sur le poste ?")) return;
+      statusEl.textContent = "Arrêt du processus " + pidNum + "…";
+      runForResult("Stop-Process -Id " + pidNum + " -Force; 'OK'", 30).then(function (data) {
+        var r = (data && data.result) || {};
+        if (data && data.status === "done" && !(r.stderr && r.stderr.trim())) {
+          statusEl.textContent = "Processus " + pidNum + " arrêté.";
+        } else {
+          statusEl.textContent = "Échec de l'arrêt de " + pidNum +
+            (r.stderr ? " : " + r.stderr.split("\n")[0] : "");
+        }
+        setTimeout(load, 1200);
+      }).catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+    }
+
+    loadBtn.addEventListener("click", load);
+  }
+
   // --- Onglets de la zone de travail (bureau / terminal / commande) ---
   function setupTabs() {
     var tabs = Array.prototype.slice.call(document.querySelectorAll(".workzone .tab"));
@@ -518,6 +610,7 @@
     setupConsole();
     setupQuickActions();
     setupScriptLibrary();
+    setupProcesses();
     setupTabs();
   }
 

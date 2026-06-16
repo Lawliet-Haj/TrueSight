@@ -410,15 +410,31 @@ textarea.input{
 .bulkbar .grow{flex:1}
 .bulk-count{font-family:var(--font-mono);font-size:11.5px;color:var(--signal);letter-spacing:.04em}
 
-/* Onglet Activité (cartes de sortie texte) */
+/* Onglet Activité — frise d'événements */
 .activity-win{display:flex;flex-direction:column;gap:14px}
-.act-card{border:1px solid var(--line);border-radius:var(--r);background:var(--bg-2);overflow:hidden}
-.act-head{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
-.act-head .field-label{flex:1}
-.act-out{margin:0;background:#05080a;color:#cfe7df;font-family:var(--font-mono);font-size:12px;line-height:1.55;padding:12px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-word}
-.act-out.hidden{display:none}
-.act-out::-webkit-scrollbar{width:9px;height:9px}
-.act-out::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:9px;border:2px solid #05080a}
+.act-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.act-toolbar .grow{flex:1}
+.act-summary{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap;padding:12px 15px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r-lg)}
+.act-summary:empty{display:none}
+.act-summary .s-item{display:flex;flex-direction:column;gap:6px;min-width:0}
+.act-summary .s-apps{flex:1;min-width:200px}
+.act-summary .s-label{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.act-summary .s-val{font-size:13px;color:var(--text)}
+.act-summary .s-chips{display:flex;flex-wrap:wrap;gap:5px}
+.act-feed{display:flex;flex-direction:column;gap:8px;max-height:62vh;overflow:auto;padding-right:4px}
+.act-feed::-webkit-scrollbar{width:9px}
+.act-feed::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:9px;border:2px solid var(--bg)}
+.feed-item{display:grid;grid-template-columns:130px 1fr;gap:12px;align-items:start;padding:10px 13px;background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--line-2);border-radius:var(--r)}
+.feed-item.b-error,.feed-item.b-logon_fail{border-left-color:var(--danger)}
+.feed-item.b-warning{border-left-color:var(--warn)}
+.feed-item.b-logon{border-left-color:var(--info)}
+.feed-item.b-power{border-left-color:var(--signal)}
+.feed-meta{display:flex;flex-direction:column;gap:6px}
+.feed-time{font-family:var(--font-mono);font-size:11px;color:var(--faint);white-space:nowrap}
+.feed-title{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.feed-detail{font-size:12px;color:var(--dim);margin-top:3px;word-break:break-word;line-height:1.45}
+.feed-empty{padding:30px;text-align:center;color:var(--faint);font-size:13px}
+@media (max-width:700px){.feed-item{grid-template-columns:1fr}}
 
 /* ---------------------------------------------------------------------------
    Barre d'état (bas)

@@ -209,36 +209,25 @@
       </div>
     </div>
 
-    <!-- Onglet : Activité du poste (sessions, applications, journaux) -->
+    <!-- Onglet : Activité du poste (frise d'événements intéressants) -->
     <div class="tabpanel hidden" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity">
       <div class="activity-win">
-        <div class="act-card">
-          <div class="act-head">
-            <span class="field-label">Session en cours &amp; applications ouvertes</span>
-            <button class="btn xs" type="button" data-act-cmd="session">Rafraîchir</button>
+        <div class="act-toolbar">
+          <div class="seg" id="act-filter" role="tablist" aria-label="Filtrer l'activité">
+            <button type="button" class="seg-btn on" data-kind="all">Tout</button>
+            <button type="button" class="seg-btn" data-kind="logon">Connexions</button>
+            <button type="button" class="seg-btn" data-kind="power">Démarrages</button>
+            <button type="button" class="seg-btn" data-kind="issue">Incidents</button>
           </div>
-          <pre class="act-out" id="act-session">Ouvrez l'onglet pour charger…</pre>
+          <span class="grow"></span>
+          <span id="act-status" class="cmd-status"></span>
+          <button class="btn xs" id="act-refresh" type="button"><svg><use href="#i-refresh"/></svg>Rafraîchir</button>
         </div>
-        <div class="act-card">
-          <div class="act-head">
-            <span class="field-label">Ouvertures de session (24 h)</span>
-            <button class="btn xs" type="button" data-act-cmd="logons">Charger</button>
-          </div>
-          <pre class="act-out hidden" id="act-logons"></pre>
-        </div>
-        <div class="act-card">
-          <div class="act-head">
-            <span class="field-label">Démarrages / arrêts (7 j)</span>
-            <button class="btn xs" type="button" data-act-cmd="boots">Charger</button>
-          </div>
-          <pre class="act-out hidden" id="act-boots"></pre>
-        </div>
-        <div class="act-card">
-          <div class="act-head">
-            <span class="field-label">Erreurs &amp; avertissements système (24 h)</span>
-            <button class="btn xs" type="button" data-act-cmd="errors">Charger</button>
-          </div>
-          <pre class="act-out hidden" id="act-errors"></pre>
+
+        <div class="act-summary" id="act-summary"></div>
+
+        <div class="act-feed" id="act-feed">
+          <div class="dl-loading">Ouvrez l'onglet pour charger l'activité…</div>
         </div>
       </div>
     </div>

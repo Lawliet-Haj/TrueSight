@@ -609,33 +609,56 @@
     loadBtn.addEventListener("click", load);
   }
 
-  // --- Activité du poste (sessions / applications / journaux), via le pipeline ---
+  // --- Activité du poste : frise d'événements intéressants (1 appel consolidé) ---
+  function fmtRel(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (secs < 60) return "il y a " + secs + " s";
+    if (secs < 3600) return "il y a " + Math.floor(secs / 60) + " min";
+    if (secs < 86400) return "il y a " + Math.floor(secs / 3600) + " h";
+    return "il y a " + Math.floor(secs / 86400) + " j";
+  }
+
+  // PowerShell consolidé → JSON {user, apps[], events[{time,kind,title,detail}]}.
+  // (Sortie structurée — bien plus lisible qu'un dump texte.)
+  var ACTIVITY_CMD = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    "$u = \"$env:USERDOMAIN\\$env:USERNAME\"",
+    "$apps = @(Get-Process | Where-Object {$_.MainWindowTitle} | Select-Object -ExpandProperty Name -Unique | Sort-Object)",
+    "$events = New-Object System.Collections.ArrayList",
+    "function Add-Ev($t,$k,$ti,$d){ [void]$events.Add([pscustomobject]@{time=$t.ToString('o');kind=$k;title=$ti;detail=$d}) }",
+    "Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624,4625;StartTime=(Get-Date).AddDays(-2)} -MaxEvents 40 -ErrorAction SilentlyContinue | ForEach-Object { $a=$_.Properties[5].Value; if($_.Id -eq 4624){ Add-Ev $_.TimeCreated 'logon' 'Ouverture de session' $a } else { Add-Ev $_.TimeCreated 'logon_fail' 'Échec de connexion' $a } }",
+    "Get-WinEvent -FilterHashtable @{LogName='System';Id=6005,6006,1074,6008;StartTime=(Get-Date).AddDays(-7)} -MaxEvents 25 -ErrorAction SilentlyContinue | ForEach-Object { $ti=switch($_.Id){6005{'Démarrage du système'}6006{'Arrêt du système'}6008{'Arrêt inattendu'}1074{'Arrêt / redémarrage demandé'}default{'Événement système'}}; Add-Ev $_.TimeCreated 'power' $ti (($_.Message.Split([char]10))[0]) }",
+    "Get-WinEvent -FilterHashtable @{LogName='System';Level=1,2,3;StartTime=(Get-Date).AddDays(-1)} -MaxEvents 30 -ErrorAction SilentlyContinue | ForEach-Object { $k=if($_.Level -le 2){'error'}else{'warning'}; Add-Ev $_.TimeCreated $k $_.ProviderName (($_.Message.Split([char]10))[0]) }",
+    "$sorted = @($events | Sort-Object {[datetime]$_.time} -Descending | Select-Object -First 60)",
+    "[pscustomobject]@{ user=$u; apps=$apps; events=$sorted } | ConvertTo-Json -Depth 4 -Compress",
+  ].join("\n");
+
+  var KIND = {
+    logon: { label: "Connexion", badge: "info", group: "logon" },
+    logon_fail: { label: "Échec", badge: "danger", group: "logon" },
+    power: { label: "Système", badge: "", group: "power" },
+    error: { label: "Erreur", badge: "danger", group: "issue" },
+    warning: { label: "Alerte", badge: "warn", group: "issue" },
+  };
+
+  var activityEvents = [];
+  var activityFilter = "all";
+
   function setupActivity() {
     var panel = document.getElementById("panel-activity");
     if (!panel) return;
+    var feed = document.getElementById("act-feed");
+    var summary = document.getElementById("act-summary");
+    var statusEl = document.getElementById("act-status");
 
-    // Commandes (sortie texte, affichée telle quelle — robuste, pas de parsing).
-    var ACT = {
-      session: { shell: "powershell", timeout: 40, out: "act-session",
-        text: "'=== UTILISATEURS / SESSIONS ==='; query user 2>$null; " +
-              "'=== APPLICATIONS OUVERTES ==='; " +
-              "Get-Process | Where-Object {$_.MainWindowTitle} | Select-Object Name,Id,MainWindowTitle | Sort-Object Name | Format-Table -AutoSize" },
-      logons: { shell: "powershell", timeout: 60, out: "act-logons",
-        text: "Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=(Get-Date).AddDays(-1)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
-              "Select-Object TimeCreated,@{n='Compte';e={$_.Properties[5].Value}},@{n='Type';e={$_.Properties[8].Value}} | Format-Table -AutoSize" },
-      boots: { shell: "powershell", timeout: 60, out: "act-boots",
-        text: "Get-WinEvent -FilterHashtable @{LogName='System';Id=6005,6006,1074,6008;StartTime=(Get-Date).AddDays(-7)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
-              "Select-Object TimeCreated,Id,@{n='Evenement';e={($_.Message.Split([char]10))[0]}} | Format-Table -AutoSize -Wrap" },
-      errors: { shell: "powershell", timeout: 60, out: "act-errors",
-        text: "Get-WinEvent -FilterHashtable @{LogName='System';Level=1,2,3;StartTime=(Get-Date).AddDays(-1)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
-              "Select-Object TimeCreated,LevelDisplayName,ProviderName,@{n='Message';e={($_.Message.Split([char]10))[0]}} | Format-Table -AutoSize -Wrap" },
-    };
-
-    function submit(shell, text, timeout) {
+    function submit(text, timeout) {
       return fetch("/api/v1/agents/" + AGENT_ID + "/commands", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ shell: shell, command_text: text, timeout_seconds: timeout }),
+        body: JSON.stringify({ shell: "powershell", command_text: text, timeout_seconds: timeout }),
       }).then(function (r) {
         return r.json().then(function (d) {
           if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
@@ -644,37 +667,81 @@
       });
     }
 
-    function loadCard(key) {
-      var spec = ACT[key];
-      if (!spec) return;
-      var pre = document.getElementById(spec.out);
-      if (!pre) return;
-      pre.classList.remove("hidden");
-      pre.textContent = "Chargement…";
-      submit(spec.shell, spec.text, spec.timeout).then(function (data) {
-        var r = (data && data.result) || {};
-        if (!data || data.status !== "done") {
-          pre.textContent = "Échec : " + cmdStatusLabel(data ? data.status : "?") +
-            (r.stderr ? "\n" + r.stderr : "");
-          return;
-        }
-        var txt = (r.stdout || "").trim();
-        var err = (r.stderr || "").trim();
-        pre.textContent = txt || (err ? "⚠ " + err : "(aucune donnée — nécessite peut-être des droits administrateur)");
-      }).catch(function (e) { pre.textContent = "Erreur : " + e.message; });
+    function renderSummary(user, apps) {
+      apps = Array.isArray(apps) ? apps : (apps ? [apps] : []);
+      var appChips = apps.slice(0, 12).map(function (a) { return '<span class="chip">' + esc(a) + "</span>"; }).join("");
+      if (apps.length > 12) appChips += '<span class="chip muted">+' + (apps.length - 12) + "</span>";
+      summary.innerHTML =
+        '<div class="s-item"><span class="s-label">Utilisateur</span><span class="s-val mono">' + esc(user || "—") + "</span></div>" +
+        '<div class="s-item s-apps"><span class="s-label">Applications ouvertes (' + apps.length + ")</span>" +
+        '<span class="s-chips">' + (appChips || '<span class="muted">aucune</span>') + "</span></div>";
     }
 
-    Array.prototype.forEach.call(panel.querySelectorAll("[data-act-cmd]"), function (b) {
-      b.addEventListener("click", function () { loadCard(b.getAttribute("data-act-cmd")); });
-    });
+    function renderFeed() {
+      var rows = activityEvents.filter(function (e) {
+        if (activityFilter === "all") return true;
+        var g = (KIND[e.kind] || {}).group;
+        return g === activityFilter;
+      });
+      if (!rows.length) {
+        feed.innerHTML = '<div class="feed-empty">Aucun événement pour ce filtre.</div>';
+        return;
+      }
+      feed.innerHTML = rows.map(function (e) {
+        var k = KIND[e.kind] || { label: e.kind || "—", badge: "" };
+        var abs = new Date(e.time);
+        var absTxt = isNaN(abs.getTime()) ? "" : abs.toLocaleString("fr-FR");
+        return (
+          '<div class="feed-item b-' + esc(e.kind || "") + '">' +
+          '<div class="feed-meta">' +
+            '<span class="badge ' + k.badge + '">' + esc(k.label) + "</span>" +
+            '<span class="feed-time" title="' + esc(absTxt) + '">' + esc(fmtRel(e.time)) + "</span>" +
+          "</div>" +
+          '<div class="feed-body"><div class="feed-title">' + esc(e.title || "—") + "</div>" +
+            (e.detail ? '<div class="feed-detail">' + esc(e.detail) + "</div>" : "") +
+          "</div></div>"
+        );
+      }).join("");
+    }
 
-    // Auto-charge la session à la première ouverture de l'onglet Activité.
+    function load() {
+      statusEl.textContent = "Analyse de l'activité…";
+      feed.innerHTML = '<div class="dl-loading">Chargement…</div>';
+      submit(ACTIVITY_CMD, 60).then(function (data) {
+        var r = (data && data.result) || {};
+        if (!data || data.status !== "done") {
+          statusEl.textContent = "Échec : " + cmdStatusLabel(data ? data.status : "?");
+          feed.innerHTML = '<div class="feed-empty err-cell">' + esc((r.stderr || "Pas de résultat").split("\n")[0]) + "</div>";
+          return;
+        }
+        var parsed;
+        try { parsed = JSON.parse(r.stdout || "{}"); } catch (e) {
+          feed.innerHTML = '<div class="feed-empty err-cell">Réponse illisible.</div>'; return;
+        }
+        activityEvents = Array.isArray(parsed.events) ? parsed.events : (parsed.events ? [parsed.events] : []);
+        renderSummary(parsed.user, parsed.apps);
+        renderFeed();
+        statusEl.textContent = activityEvents.length + " événement(s)";
+      }).catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+    }
+
+    // Filtres (segmented control).
+    Array.prototype.forEach.call(panel.querySelectorAll("#act-filter .seg-btn"), function (btn) {
+      btn.addEventListener("click", function () {
+        activityFilter = btn.getAttribute("data-kind");
+        Array.prototype.forEach.call(panel.querySelectorAll("#act-filter .seg-btn"), function (b) {
+          b.classList.toggle("on", b === btn);
+        });
+        renderFeed();
+      });
+    });
+    var refresh = document.getElementById("act-refresh");
+    if (refresh) refresh.addEventListener("click", load);
+
+    // Auto-charge à la première ouverture de l'onglet Activité.
     var loadedOnce = false;
     document.addEventListener("ts:tab-activated", function (ev) {
-      if (ev.detail && ev.detail.tab === "activity" && !loadedOnce) {
-        loadedOnce = true;
-        loadCard("session");
-      }
+      if (ev.detail && ev.detail.tab === "activity" && !loadedOnce) { loadedOnce = true; load(); }
     });
   }
 

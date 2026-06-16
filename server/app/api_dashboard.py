@@ -608,6 +608,18 @@ def quick_action(agent_id):
 
 
 # --------------------------------------------------------------------------
+# GET /scripts — bibliothèque de scripts prêts à l'emploi (admin)
+# --------------------------------------------------------------------------
+@bp.get("/scripts")
+@admin_required
+def list_scripts():
+    """Catalogue des scripts 1-clic (exécutés via le pipeline de commandes)."""
+    from .scripts_catalog import public_catalog
+
+    return jsonify(public_catalog()), 200
+
+
+# --------------------------------------------------------------------------
 # GET /alerts?status=active|all — liste des alertes du parc
 # --------------------------------------------------------------------------
 @bp.get("/alerts")

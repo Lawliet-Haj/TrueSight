@@ -431,6 +431,47 @@
     }
   }
 
+  // --- Bibliothèque de scripts 1-clic (admin) ---
+  function setupScriptLibrary() {
+    var container = document.getElementById("script-groups");
+    if (!container) return;
+    fetch("/api/v1/scripts", { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (scripts) {
+        if (!scripts.length) { container.innerHTML = '<div class="dl-empty">Aucun script.</div>'; return; }
+        var byKey = {};
+        var groups = {};
+        scripts.forEach(function (s) {
+          byKey[s.key] = s;
+          (groups[s.category] = groups[s.category] || []).push(s);
+        });
+        container.innerHTML = Object.keys(groups).map(function (cat) {
+          var btns = groups[cat].map(function (s) {
+            return '<button type="button" class="btn quick script-btn' + (s.danger ? " danger" : "") +
+              '" data-key="' + esc(s.key) + '">' + esc(s.label) + "</button>";
+          }).join("");
+          return '<div class="script-cat"><span class="script-cat-label">' + esc(cat) +
+            '</span><div class="quick-row">' + btns + "</div></div>";
+        }).join("");
+
+        Array.prototype.forEach.call(container.querySelectorAll(".script-btn"), function (b) {
+          b.addEventListener("click", function () {
+            var s = byKey[b.getAttribute("data-key")];
+            if (!s) return;
+            // Pré-remplit la console (transparence) puis déclenche l'exécution
+            // via le bouton existant (qui gère la confirmation + le polling + la sortie).
+            document.getElementById("cmd-shell").value = s.shell;
+            document.getElementById("cmd-text").value = s.command_text;
+            document.getElementById("cmd-timeout").value = s.timeout;
+            document.getElementById("cmd-run").click();
+          });
+        });
+      })
+      .catch(function () {
+        container.innerHTML = '<div class="dl-empty err-cell">Erreur de chargement des scripts.</div>';
+      });
+  }
+
   // --- Onglets de la zone de travail (bureau / terminal / commande) ---
   function setupTabs() {
     var tabs = Array.prototype.slice.call(document.querySelectorAll(".workzone .tab"));
@@ -476,6 +517,7 @@
   if (IS_ADMIN) {
     setupConsole();
     setupQuickActions();
+    setupScriptLibrary();
     setupTabs();
   }
 

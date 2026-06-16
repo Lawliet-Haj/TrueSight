@@ -902,3 +902,26 @@ def test_heartbeat_refreshes_metadata(client, admin_session):
     detail = admin_session.get(f"/api/v1/agents/{agent_id}").get_json()
     assert detail["os_version"] == "Windows 11 Professional 26220"
     assert detail["agent_version"] == "1.2.3"
+
+
+# --------------------------------------------------------------------------
+# Bibliothèque de scripts 1-clic (GET /api/v1/scripts)
+# --------------------------------------------------------------------------
+def test_scripts_catalog_admin(client, admin_session):
+    """Le catalogue de scripts est servi à l'admin avec la structure attendue."""
+    resp = admin_session.get("/api/v1/scripts")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    assert len(rows) >= 10
+    sample = rows[0]
+    for key in ("key", "label", "category", "shell", "command_text", "danger", "timeout"):
+        assert key in sample
+    # Tous les shells sont valides et les clés uniques.
+    assert all(r["shell"] in ("powershell", "cmd") for r in rows)
+    assert len({r["key"] for r in rows}) == len(rows)
+
+
+def test_scripts_catalog_requires_admin(client):
+    """Sans session admin, le catalogue est refusé (401 sans session)."""
+    resp = client.get("/api/v1/scripts", headers={"Accept": "application/json"})
+    assert resp.status_code == 401

@@ -383,6 +383,16 @@ textarea.input{
 .quick-msg .input{flex:1}
 .quick-msg.hidden{display:none}
 
+/* Bibliothèque de scripts 1-clic */
+.script-lib{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.script-lib > .field-label{display:block;margin-bottom:10px}
+.script-groups{display:flex;flex-direction:column;gap:11px}
+.script-cat{display:flex;flex-direction:column;gap:7px}
+.script-cat-label{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--signal-dim)}
+.btn.quick.script-btn{height:34px}
+.btn.quick.script-btn.danger{color:var(--danger);border-color:rgba(255,93,99,.3)}
+.btn.quick.script-btn.danger:hover{background:rgba(255,93,99,.1);color:#ffd2d4}
+
 /* ---------------------------------------------------------------------------
    Barre d'état (bas)
    --------------------------------------------------------------------------- */

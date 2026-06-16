@@ -4,15 +4,21 @@ Toutes les routes nécessitent une session authentifiée (``login_required``).
 La création de commandes et le journal d'audit sont réservés aux administrateurs
 (``admin_required``).
 """
+import base64
+import io
 import re
 import uuid
 from datetime import timedelta
 
-from flask import Blueprint, current_app, g, jsonify, request
+import pyotp
+import qrcode
+from flask import Blueprint, current_app, g, jsonify, request, session
 
 from .extensions import db
 from .models import (
     Agent,
+    Alert,
+    AlertRule,
     AuditLog,
     Command,
     CommandResult,
@@ -26,9 +32,11 @@ from .models import utcnow
 from .security import (
     admin_required,
     generate_session_token,
+    hash_password,
     hash_token,
     login_required,
     store_session_token,
+    verify_password,
     write_audit,
 )
 
@@ -597,3 +605,223 @@ def quick_action(agent_id):
     db.session.commit()
 
     return jsonify({"command_id": str(cmd.id)}), 201
+
+
+# --------------------------------------------------------------------------
+# GET /alerts?status=active|all — liste des alertes du parc
+# --------------------------------------------------------------------------
+@bp.get("/alerts")
+@login_required
+def list_alerts():
+    """Liste des alertes, triées par déclenchement décroissant (max 300).
+
+    Le paramètre ``status`` vaut ``active`` (défaut, alertes non résolues) ou
+    ``all`` (toutes). Le type et le seuil proviennent de la règle (``alert_rules``),
+    le hostname de l'agent (``agents``). Le champ ``active`` est dérivé :
+    ``resolved_at is null``.
+    """
+    status = (request.args.get("status") or "active").strip().lower()
+    if status not in ("active", "all"):
+        status = "active"
+
+    query = (
+        db.session.query(Alert, Agent, AlertRule)
+        .outerjoin(Agent, Alert.agent_id == Agent.id)
+        .outerjoin(AlertRule, Alert.rule_id == AlertRule.id)
+    )
+    if status == "active":
+        query = query.filter(Alert.resolved_at.is_(None))
+
+    rows = query.order_by(Alert.triggered_at.desc()).limit(300).all()
+
+    out = [
+        {
+            "id": alert.id,
+            "agent_id": str(alert.agent_id) if alert.agent_id else None,
+            "hostname": agent.hostname if agent else None,
+            "type": rule.type if rule else None,
+            "threshold": _num(rule.threshold) if rule else None,
+            "triggered_at": _iso_utc(alert.triggered_at),
+            "resolved_at": _iso_utc(alert.resolved_at),
+            "notified": bool(alert.notified),
+            "active": alert.resolved_at is None,
+        }
+        for alert, agent, rule in rows
+    ]
+    return jsonify(out), 200
+
+
+# --------------------------------------------------------------------------
+# GET /inventory/software?q= — inventaire logiciel agrégé du parc
+# --------------------------------------------------------------------------
+@bp.get("/inventory/software")
+@login_required
+def inventory_software():
+    """Inventaire logiciel agrégé du parc (max 500 lignes).
+
+    Regroupe par (name, version, publisher) distincts et compte le nombre
+    d'agents distincts portant chaque logiciel. Le filtre ``q`` (insensible à la
+    casse) s'applique au nom OU à l'éditeur. Tri par name puis version.
+    """
+    q = (request.args.get("q") or "").strip()
+
+    agent_count = db.func.count(db.func.distinct(SoftwareInventory.agent_id))
+    query = db.session.query(
+        SoftwareInventory.name,
+        SoftwareInventory.version,
+        SoftwareInventory.publisher,
+        agent_count.label("agent_count"),
+    )
+
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.filter(
+            db.or_(
+                db.func.lower(SoftwareInventory.name).like(like),
+                db.func.lower(SoftwareInventory.publisher).like(like),
+            )
+        )
+
+    rows = (
+        query.group_by(
+            SoftwareInventory.name,
+            SoftwareInventory.version,
+            SoftwareInventory.publisher,
+        )
+        .order_by(SoftwareInventory.name.asc(), SoftwareInventory.version.asc())
+        .limit(500)
+        .all()
+    )
+
+    out = [
+        {
+            "name": r.name,
+            "version": r.version,
+            "publisher": r.publisher,
+            "agent_count": int(r.agent_count or 0),
+        }
+        for r in rows
+    ]
+    return jsonify(out), 200
+
+
+# --------------------------------------------------------------------------
+# Réglages de l'utilisateur courant — mot de passe & MFA
+# --------------------------------------------------------------------------
+@bp.post("/settings/password")
+@login_required
+def settings_password():
+    """Change le mot de passe de l'utilisateur courant.
+
+    Body : ``{current_password, new_password}``. Vérifie l'ancien mot de passe,
+    impose un nouveau d'au moins 8 caractères, met à jour le hash et audite
+    ``settings.password``. 200 ``{ok}`` / 400 si trop court / 401 si ancien faux.
+    """
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password") or ""
+    new_password = data.get("new_password") or ""
+
+    user = g.user
+    if not verify_password(user.password_hash, current_password):
+        return jsonify({"error": "mot de passe actuel incorrect"}), 401
+    if len(new_password) < 8:
+        return jsonify({"error": "le nouveau mot de passe doit faire au moins 8 caractères"}), 400
+
+    user.password_hash = hash_password(new_password)
+    write_audit(action="settings.password", user_id=user.id, details={}, commit=False)
+    db.session.commit()
+    return jsonify({"ok": True}), 200
+
+
+@bp.get("/settings/mfa")
+@login_required
+def settings_mfa_status():
+    """Indique si le MFA est activé pour l'utilisateur courant."""
+    return jsonify({"enabled": bool(g.user.mfa_enabled)}), 200
+
+
+@bp.post("/settings/mfa/setup")
+@login_required
+def settings_mfa_setup():
+    """Génère un secret TOTP en attente et renvoie l'URI otpauth + QR code PNG.
+
+    Le secret est stocké EN ATTENTE dans la session Flask
+    (``session['pending_mfa_secret']``) ; il n'est confirmé qu'au passage par
+    ``/settings/mfa/enable``. Renvoie ``{secret, otpauth_uri, qr_png_base64}`` où
+    ``qr_png_base64`` est un data-URI ``data:image/png;base64,...``.
+    """
+    user = g.user
+    secret = pyotp.random_base32()
+    session["pending_mfa_secret"] = secret
+
+    otpauth_uri = pyotp.TOTP(secret).provisioning_uri(
+        name=user.email, issuer_name="TrueSight"
+    )
+
+    img = qrcode.make(otpauth_uri)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    qr_png_base64 = f"data:image/png;base64,{encoded}"
+
+    return (
+        jsonify(
+            {
+                "secret": secret,
+                "otpauth_uri": otpauth_uri,
+                "qr_png_base64": qr_png_base64,
+            }
+        ),
+        200,
+    )
+
+
+@bp.post("/settings/mfa/enable")
+@login_required
+def settings_mfa_enable():
+    """Active le MFA après vérification du code TOTP contre le secret en attente.
+
+    Body : ``{code}``. Vérifie le code contre ``session['pending_mfa_secret']``
+    (fenêtre ±1). Si OK : persiste le secret, active le MFA, purge la session en
+    attente et audite ``settings.mfa.enable``. 200 ``{ok}`` / 400 si code invalide
+    ou aucun secret en attente.
+    """
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip().replace(" ", "")
+
+    pending_secret = session.get("pending_mfa_secret")
+    if not pending_secret:
+        return jsonify({"error": "aucun secret MFA en attente"}), 400
+
+    if not pyotp.TOTP(pending_secret).verify(code, valid_window=1):
+        return jsonify({"error": "code MFA invalide"}), 400
+
+    user = g.user
+    user.mfa_secret = pending_secret
+    user.mfa_enabled = True
+    session.pop("pending_mfa_secret", None)
+    write_audit(action="settings.mfa.enable", user_id=user.id, details={}, commit=False)
+    db.session.commit()
+    return jsonify({"ok": True}), 200
+
+
+@bp.post("/settings/mfa/disable")
+@login_required
+def settings_mfa_disable():
+    """Désactive le MFA après vérification du mot de passe.
+
+    Body : ``{password}``. Si OK : efface le secret, désactive le MFA et audite
+    ``settings.mfa.disable``. 200 ``{ok}`` / 401 si mot de passe faux.
+    """
+    data = request.get_json(silent=True) or {}
+    password = data.get("password") or ""
+
+    user = g.user
+    if not verify_password(user.password_hash, password):
+        return jsonify({"error": "mot de passe incorrect"}), 401
+
+    user.mfa_secret = None
+    user.mfa_enabled = False
+    write_audit(action="settings.mfa.disable", user_id=user.id, details={}, commit=False)
+    db.session.commit()
+    return jsonify({"ok": True}), 200

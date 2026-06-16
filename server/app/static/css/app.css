@@ -422,6 +422,34 @@ textarea.input{
 .auth-cancel:hover{color:var(--dim)}
 
 /* ---------------------------------------------------------------------------
+   Sélecteur segmenté (filtre des alertes)
+   --------------------------------------------------------------------------- */
+.seg{display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
+.seg-btn{height:30px;padding:0 15px;border:none;background:none;color:var(--faint);font-family:var(--font-ui);font-size:12.5px;font-weight:600;border-radius:6px;cursor:pointer;transition:.16s}
+.seg-btn:hover{color:var(--dim)}
+.seg-btn.on{background:var(--bg-3);color:var(--signal);box-shadow:inset 0 0 0 1px var(--line-2)}
+
+/* ---------------------------------------------------------------------------
+   Réglages (compte / mot de passe / MFA)
+   --------------------------------------------------------------------------- */
+.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+@media (max-width:1100px){.set-grid{grid-template-columns:1fr}}
+.set-form{display:flex;flex-direction:column;gap:14px}
+.form-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:2px}
+.form-msg{font-size:12.5px;font-weight:500}
+.form-msg.ok{color:var(--ok)}
+.form-msg.err{color:var(--danger)}
+.pill{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;padding:6px 12px;border-radius:30px;border:1px solid var(--line-2);background:var(--bg-3);color:var(--dim)}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none;box-shadow:0 0 7px currentColor}
+.pill.on{color:var(--ok);border-color:rgba(52,226,176,.3);background:rgba(52,226,176,.06)}
+.pill.off{color:var(--faint)}
+.pill.off i{box-shadow:none}
+.mfa-state{margin-bottom:12px}
+.mfa-qr{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px;border:1px dashed var(--line-2);border-radius:var(--r);margin:14px 0;background:var(--bg-3)}
+.mfa-qr img{width:172px;height:172px;border-radius:8px;background:#fff;padding:8px;display:block}
+.mfa-secret{font-family:var(--font-mono);font-size:12px;color:var(--dim);letter-spacing:.1em;word-break:break-all;text-align:center;max-width:240px}
+
+/* ---------------------------------------------------------------------------
    Utilitaires
    --------------------------------------------------------------------------- */
 .hidden{display:none !important}

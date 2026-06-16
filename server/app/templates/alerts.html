@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Alertes{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="label">Supervision · seuils</div>
+    <h1>Alertes</h1>
+    <p class="sub">Déclenchements de seuils sur le parc — actualisation toutes les 15 secondes</p>
+  </div>
+  <!-- Sélecteur Actives / Toutes -->
+  <div class="seg" role="tablist" aria-label="Filtre des alertes">
+    <button type="button" class="seg-btn on" data-status="active" role="tab" aria-selected="true">Actives</button>
+    <button type="button" class="seg-btn" data-status="all" role="tab" aria-selected="false">Toutes</button>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <svg class="ico"><use href="#i-bell"/></svg>
+    <h2>Alertes</h2>
+    <span class="tag" id="alerts-count">—</span>
+  </div>
+  <div class="scroll-y sticky-head" style="max-height:none">
+    <table>
+      <thead>
+        <tr>
+          <th>Poste</th>
+          <th>Type</th>
+          <th>Seuil</th>
+          <th>Déclenchée</th>
+          <th>Résolue</th>
+          <th>Notifiée</th>
+        </tr>
+      </thead>
+      <tbody id="alerts-body">
+        <tr><td colspan="6" class="empty-cell">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/alerts.js') }}"></script>
+{% endblock %}

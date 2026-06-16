@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Inventaire logiciel{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="label">Parc · logiciels</div>
+    <h1>Inventaire logiciel</h1>
+    <p class="sub">Logiciels installés agrégés sur l'ensemble du parc — recherche via la barre du haut</p>
+  </div>
+  <button id="refresh" class="btn"><svg><use href="#i-refresh"/></svg>Rafraîchir</button>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <svg class="ico"><use href="#i-box"/></svg>
+    <h2>Logiciels installés</h2>
+    <span class="tag" id="inventory-count">—</span>
+  </div>
+  <div class="scroll-y sticky-head" style="max-height:none">
+    <table>
+      <thead>
+        <tr>
+          <th>Logiciel</th>
+          <th>Version</th>
+          <th>Éditeur</th>
+          <th class="num">Postes</th>
+        </tr>
+      </thead>
+      <tbody id="inventory-body">
+        <tr><td colspan="4" class="empty-cell">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/inventory.js') }}"></script>
+{% endblock %}

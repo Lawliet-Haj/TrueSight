@@ -195,3 +195,24 @@ def agent_detail_page(agent_id):
 def audit_page():
     """Journal d'audit (réservé aux administrateurs)."""
     return render_template("audit.html", user=g.user)
+
+
+@bp.get("/alerts")
+@login_required
+def alerts_page():
+    """Liste des alertes du parc (rafraîchie côté client via l'API JSON)."""
+    return render_template("alerts.html", user=g.user)
+
+
+@bp.get("/inventory")
+@login_required
+def inventory_page():
+    """Inventaire logiciel agrégé du parc (rafraîchi via l'API JSON)."""
+    return render_template("inventory.html", user=g.user)
+
+
+@bp.get("/settings")
+@login_required
+def settings_page():
+    """Réglages de l'utilisateur courant (mot de passe, MFA)."""
+    return render_template("settings.html", user=g.user)

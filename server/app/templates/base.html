@@ -34,8 +34,13 @@
        class="navi {% if request.endpoint in ('web.agents_page', 'web.agent_detail_page') %}on{% endif %}"
        title="Parc"><svg><use href="#i-grid"/></svg></a>
 
-    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-bell"/></svg></div>
-    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-box"/></svg></div>
+    <a href="{{ url_for('web.alerts_page') }}"
+       class="navi {% if request.endpoint == 'web.alerts_page' %}on{% endif %}"
+       title="Alertes"><svg><use href="#i-bell"/></svg></a>
+
+    <a href="{{ url_for('web.inventory_page') }}"
+       class="navi {% if request.endpoint == 'web.inventory_page' %}on{% endif %}"
+       title="Inventaire logiciel"><svg><use href="#i-box"/></svg></a>
 
     <div class="spacer"></div>
 
@@ -44,7 +49,9 @@
        class="navi {% if request.endpoint == 'web.audit_page' %}on{% endif %}"
        title="Journal d'audit"><svg><use href="#i-shield"/></svg></a>
     {% endif %}
-    <div class="navi disabled" title="Bientôt" aria-disabled="true"><svg><use href="#i-cog"/></svg></div>
+    <a href="{{ url_for('web.settings_page') }}"
+       class="navi {% if request.endpoint == 'web.settings_page' %}on{% endif %}"
+       title="Réglages"><svg><use href="#i-cog"/></svg></a>
   </aside>
 
   <div class="main">
@@ -138,6 +145,10 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 10.5V8a4 4 0 018 0v2.5M12 14.5v2.5"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v8M7.5 6.5a8 8 0 109 0"/></symbol>
   <symbol id="i-message" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-4 4v-4H4a1 1 0 01-1-1V6a1 1 0 011-1z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4 10-10"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3l9 16H3zM12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/></symbol>
 </defs></svg>
 
 {% block scripts %}{% endblock %}

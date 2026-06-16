@@ -473,3 +473,223 @@ def test_quick_action_message_requires_text(client, admin_session):
         json={"action": "message", "text": ""},
     )
     assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Alertes (GET /api/v1/alerts)
+# --------------------------------------------------------------------------
+def _seed_alert(app, agent_id, rule_type, threshold, resolved=False):
+    """Crée directement une alerte (et sa règle si besoin) en base pour les tests."""
+    import uuid as _uuid
+
+    from app.extensions import db
+    from app.models import Alert, AlertRule, utcnow
+
+    with app.app_context():
+        rule = db.session.query(AlertRule).filter_by(type=rule_type).first()
+        if rule is None:
+            rule = AlertRule(type=rule_type, threshold=threshold, is_active=True)
+            db.session.add(rule)
+            db.session.flush()
+        alert = Alert(
+            agent_id=_uuid.UUID(str(agent_id)),
+            rule_id=rule.id,
+            triggered_at=utcnow(),
+            resolved_at=utcnow() if resolved else None,
+            notified=False,
+        )
+        db.session.add(alert)
+        db.session.commit()
+        return alert.id
+
+
+def test_alerts_requires_login(client):
+    """L'API des alertes renvoie 401 sans session."""
+    resp = client.get("/api/v1/alerts", headers={"Accept": "application/json"})
+    assert resp.status_code == 401
+
+
+def test_alerts_list_structure_and_status_filter(client, admin_session, app):
+    """La liste des alertes a la bonne structure et le filtre status fonctionne."""
+    agent_id, _ = _enroll(client, "MACHINE-ALERTS")
+    _seed_alert(app, agent_id, "cpu_high", 90.0, resolved=False)
+    _seed_alert(app, agent_id, "disk_low", 10.0, resolved=True)
+
+    # Défaut : status=active -> seules les alertes non résolues.
+    resp = admin_session.get("/api/v1/alerts")
+    assert resp.status_code == 200
+    active = resp.get_json()
+    assert len(active) == 1
+    a = active[0]
+    for key in (
+        "id", "agent_id", "hostname", "type", "threshold",
+        "triggered_at", "resolved_at", "notified", "active",
+    ):
+        assert key in a
+    assert a["hostname"] == "PC-TEST-01"
+    assert a["type"] == "cpu_high"
+    assert a["threshold"] == 90.0
+    assert a["active"] is True
+    assert a["resolved_at"] is None
+    assert a["notified"] is False
+
+    # status=all -> les deux alertes (active + résolue).
+    resp_all = admin_session.get("/api/v1/alerts?status=all")
+    assert resp_all.status_code == 200
+    rows = resp_all.get_json()
+    assert len(rows) == 2
+    assert any(r["active"] is False and r["resolved_at"] is not None for r in rows)
+
+
+# --------------------------------------------------------------------------
+# Inventaire logiciel agrégé (GET /api/v1/inventory/software)
+# --------------------------------------------------------------------------
+def _post_inventory(client, agent_id, token, software):
+    """Pousse un inventaire (matériel minimal + logiciels) pour un agent."""
+    payload = {
+        "hardware": {"manufacturer": "Dell Inc.", "model": "Latitude"},
+        "software": software,
+    }
+    resp = client.post(
+        f"/api/v1/agents/{agent_id}/inventory", json=payload, headers=_auth(token)
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+
+def test_inventory_software_aggregation_and_filter(client, admin_session):
+    """L'inventaire logiciel est agrégé (agent_count) et filtrable via q."""
+    aid1, tok1 = _enroll(client, "MACHINE-INV-1")
+    aid2, tok2 = _enroll(client, "MACHINE-INV-2")
+
+    chrome = {"name": "Google Chrome", "version": "125.0", "publisher": "Google LLC"}
+    seven = {"name": "7-Zip", "version": "23.01", "publisher": "Igor Pavlov"}
+    firefox = {"name": "Mozilla Firefox", "version": "126.0", "publisher": "Mozilla"}
+
+    # Chrome sur les deux postes -> agent_count = 2 ; 7-Zip et Firefox sur un seul.
+    _post_inventory(client, aid1, tok1, [chrome, seven])
+    _post_inventory(client, aid2, tok2, [chrome, firefox])
+
+    resp = admin_session.get("/api/v1/inventory/software")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["Google Chrome"]["agent_count"] == 2
+    assert by_name["Google Chrome"]["version"] == "125.0"
+    assert by_name["Google Chrome"]["publisher"] == "Google LLC"
+    assert by_name["7-Zip"]["agent_count"] == 1
+    # Tri par name croissant.
+    names = [r["name"] for r in rows]
+    assert names == sorted(names)
+
+    # Filtre q insensible à la casse sur le nom.
+    resp_q = admin_session.get("/api/v1/inventory/software?q=chrome")
+    assert resp_q.status_code == 200
+    q_rows = resp_q.get_json()
+    assert len(q_rows) == 1
+    assert q_rows[0]["name"] == "Google Chrome"
+
+    # Filtre q sur l'éditeur.
+    resp_pub = admin_session.get("/api/v1/inventory/software?q=mozilla")
+    assert {r["name"] for r in resp_pub.get_json()} == {"Mozilla Firefox"}
+
+
+# --------------------------------------------------------------------------
+# Réglages — mot de passe
+# --------------------------------------------------------------------------
+def test_settings_password_change_success(client, admin_session):
+    """Changer le mot de passe avec le bon ancien et un nouveau valide : 200."""
+    resp = admin_session.post(
+        "/api/v1/settings/password",
+        json={
+            "current_password": TestConfig.ADMIN_PASSWORD,
+            "new_password": "nouveau-mot-de-passe-1",
+        },
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert resp.get_json()["ok"] is True
+
+    # L'audit enregistre settings.password.
+    audit = admin_session.get("/api/v1/audit?limit=50")
+    assert "settings.password" in [e["action"] for e in audit.get_json()]
+
+
+def test_settings_password_wrong_current(client, admin_session):
+    """Un mot de passe actuel erroné renvoie 401."""
+    resp = admin_session.post(
+        "/api/v1/settings/password",
+        json={"current_password": "faux", "new_password": "nouveau-mot-de-passe-1"},
+    )
+    assert resp.status_code == 401
+
+
+def test_settings_password_too_short(client, admin_session):
+    """Un nouveau mot de passe de moins de 8 caractères renvoie 400."""
+    resp = admin_session.post(
+        "/api/v1/settings/password",
+        json={"current_password": TestConfig.ADMIN_PASSWORD, "new_password": "court"},
+    )
+    assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Réglages — MFA (cycle setup -> enable -> disable)
+# --------------------------------------------------------------------------
+def test_settings_mfa_setup_enable_disable_cycle(client, admin_session):
+    """Cycle MFA complet : statut initial, setup, enable (code TOTP), disable."""
+    import pyotp
+
+    # Statut initial : désactivé.
+    status0 = admin_session.get("/api/v1/settings/mfa")
+    assert status0.status_code == 200
+    assert status0.get_json()["enabled"] is False
+
+    # Setup : renvoie un secret + URI otpauth + QR PNG en data-URI.
+    setup = admin_session.post("/api/v1/settings/mfa/setup")
+    assert setup.status_code == 200
+    sdata = setup.get_json()
+    assert sdata["secret"]
+    assert sdata["otpauth_uri"].startswith("otpauth://totp/")
+    assert "issuer=TrueSight" in sdata["otpauth_uri"]
+    assert sdata["qr_png_base64"].startswith("data:image/png;base64,")
+
+    # Enable avec un mauvais code -> 400.
+    bad = admin_session.post("/api/v1/settings/mfa/enable", json={"code": "000000"})
+    assert bad.status_code == 400
+
+    # Enable avec le bon code TOTP calculé depuis le secret en attente -> 200.
+    code = pyotp.TOTP(sdata["secret"]).now()
+    enable = admin_session.post("/api/v1/settings/mfa/enable", json={"code": code})
+    assert enable.status_code == 200, enable.get_data(as_text=True)
+    assert enable.get_json()["ok"] is True
+
+    # Le statut est désormais activé.
+    status1 = admin_session.get("/api/v1/settings/mfa")
+    assert status1.get_json()["enabled"] is True
+
+    # Disable avec un mauvais mot de passe -> 401.
+    bad_disable = admin_session.post(
+        "/api/v1/settings/mfa/disable", json={"password": "faux"}
+    )
+    assert bad_disable.status_code == 401
+
+    # Disable avec le bon mot de passe -> 200, MFA désactivé.
+    disable = admin_session.post(
+        "/api/v1/settings/mfa/disable",
+        json={"password": TestConfig.ADMIN_PASSWORD},
+    )
+    assert disable.status_code == 200
+    assert disable.get_json()["ok"] is True
+
+    status2 = admin_session.get("/api/v1/settings/mfa")
+    assert status2.get_json()["enabled"] is False
+
+    # L'audit contient enable + disable.
+    actions = [e["action"] for e in admin_session.get("/api/v1/audit?limit=50").get_json()]
+    assert "settings.mfa.enable" in actions
+    assert "settings.mfa.disable" in actions
+
+
+def test_settings_mfa_enable_without_pending(client, admin_session):
+    """Enable sans secret en attente renvoie 400."""
+    resp = admin_session.post("/api/v1/settings/mfa/enable", json={"code": "123456"})
+    assert resp.status_code == 400

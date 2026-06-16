@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Réglages{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="label">Compte · sécurité</div>
+    <h1>Réglages</h1>
+    <p class="sub">Mot de passe et double authentification (MFA) de votre compte</p>
+  </div>
+</div>
+
+<!-- Compte (lecture seule) -->
+<div class="panel" style="margin-bottom:14px">
+  <div class="phead"><svg class="ico"><use href="#i-cog"/></svg><h2>Compte</h2></div>
+  <div class="pbody">
+    <div class="dl">
+      <div class="kv"><dt>Adresse e-mail</dt><dd class="mono">{{ user.email }}</dd></div>
+      <div class="kv"><dt>Rôle</dt><dd>{{ 'Administrateur' if user.role == 'admin' else 'Lecture seule' }}</dd></div>
+    </div>
+  </div>
+</div>
+
+<div class="set-grid">
+  <!-- Mot de passe -->
+  <div class="panel">
+    <div class="phead"><svg class="ico"><use href="#i-lock"/></svg><h2>Mot de passe</h2></div>
+    <div class="pbody">
+      <form id="pw-form" class="set-form" autocomplete="off">
+        <div class="field">
+          <label for="pw-current">Mot de passe actuel</label>
+          <input type="password" id="pw-current" required autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="pw-new">Nouveau mot de passe</label>
+          <input type="password" id="pw-new" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="pw-confirm">Confirmer le nouveau</label>
+          <input type="password" id="pw-confirm" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn go">Changer le mot de passe</button>
+          <span class="form-msg" id="pw-msg"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Double authentification -->
+  <div class="panel">
+    <div class="phead">
+      <svg class="ico"><use href="#i-shield"/></svg>
+      <h2>Double authentification</h2>
+      <span class="tag" id="mfa-tag">—</span>
+    </div>
+    <div class="pbody">
+      <div class="mfa-state">
+        <span class="pill off" id="mfa-pill"><i></i><span id="mfa-pill-text">…</span></span>
+      </div>
+      <p class="sub" id="mfa-help" style="margin-bottom:14px"></p>
+
+      <!-- Bloc activation (MFA désactivé) -->
+      <div id="mfa-disabled-block" class="hidden">
+        <button type="button" class="btn go" id="mfa-start">Activer le MFA</button>
+        <div id="mfa-setup" class="mfa-setup hidden">
+          <div class="mfa-qr">
+            <img id="mfa-qr-img" alt="QR code à scanner">
+            <div class="mfa-secret" id="mfa-secret"></div>
+          </div>
+          <form id="mfa-enable-form" class="set-form">
+            <div class="field">
+              <label for="mfa-code">Code à 6 chiffres</label>
+              <input type="text" id="mfa-code" class="code-input" inputmode="numeric"
+                     pattern="[0-9 ]*" maxlength="9" autocomplete="one-time-code" required>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn go">Confirmer l'activation</button>
+              <span class="form-msg" id="mfa-enable-msg"></span>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Bloc désactivation (MFA activé) -->
+      <div id="mfa-enabled-block" class="hidden">
+        <form id="mfa-disable-form" class="set-form">
+          <div class="field">
+            <label for="mfa-pw">Mot de passe (pour désactiver)</label>
+            <input type="password" id="mfa-pw" autocomplete="current-password" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn danger">Désactiver le MFA</button>
+            <span class="form-msg" id="mfa-disable-msg"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

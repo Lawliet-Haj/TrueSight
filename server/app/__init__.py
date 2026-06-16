@@ -64,6 +64,9 @@ def create_app(config_object: type | None = None) -> Flask:
     # --- Gestion d'erreurs JSON pour l'API ---
     _register_error_handlers(app)
 
+    # --- En-têtes de sécurité HTTP (défense en profondeur) ---
+    _register_security_headers(app)
+
     # --- Initialisation base + seed ---
     with app.app_context():
         from . import seed
@@ -78,6 +81,44 @@ def create_app(config_object: type | None = None) -> Flask:
     tasks.start_background(app)
 
     return app
+
+
+def _register_security_headers(app: Flask):
+    """Ajoute des en-têtes de sécurité HTTP sur toutes les réponses.
+
+    - ``X-Content-Type-Options: nosniff`` : pas de sniffing de type MIME.
+    - ``X-Frame-Options: DENY`` + ``frame-ancestors 'none'`` : anti-clickjacking
+      (le dashboard n'est jamais censé être affiché dans une iframe).
+    - ``Referrer-Policy`` / ``Permissions-Policy`` : limite les fuites et désactive
+      les API navigateur inutiles (caméra, micro, géoloc).
+    - ``Strict-Transport-Security`` : envoyé UNIQUEMENT sur une requête HTTPS
+      (``request.is_secure`` reflète X-Forwarded-Proto via ProxyFix), pour ne pas
+      casser l'accès HTTP de la pile de test.
+    - ``Content-Security-Policy`` : envoyée si ``CONTENT_SECURITY_POLICY`` est
+      définie (désactivée par défaut tant qu'elle n'a pas été validée navigateur,
+      pour ne pas risquer de bloquer le bureau à distance / les CDN).
+    """
+    from flask import request
+
+    hsts_enabled = app.config.get("ENABLE_HSTS", True)
+    csp = (app.config.get("CONTENT_SECURITY_POLICY") or "").strip()
+
+    @app.after_request
+    def _set_security_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers.setdefault(
+            "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
+        )
+        if csp:
+            resp.headers.setdefault("Content-Security-Policy", csp)
+        if hsts_enabled and request.is_secure:
+            resp.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
+        return resp
 
 
 def _register_error_handlers(app: Flask):

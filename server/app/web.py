@@ -3,7 +3,10 @@
 Gère l'authentification par session avec étape MFA TOTP optionnelle, et rend les
 pages : accueil/agents, fiche poste, journal d'audit, login/logout.
 """
+import time
 import uuid
+from collections import defaultdict
+from threading import Lock
 
 import pyotp
 from flask import (
@@ -28,6 +31,48 @@ from .security import (
 )
 
 bp = Blueprint("web", __name__)
+
+
+# --------------------------------------------------------------------------
+# Anti-bruteforce du dashboard (login + MFA) — limiteur mémoire par IP
+# --------------------------------------------------------------------------
+# Toute étape d'authentification ÉCHOUÉE (mot de passe OU code MFA) incrémente le
+# compteur de l'IP sur une fenêtre glissante ; au-delà du quota, on renvoie 429
+# le temps que la fenêtre se vide. Une connexion PLEINEMENT réussie remet à zéro.
+# Même principe que le rate-limit de /enroll (api_agent). En mémoire de worker :
+# suffisant pour freiner une attaque par dictionnaire ; un Redis serait nécessaire
+# seulement pour un quota strict multi-worker (hors périmètre actuel).
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_MAX_FAILURES = 10
+_login_failures: dict[str, list[float]] = defaultdict(list)
+_login_lock = Lock()
+
+
+def _client_ip() -> str:
+    """IP cliente réelle (X-Forwarded-For via ProxyFix), ou '?' hors contexte."""
+    return (request.remote_addr or "?") if request else "?"
+
+
+def _login_blocked(ip: str) -> bool:
+    """True si l'IP a dépassé le quota d'échecs d'authentification sur la fenêtre."""
+    now = time.monotonic()
+    with _login_lock:
+        hits = _login_failures[ip]
+        cutoff = now - _LOGIN_WINDOW_SECONDS
+        hits[:] = [t for t in hits if t > cutoff]
+        return len(hits) >= _LOGIN_MAX_FAILURES
+
+
+def _record_login_failure(ip: str) -> None:
+    """Enregistre un échec d'authentification pour l'IP."""
+    with _login_lock:
+        _login_failures[ip].append(time.monotonic())
+
+
+def _clear_login_failures(ip: str) -> None:
+    """Réinitialise le compteur d'échecs de l'IP (connexion réussie)."""
+    with _login_lock:
+        _login_failures.pop(ip, None)
 
 
 # --------------------------------------------------------------------------
@@ -58,12 +103,20 @@ def login_post():
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
     next_url = request.form.get("next", "")
+    ip = _client_ip()
+
+    # Anti-bruteforce : on bloque avant toute vérification coûteuse.
+    if _login_blocked(ip):
+        write_audit(action="login.blocked", details={"email": email})
+        flash("Trop de tentatives échouées. Réessayez dans quelques minutes.", "error")
+        return render_template("login.html", next=next_url), 429
 
     user = db.session.query(User).filter(
         db.func.lower(User.email) == email
     ).one_or_none()
 
     if user is None or not user.is_active or not verify_password(user.password_hash, password):
+        _record_login_failure(ip)
         write_audit(
             action="login.fail",
             user_id=user.id if user else None,
@@ -74,12 +127,15 @@ def login_post():
 
     if user.mfa_enabled and user.mfa_secret:
         # Étape MFA : on mémorise l'utilisateur en attente de validation TOTP.
+        # (Le compteur d'échecs n'est PAS réinitialisé tant que le MFA n'est pas
+        # validé — un mot de passe correct seul ne lève pas la limitation.)
         session.clear()
         session["pending_mfa_user_id"] = str(user.id)
         session["pending_next"] = next_url
         return redirect(url_for("web.mfa"))
 
-    # Connexion directe (pas de MFA).
+    # Connexion directe (pas de MFA) : succès complet → reset du compteur.
+    _clear_login_failures(ip)
     _establish_session(user)
     write_audit(action="login.success", user_id=user.id, details={"mfa": False})
     return _redirect_after_login(next_url)
@@ -100,6 +156,12 @@ def mfa_post():
     if not pending_id:
         return redirect(url_for("web.login"))
 
+    ip = _client_ip()
+    if _login_blocked(ip):
+        write_audit(action="login.blocked", details={"step": "mfa"})
+        flash("Trop de tentatives échouées. Réessayez dans quelques minutes.", "error")
+        return render_template("mfa.html"), 429
+
     try:
         uid = uuid.UUID(str(pending_id))
     except (ValueError, TypeError):
@@ -117,6 +179,7 @@ def mfa_post():
 
     totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(code, valid_window=1):
+        _record_login_failure(ip)
         write_audit(
             action="login.fail",
             user_id=user.id,
@@ -125,6 +188,7 @@ def mfa_post():
         flash("Code MFA invalide.", "error")
         return render_template("mfa.html"), 401
 
+    _clear_login_failures(ip)
     _establish_session(user)
     write_audit(action="login.success", user_id=user.id, details={"mfa": True})
     return _redirect_after_login(next_url)

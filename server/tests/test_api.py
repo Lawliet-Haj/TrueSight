@@ -37,9 +37,10 @@ def _reset_enroll_rate_limit():
     des différents tests finit par déclencher le 429 et rend la suite dépendante
     de l'ordre d'exécution.
     """
-    from app import api_agent
+    from app import api_agent, web
 
     api_agent._enroll_hits.clear()
+    web._login_failures.clear()
     yield
 
 
@@ -797,3 +798,57 @@ def test_user_guards_last_superadmin_and_self(client, admin_session):
     assert admin_session.post(f"/api/v1/users/{uid}/role", json={"role": "viewer"}).status_code == 409
     assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": False}).status_code == 409
     assert admin_session.delete(f"/api/v1/users/{uid}").status_code == 409
+
+
+# --------------------------------------------------------------------------
+# Durcissement : en-têtes de sécurité + anti-bruteforce du login
+# --------------------------------------------------------------------------
+def test_security_headers_present(client):
+    """Les en-têtes de sécurité de base sont posés sur toute réponse."""
+    resp = client.get("/login")
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    assert resp.headers.get("X-Frame-Options") == "DENY"
+    assert "Referrer-Policy" in resp.headers
+    assert "Permissions-Policy" in resp.headers
+    # En HTTP (pile de test), pas de HSTS.
+    assert "Strict-Transport-Security" not in resp.headers
+
+
+def test_login_bruteforce_rate_limited(client):
+    """Après trop d'échecs de connexion, l'IP est temporairement bloquée (429)."""
+    from app import web
+
+    # Les 10 premières tentatives erronées renvoient 401.
+    for _ in range(web._LOGIN_MAX_FAILURES):
+        r = client.post("/login", data={"email": "admin@test.local", "password": "faux"})
+        assert r.status_code == 401
+
+    # La suivante est bloquée (429), MÊME avec le bon mot de passe.
+    blocked = client.post(
+        "/login",
+        data={"email": TestConfig.ADMIN_EMAIL, "password": TestConfig.ADMIN_PASSWORD},
+    )
+    assert blocked.status_code == 429
+
+    # L'audit conserve les échecs et le blocage.
+    web._login_failures.clear()
+    actions = []
+    # On se connecte proprement pour lire l'audit.
+    client.post("/login", data={"email": TestConfig.ADMIN_EMAIL, "password": TestConfig.ADMIN_PASSWORD})
+    actions = [e["action"] for e in client.get("/api/v1/audit?limit=100").get_json()]
+    assert "login.fail" in actions
+    assert "login.blocked" in actions
+
+
+def test_login_success_clears_failures(client):
+    """Une connexion réussie réinitialise le compteur d'échecs de l'IP."""
+    from app import web
+
+    for _ in range(3):
+        client.post("/login", data={"email": "admin@test.local", "password": "faux"})
+    assert web._login_failures.get("127.0.0.1")  # des échecs ont bien été comptés
+    client.post(
+        "/login",
+        data={"email": TestConfig.ADMIN_EMAIL, "password": TestConfig.ADMIN_PASSWORD},
+    )
+    assert "127.0.0.1" not in web._login_failures

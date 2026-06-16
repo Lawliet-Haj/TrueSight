@@ -61,6 +61,19 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     PERMANENT_SESSION_LIFETIME = _get_int("SESSION_LIFETIME_SECONDS", 3600)
 
+    # --- En-têtes de sécurité HTTP --------------------------------------
+    # HSTS n'est émis que sur une requête HTTPS (cf. _register_security_headers).
+    ENABLE_HSTS = _get_bool("ENABLE_HSTS", True)
+    # Content-Security-Policy : désactivée par défaut (chaîne vide) tant qu'elle
+    # n'a pas été validée en navigateur — une CSP trop stricte casserait les CDN
+    # (Chart.js, xterm) ou le WebSocket du bureau à distance. Politique recommandée
+    # à activer une fois en HTTPS (à poser dans le .env, sur UNE ligne) :
+    #   default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
+    #   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;
+    #   font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;
+    #   connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+    CONTENT_SECURITY_POLICY = os.environ.get("CONTENT_SECURITY_POLICY", "").strip()
+
     # --- Secrets métier --------------------------------------------------
     ENROLLMENT_TOKEN = os.environ.get("ENROLLMENT_TOKEN", "dev-enrollment-token")
 

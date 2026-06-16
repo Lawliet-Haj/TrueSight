@@ -305,14 +305,22 @@ class ApiClient:
 
         return ApiResult(False, error=last_error)
 
-    def heartbeat(self, metrics: dict) -> ApiResult:
-        """POST /api/v1/agents/{agent_id}/heartbeat → {ok, pending_commands, config}."""
+    def heartbeat(self, metrics: dict, meta: dict | None = None) -> ApiResult:
+        """POST /api/v1/agents/{agent_id}/heartbeat → {ok, pending_commands, config}.
+
+        ``meta`` (optionnel) transporte les métadonnées du poste (os_version,
+        agent_version, hostname) pour que le serveur les rafraîchisse sans
+        ré-enrôlement (ex. après une mise à niveau Windows 10 → 11).
+        """
         if not self._agent_id:
             return ApiResult(False, error="heartbeat sans agent_id.")
+        body = {"metrics": metrics}
+        if meta:
+            body.update(meta)
         return self._request(
             "POST",
             f"/agents/{self._agent_id}/heartbeat",
-            json_body={"metrics": metrics},
+            json_body=body,
         )
 
     def send_inventory(self, hardware: dict, software: list) -> ApiResult:

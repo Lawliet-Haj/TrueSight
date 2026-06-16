@@ -878,3 +878,27 @@ def test_agent_detail_workzone_hidden_for_viewer(client, admin_session):
     html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
     assert "remote-start" not in html
     assert "terminal-open" not in html
+
+
+# --------------------------------------------------------------------------
+# Heartbeat : rafraîchit les métadonnées du poste (os_version, agent_version)
+# --------------------------------------------------------------------------
+def test_heartbeat_refreshes_metadata(client, admin_session):
+    """Un heartbeat portant os_version/agent_version met à jour la fiche poste
+    sans ré-enrôlement (ex. correction Windows 10 → 11)."""
+    agent_id, token = _enroll(client, "MACHINE-OSREFRESH")
+
+    r = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={
+            "metrics": {"cpu_pct": 5, "ram_used_pct": 40},
+            "os_version": "Windows 11 Professional 26220",
+            "agent_version": "1.2.3",
+        },
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+
+    detail = admin_session.get(f"/api/v1/agents/{agent_id}").get_json()
+    assert detail["os_version"] == "Windows 11 Professional 26220"
+    assert detail["agent_version"] == "1.2.3"

@@ -268,10 +268,17 @@ class AgentRunner:
     # -- Boucle heartbeat -----------------------------------------------------
     def _heartbeat_loop(self) -> None:
         _logger.info("Boucle heartbeat démarrée (intervalle %ss).", self.config.heartbeat_interval)
+        # Métadonnées du poste, jointes au heartbeat pour que le serveur les
+        # rafraîchisse sans ré-enrôlement (ex. correction Windows 10 → 11, MAJ agent).
+        meta = {
+            "os_version": cfg.get_os_version(),
+            "agent_version": __version__,
+            "hostname": cfg.get_hostname(),
+        }
         while not self._stop_event.is_set():
             try:
                 metrics = collectors.collect_metrics()
-                result = self.client.heartbeat(metrics)
+                result = self.client.heartbeat(metrics, meta=meta)
                 if result.ok and isinstance(result.data, dict):
                     # Pilotage central des intervalles.
                     server_config = result.data.get("config")

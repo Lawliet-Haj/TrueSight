@@ -356,6 +356,11 @@ def get_os_version() -> str:
         version = platform.version() or ""
         # version Windows ressemble à '10.0.26100' : on garde le numéro de build.
         build = version.split(".")[-1] if version else ""
+        # Windows 11 se présente comme version 10.0.x : platform.release() renvoie
+        # "10" alors que le build est >= 22000. On rectifie via le numéro de build
+        # (sinon un poste Windows 11 s'affiche à tort « Windows 10 »).
+        if os.name == "nt" and release == "10" and build.isdigit() and int(build) >= 22000:
+            release = "11"
         edition = ""
         if os.name == "nt":
             # platform.win32_edition() existe depuis Python 3.8 sous Windows.

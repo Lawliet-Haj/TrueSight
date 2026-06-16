@@ -230,6 +230,15 @@ def heartbeat(agent_id):
 
     agent.last_seen_at = utcnow()
 
+    # Rafraîchit les métadonnées si l'agent les envoie (sans ré-enrôlement) :
+    # corrige p.ex. un libellé d'OS obsolète ou une montée de version d'agent.
+    if isinstance(data.get("os_version"), str) and data["os_version"]:
+        agent.os_version = data["os_version"]
+    if isinstance(data.get("agent_version"), str) and data["agent_version"]:
+        agent.agent_version = data["agent_version"]
+    if isinstance(data.get("hostname"), str) and data["hostname"]:
+        agent.hostname = data["hostname"]
+
     metric = Metric(
         agent_id=agent.id,
         ts=utcnow(),

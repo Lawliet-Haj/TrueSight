@@ -182,7 +182,8 @@ button{font-family:inherit}
    Panneaux
    --------------------------------------------------------------------------- */
 .panel{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;animation:rise .6s cubic-bezier(.2,.7,.2,1) both;animation-delay:.18s}
-.phead{display:flex;align-items:center;gap:10px;padding:14px 17px;border-bottom:1px solid var(--line)}
+.phead{display:flex;align-items:center;gap:10px;padding:14px 17px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.phead .fleet-filter{margin-left:auto}
 .phead h2{font-size:13.5px;font-weight:600;letter-spacing:.01em}
 .phead .tag{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;color:var(--faint);margin-left:auto;text-transform:uppercase;white-space:nowrap}
 .phead .ico{width:18px;height:18px;color:var(--signal);flex:none}
@@ -335,7 +336,7 @@ textarea.input{
 .rscreen .placeholder svg{width:34px;height:34px;color:var(--signal-dim);margin-bottom:10px;opacity:.7}
 .rscreen .placeholder .t{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;color:var(--dim)}
 .rscreen.has-stream .placeholder{display:none}
-.rfoot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line);background:var(--bg-2)}
+.rfoot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line);background:var(--bg-2);flex-wrap:wrap}
 .rfoot .btn{flex:1}
 .remote-monitors{display:flex;gap:6px;align-items:center;padding:0 14px 11px;flex-wrap:wrap}
 .remote-monitors .field-label{margin-right:2px}

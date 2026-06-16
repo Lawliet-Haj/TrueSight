@@ -13,6 +13,7 @@
   var IS_ADMIN = !!(pd && pd.getAttribute("data-is-admin") === "1");
   var COLSPAN = IS_ADMIN ? 8 : 7;
   var selected = {};  // { agent_id: true } — sélection persistée entre rafraîchissements
+  var statusFilter = "all";  // all | online | offline | alert
 
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -110,6 +111,12 @@
     Object.keys(selected).forEach(function (id) { if (!present[id]) delete selected[id]; });
 
     var filtered = rows.filter(function (r) {
+      if (statusFilter !== "all") {
+        var st = rowState(r);
+        if (statusFilter === "online" && st === "off") return false;
+        if (statusFilter === "offline" && st !== "off") return false;
+        if (statusFilter === "alert" && st !== "alert") return false;
+      }
       if (!filter) return true;
       var hay = [r.hostname, r.os_version, (r.tags || []).join(" ")].join(" ").toLowerCase();
       return hay.indexOf(filter) !== -1;
@@ -309,6 +316,20 @@
       if (globalSearch) { e.preventDefault(); globalSearch.focus(); }
     }
   });
+
+  // Filtre d'état (Tous / En ligne / Hors ligne / Alerte) — pour tous les rôles.
+  var fleetFilter = document.getElementById("fleet-filter");
+  if (fleetFilter) {
+    Array.prototype.forEach.call(fleetFilter.querySelectorAll(".seg-btn"), function (btn) {
+      btn.addEventListener("click", function () {
+        statusFilter = btn.getAttribute("data-st") || "all";
+        Array.prototype.forEach.call(fleetFilter.querySelectorAll(".seg-btn"), function (b) {
+          b.classList.toggle("on", b === btn);
+        });
+        render(lastData);
+      });
+    });
+  }
 
   if (IS_ADMIN) setupBulk();
   load();

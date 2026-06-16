@@ -1,0 +1,122 @@
+# =============================================================================
+# TrueSight — Stack PRODUCTION derrière le Traefik existant du VPS (HTTPS/wss)
+# -----------------------------------------------------------------------------
+# Le VPS héberge déjà Traefik v3 sur 80/443 (provider Docker, réseau root_default,
+# certresolver Let's Encrypt « mytlschallenge » en TLS-ALPN). Cette pile branche
+# TrueSight DERRIÈRE ce Traefik — sans nginx, sans toucher aux 80/443 ni à n8n :
+#   - web   (gunicorn :8000)  -> routeur Host(srv778935.hstgr.cloud)
+#   - relay (:8765)           -> routeur Host(...) && PathPrefix(/ws/remote)  [wss]
+# Traefik termine le TLS et transmet X-Forwarded-Proto=https (ProxyFix le lit) →
+# le serveur construit des URL wss correctes pour le bureau à distance / terminal.
+#
+# La base réutilise le VOLUME de la pile de test (truesight_pgdata_test via le même
+# projet « truesight ») : les agents déjà enrôlés et l'historique sont CONSERVÉS.
+#
+# Bascule (depuis /opt/truesight, projet « truesight ») :
+#   git pull
+#   docker compose -f docker-compose.test.yml down            # libère 8080 (volume conservé)
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   # Traefik émet le certificat Let's Encrypt automatiquement au 1er accès HTTPS.
+#
+# ⚠️ Après la bascule : mettre à jour le config.ini de l'agent pilote :
+#       url = https://srv778935.hstgr.cloud      (sans port)
+#       verify_tls = true
+#    puis relancer la tâche planifiée « TrueSight Agent ».
+# =============================================================================
+
+services:
+
+  db:
+    image: postgres:16
+    container_name: truesight-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: truesight
+      POSTGRES_PASSWORD: truesight
+      POSTGRES_DB: truesight
+    volumes:
+      # MÊME volume que la pile de test (projet « truesight ») → données conservées.
+      - pgdata_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truesight -d truesight"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - truesight_internal
+
+  web:
+    build: ./server
+    container_name: truesight-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Durcissement HTTPS (surcharge les valeurs du .env, qui restent en HTTP
+      # pour la pile de test). Cookies sécurisés + confiance au proxy Traefik.
+      SESSION_COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      ENABLE_HSTS: "true"
+      # CSP : à ACTIVER après une vérification navigateur en HTTPS (décommenter).
+      # Couvre les CDN utilisés (Chart.js, xterm), les polices, le QR MFA (data:)
+      # et le WebSocket du bureau à distance (connect-src ws:/wss:).
+      # CONTENT_SECURITY_POLICY: "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    expose:
+      - "8000"
+    networks:
+      - truesight_internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.truesight.rule=Host(`srv778935.hstgr.cloud`)"
+      - "traefik.http.routers.truesight.entrypoints=web,websecure"
+      - "traefik.http.routers.truesight.tls=true"
+      - "traefik.http.routers.truesight.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.truesight.loadbalancer.server.port=8000"
+
+  relay:
+    build: ./relay
+    container_name: truesight-relay
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    expose:
+      - "8765"
+    networks:
+      - truesight_internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      # Routeur dédié au WebSocket, plus prioritaire (chemin /ws/remote) que le
+      # routeur applicatif. Traefik transmet l'Upgrade WebSocket nativement.
+      - "traefik.http.routers.truesight-ws.rule=Host(`srv778935.hstgr.cloud`) && PathPrefix(`/ws/remote`)"
+      - "traefik.http.routers.truesight-ws.entrypoints=web,websecure"
+      - "traefik.http.routers.truesight-ws.tls=true"
+      - "traefik.http.routers.truesight-ws.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.truesight-ws.priority=100"
+      - "traefik.http.services.truesight-ws.loadbalancer.server.port=8765"
+
+# -----------------------------------------------------------------------------
+# Volumes : réutilise le volume de données de la pile de test (même projet).
+# -----------------------------------------------------------------------------
+volumes:
+  pgdata_test:
+
+# -----------------------------------------------------------------------------
+# Réseaux : un réseau interne (db <-> web/relay) + le réseau EXTERNE de Traefik.
+# -----------------------------------------------------------------------------
+networks:
+  truesight_internal:
+    driver: bridge
+  traefik:
+    external: true
+    name: root_default

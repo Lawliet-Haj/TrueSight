@@ -745,6 +745,31 @@
     });
   }
 
+  // --- Mode agrandi : la zone de travail remplit la fenêtre (zéro scroll) ---
+  function setupFocus() {
+    var btn = document.getElementById("workzone-focus");
+    if (!btn) return;
+    function activeTab() {
+      var t = document.querySelector(".workzone .tab[aria-selected='true']");
+      return t ? t.getAttribute("data-tab") : "remote";
+    }
+    function apply(on) {
+      document.body.classList.toggle("wz-focus", on);
+      btn.classList.toggle("on", on);
+      btn.title = on ? "Réduire (Échap)" : "Agrandir — remplir la fenêtre (Échap pour réduire)";
+      try { localStorage.setItem("ts-wz-focus", on ? "1" : "0"); } catch (e) { /* ignore */ }
+      // Laisse le layout s'appliquer puis prévient les composants (terminal → re-fit).
+      setTimeout(function () {
+        document.dispatchEvent(new CustomEvent("ts:tab-activated", { detail: { tab: activeTab() } }));
+      }, 60);
+    }
+    btn.addEventListener("click", function () { apply(!document.body.classList.contains("wz-focus")); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && document.body.classList.contains("wz-focus")) apply(false);
+    });
+    try { if (localStorage.getItem("ts-wz-focus") === "1") apply(true); } catch (e) { /* ignore */ }
+  }
+
   // --- Onglets de la zone de travail (bureau / terminal / commande) ---
   function setupTabs() {
     var tabs = Array.prototype.slice.call(document.querySelectorAll(".workzone .tab"));
@@ -794,6 +819,7 @@
     setupProcesses();
     setupActivity();
     setupTags();
+    setupFocus();
     setupTabs();
   }
 

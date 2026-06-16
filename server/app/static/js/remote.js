@@ -24,6 +24,7 @@
   var elStop = document.getElementById("remote-stop");
   var elControl = document.getElementById("remote-control");
   var elFull = document.getElementById("remote-fullscreen");
+  var elShot = document.getElementById("remote-shot");
   var elScreen = document.getElementById("remote-screen");
   var elCanvas = document.getElementById("pv-remote-canvas");
   var elBar = document.getElementById("remote-bar");
@@ -100,6 +101,7 @@
       elStop.classList.remove("hidden");
       elFull.disabled = false;
       elControl.disabled = false;
+      if (elShot) elShot.disabled = false;
     } else {
       elStart.classList.remove("hidden");
       elStart.disabled = false;
@@ -107,6 +109,7 @@
       elStop.classList.add("hidden");
       elFull.disabled = true;
       elControl.disabled = true;
+      if (elShot) elShot.disabled = true;
       setControlling(false);
     }
   }
@@ -549,6 +552,28 @@
       elScreen.requestFullscreen().catch(function () { /* ignore */ });
     }
   });
+
+  // Capture instantanée : télécharge l'image courante du canvas en PNG.
+  function takeScreenshot() {
+    if (!elCanvas.width || !elCanvas.height) return;
+    try {
+      elCanvas.toBlob(function (blob) {
+        if (!blob) return;
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var hostEl = document.getElementById("title-hostname");
+        var host = (hostEl ? hostEl.textContent : "poste").trim().replace(/\s+/g, "_") || "poste";
+        var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        a.href = url;
+        a.download = "truesight_" + host + "_" + ts + ".png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      }, "image/png");
+    } catch (e) { /* ignore */ }
+  }
+  if (elShot) elShot.addEventListener("click", function () { if (!elShot.disabled) takeScreenshot(); });
 
   // Ferme proprement la session si l'onglet est quitté.
   window.addEventListener("beforeunload", function () {

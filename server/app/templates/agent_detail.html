@@ -65,6 +65,10 @@
               aria-selected="false" aria-controls="panel-activity" data-tab="activity" tabindex="-1">
         <svg><use href="#i-clock"/></svg>Activité
       </button>
+      <span class="tablist-spacer"></span>
+      <button class="tab-tool" id="workzone-focus" type="button" title="Agrandir — remplir la fenêtre (Échap pour réduire)">
+        <svg><use href="#i-expand"/></svg>
+      </button>
     </div>
 
     <!-- Onglet : Bureau à distance -->
@@ -107,6 +111,7 @@
           </select>
           <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
           <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
+          <button class="btn" id="remote-shot" type="button" disabled title="Enregistrer une capture (PNG)"><svg><use href="#i-camera"/></svg>Capturer</button>
           <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>
           <button class="btn danger hidden" id="remote-stop" type="button"><svg><use href="#i-stop"/></svg>Fin de session</button>
         </div>

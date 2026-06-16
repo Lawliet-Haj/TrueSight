@@ -214,20 +214,24 @@
   function handleBinaryFrame(buffer) {
     if (!buffer || buffer.byteLength < 8) return;
     var dv = new DataView(buffer);
-    // En-tête 8 octets : [version u8][type u8][width u16 LE][height u16 LE][monitor u8][flags u8]
     var version = dv.getUint8(0);
     var frameType = dv.getUint8(1);
-    if (version !== 0x01) return;   // version de protocole gérée.
-    if (frameType !== 0x00) return; // R1+R2 : seul le type 0x00 (pleine trame) est géré.
+    if (version !== 0x01) return;
+    if (frameType === 0x00) handleFullFrame(dv, buffer);       // trame pleine (keyframe)
+    else if (frameType === 0x02) handleTiledFrame(dv, buffer); // trame tuilée (delta)
+    // autres types : ignorés (compat ascendante).
+  }
+
+  // Trame PLEINE : [version][type=0x00][w u16][h u16][monitor u8][flags u8] + JPEG.
+  function handleFullFrame(dv, buffer) {
     var width = dv.getUint16(2, true);
     var height = dv.getUint16(4, true);
     var monitor = dv.getUint8(6);
-    // var flags = dv.getUint8(7); // réservé
 
     currentMonitor = monitor;
     if (elMonitor) elMonitor.textContent = (monitor + 1);
 
-    // Ajuste la taille du canvas à la résolution annoncée.
+    // La keyframe (re)dimensionne le canvas à la résolution annoncée.
     if (width && height && (canvasW !== width || canvasH !== height)) {
       canvasW = width; canvasH = height;
       elCanvas.width = width;
@@ -236,16 +240,52 @@
 
     var jpegBytes = new Uint8Array(buffer, 8);
     var blob = new Blob([jpegBytes], { type: "image/jpeg" });
-
     createImageBitmap(blob).then(function (bitmap) {
-      try {
-        ctx.drawImage(bitmap, 0, 0, elCanvas.width, elCanvas.height);
-      } catch (e) { /* ignore */ }
+      try { ctx.drawImage(bitmap, 0, 0, elCanvas.width, elCanvas.height); } catch (e) { /* ignore */ }
       bitmap.close && bitmap.close();
       onFrameRendered();
-    }).catch(function () {
-      // Trame illisible : on l'ignore.
-    });
+    }).catch(function () { /* trame illisible : ignorée */ });
+  }
+
+  // Trame TUILÉE : en-tête 10 octets + N×([x u16][y u16][w u16][h u16][len u32]+JPEG).
+  // On ne redessine QUE les régions modifiées (le reste du canvas est conservé).
+  function handleTiledFrame(dv, buffer) {
+    var width = dv.getUint16(2, true);
+    var height = dv.getUint16(4, true);
+    var monitor = dv.getUint8(6);
+    var tileCount = dv.getUint16(8, true);
+
+    currentMonitor = monitor;
+    if (elMonitor) elMonitor.textContent = (monitor + 1);
+
+    // Si le canvas ne correspond pas (pas encore de keyframe à cette résolution),
+    // on demande une trame pleine et on ignore ce delta.
+    if (width && height && (canvasW !== width || canvasH !== height)) {
+      sendInput({ t: "request_keyframe" });
+      return;
+    }
+
+    var offset = 10;
+    for (var i = 0; i < tileCount; i++) {
+      if (offset + 12 > buffer.byteLength) break;
+      var tx = dv.getUint16(offset, true);
+      var ty = dv.getUint16(offset + 2, true);
+      // var tw = dv.getUint16(offset + 4, true); // dimensions portées par le bitmap
+      // var th = dv.getUint16(offset + 6, true);
+      var len = dv.getUint32(offset + 8, true);
+      offset += 12;
+      if (offset + len > buffer.byteLength) break;
+      var jpeg = new Uint8Array(buffer, offset, len);
+      offset += len;
+      var blob = new Blob([jpeg], { type: "image/jpeg" });
+      (function (px, py) {
+        createImageBitmap(blob).then(function (bitmap) {
+          try { ctx.drawImage(bitmap, px, py); } catch (e) { /* ignore */ }
+          bitmap.close && bitmap.close();
+        }).catch(function () { /* tuile illisible : ignorée */ });
+      })(tx, ty);
+    }
+    onFrameRendered();
   }
 
   function onFrameRendered() {

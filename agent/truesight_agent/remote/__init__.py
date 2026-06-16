@@ -31,8 +31,28 @@ PROTOCOL_VERSION = 0x01
 MSG_TYPE_FULL_FRAME = 0x00
 FRAME_HEADER_SIZE = 8
 
+# Trame « tuilée » (R2 — envoi par régions modifiées). En-tête 10 octets :
+#   octet 0 : version (0x01)
+#   octet 1 : type (0x02 = trame tuilée / delta)
+#   octets 2-3 : largeur totale  (uint16 LE)
+#   octets 4-5 : hauteur totale  (uint16 LE)
+#   octet 6 : index du moniteur (uint8)
+#   octet 7 : drapeaux (uint8, réservé)
+#   octets 8-9 : nombre de tuiles (uint16 LE)
+# Puis, pour chaque tuile : [x u16][y u16][w u16][h u16][jpeg_len u32] + octets JPEG.
+MSG_TYPE_TILED_FRAME = 0x02
+TILED_HEADER_SIZE = 10
+TILE_SUBHEADER_SIZE = 12
+# Taille de tuile par défaut (carré). Compromis : assez gros pour limiter le
+# surcoût d'en-têtes JPEG, assez petit pour ne renvoyer que de petites régions.
+DEFAULT_TILE_SIZE = 256
+
 __all__ = [
     "PROTOCOL_VERSION",
     "MSG_TYPE_FULL_FRAME",
     "FRAME_HEADER_SIZE",
+    "MSG_TYPE_TILED_FRAME",
+    "TILED_HEADER_SIZE",
+    "TILE_SUBHEADER_SIZE",
+    "DEFAULT_TILE_SIZE",
 ]

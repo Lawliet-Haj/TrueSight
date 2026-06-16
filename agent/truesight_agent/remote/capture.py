@@ -23,12 +23,19 @@ pourquoi ``launcher`` relance un helper dans la session interactive (voir
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import struct
 import time
 from typing import Iterator
 
-from . import FRAME_HEADER_SIZE, MSG_TYPE_FULL_FRAME, PROTOCOL_VERSION
+from . import (
+    DEFAULT_TILE_SIZE,
+    FRAME_HEADER_SIZE,
+    MSG_TYPE_FULL_FRAME,
+    MSG_TYPE_TILED_FRAME,
+    PROTOCOL_VERSION,
+)
 
 _logger = logging.getLogger("truesight.remote.capture")
 
@@ -200,6 +207,33 @@ def build_frame(jpeg_bytes: bytes, width: int, height: int, monitor_index: int, 
     return header + jpeg_bytes
 
 
+def build_tiled_frame(width: int, height: int, monitor_index: int, tiles: list, flags: int = 0) -> bytes:
+    """Assemble une trame tuilée : en-tête 10 octets + N sous-blocs de tuiles.
+
+    ``tiles`` : liste de tuples ``(x, y, w, h, jpeg_bytes)``.
+    En-tête : [0x01][0x02][width u16][height u16][monitor u8][flags u8][count u16].
+    Par tuile : [x u16][y u16][w u16][h u16][jpeg_len u32] + JPEG.
+    """
+    safe_w = max(0, min(0xFFFF, int(width)))
+    safe_h = max(0, min(0xFFFF, int(height)))
+    safe_mon = max(0, min(0xFF, int(monitor_index)))
+    safe_flags = max(0, min(0xFF, int(flags)))
+    parts = [struct.pack(
+        "<BBHHBBH",
+        PROTOCOL_VERSION,
+        MSG_TYPE_TILED_FRAME,
+        safe_w,
+        safe_h,
+        safe_mon,
+        safe_flags,
+        min(0xFFFF, len(tiles)),
+    )]
+    for (x, y, w, h, jpeg) in tiles:
+        parts.append(struct.pack("<HHHHI", x, y, w, h, len(jpeg)))
+        parts.append(jpeg)
+    return b"".join(parts)
+
+
 class ScreenCapturer:
     """Capture d'écran réutilisable, paramétrable à chaud.
 
@@ -219,10 +253,13 @@ class ScreenCapturer:
         self.max_width = max(0, int(max_width))
         self.target_fps = max(1.0, float(target_fps))
         self.monitor_index = max(0, int(monitor_index))
-        # Hash de la dernière trame envoyée (saut des trames identiques).
-        self._last_hash: str | None = None
-        # Demande de keyframe : force l'envoi de la prochaine trame même si identique.
+        # Demande de keyframe : force l'envoi d'une trame PLEINE (et réinitialise
+        # les empreintes de tuiles) à la prochaine capture.
         self._force_keyframe = True
+        # Diff par tuiles : empreinte de chaque tuile déjà envoyée + taille courante.
+        self.tile_size = DEFAULT_TILE_SIZE
+        self._tile_hashes: dict[tuple[int, int], str] = {}
+        self._frame_size: tuple[int, int] | None = None
 
     # -- Réglages pilotés par le viewer ---------------------------------------
     def set_quality(self, quality: int) -> None:
@@ -298,7 +335,9 @@ class ScreenCapturer:
             _logger.error("Boucle de capture interrompue : %s", exc)
 
     def _grab_and_encode(self, sct) -> bytes | None:
-        """Capture un écran, encode, applique le saut de trame identique."""
+        """Capture un écran et renvoie soit une trame PLEINE (keyframe), soit une
+        trame TUILÉE ne contenant que les régions modifiées, soit None si rien n'a
+        changé / en cas d'échec."""
         try:
             monitors = sct.monitors[1:]  # écrans réels (hors bounding box global)
             if not monitors:
@@ -312,17 +351,87 @@ class ScreenCapturer:
             _logger.debug("Capture d'une trame échouée : %s", exc)
             return None
 
-        # Downscale éventuel (avant hash : on compare l'image réellement envoyée).
+        # Downscale éventuel (l'image « de travail » = celle réellement envoyée).
         raw, width, height = _downscale_bgra(raw, width, height, self.max_width)
 
-        # Saut des trames identiques (hash rapide) — sauf keyframe demandée.
-        digest = hashlib.blake2b(raw, digest_size=16).hexdigest()
-        if not self._force_keyframe and digest == self._last_hash:
-            return None
-        self._force_keyframe = False
-        self._last_hash = digest
+        # Changement de résolution → keyframe + remise à zéro des empreintes.
+        if self._frame_size != (width, height):
+            self._frame_size = (width, height)
+            self._force_keyframe = True
+            self._tile_hashes = {}
 
-        jpeg = _encode_jpeg(raw, width, height, self.quality)
-        if jpeg is None:
+        keyframe = self._force_keyframe
+        self._force_keyframe = False
+
+        if keyframe:
+            # Trame PLEINE (robuste) + (ré)initialise les empreintes de tuiles.
+            jpeg = _encode_jpeg(raw, width, height, self.quality)
+            if jpeg is None:
+                return None
+            self._index_tiles(raw, width, height)
+            return build_frame(jpeg, width, height, idx)
+
+        # Sinon : ne renvoyer que les tuiles modifiées (delta).
+        return self._encode_changed_tiles(raw, width, height, idx)
+
+    # -- Diff par tuiles ------------------------------------------------------
+    def _iter_tiles(self, width: int, height: int):
+        """Itère les coordonnées de tuiles (col, row, x, y, w, h) couvrant l'image."""
+        ts = self.tile_size
+        row = 0
+        y = 0
+        while y < height:
+            th = min(ts, height - y)
+            col = 0
+            x = 0
+            while x < width:
+                tw = min(ts, width - x)
+                yield col, row, x, y, tw, th
+                x += ts
+                col += 1
+            y += ts
+            row += 1
+
+    def _index_tiles(self, raw: bytes, width: int, height: int) -> None:
+        """Recalcule l'empreinte de toutes les tuiles (après un keyframe)."""
+        self._tile_hashes = {}
+        if not (_PIL_AVAILABLE and Image is not None):
+            return
+        try:
+            img = Image.frombytes("RGB", (width, height), raw, "raw", "BGRX")
+            for col, row, x, y, tw, th in self._iter_tiles(width, height):
+                crop = img.crop((x, y, x + tw, y + th))
+                self._tile_hashes[(col, row)] = hashlib.blake2b(crop.tobytes(), digest_size=12).hexdigest()
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("Indexation des tuiles impossible (%s).", exc)
+            self._tile_hashes = {}
+
+    def _encode_changed_tiles(self, raw: bytes, width: int, height: int, idx: int) -> bytes | None:
+        """Compare chaque tuile à son empreinte ; encode + renvoie les tuiles modifiées."""
+        if not (_PIL_AVAILABLE and Image is not None):
+            # Sans Pillow, pas de découpe en tuiles : repli sur une trame pleine.
+            jpeg = _encode_jpeg(raw, width, height, self.quality)
+            return build_frame(jpeg, width, height, idx) if jpeg else None
+        try:
+            img = Image.frombytes("RGB", (width, height), raw, "raw", "BGRX")
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("Image PIL impossible (%s).", exc)
             return None
-        return build_frame(jpeg, width, height, idx)
+
+        changed = []
+        for col, row, x, y, tw, th in self._iter_tiles(width, height):
+            crop = img.crop((x, y, x + tw, y + th))
+            digest = hashlib.blake2b(crop.tobytes(), digest_size=12).hexdigest()
+            if self._tile_hashes.get((col, row)) == digest:
+                continue
+            self._tile_hashes[(col, row)] = digest
+            try:
+                buf = io.BytesIO()
+                crop.save(buf, format="JPEG", quality=self.quality)
+                changed.append((x, y, tw, th, buf.getvalue()))
+            except Exception as exc:  # noqa: BLE001
+                _logger.debug("Encodage d'une tuile échoué (%s).", exc)
+
+        if not changed:
+            return None
+        return build_tiled_frame(width, height, idx, changed)

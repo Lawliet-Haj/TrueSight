@@ -449,6 +449,16 @@ textarea.input{
 .mfa-qr img{width:172px;height:172px;border-radius:8px;background:#fff;padding:8px;display:block}
 .mfa-secret{font-family:var(--font-mono);font-size:12px;color:var(--dim);letter-spacing:.1em;word-break:break-all;text-align:center;max-width:240px}
 
+/* Gestion des accès (super-administrateur) */
+.user-create{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:4px}
+.user-create .field{gap:6px}
+.user-create .field.grow{flex:1;min-width:220px}
+.btn.xs{height:28px;padding:0 11px;font-size:11.5px}
+.role-sel{min-width:158px}
+.pw-row td{background:var(--bg-3)}
+.pw-inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pw-inline .pw-new{flex:1;min-width:180px}
+
 /* ---------------------------------------------------------------------------
    Utilitaires
    --------------------------------------------------------------------------- */

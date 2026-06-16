@@ -69,7 +69,7 @@
         <div class="user-block">
           <div class="user-meta">
             <span class="em" title="{{ user.email }}">{{ user.email }}</span>
-            <span class="ro {% if user.role == 'admin' %}admin{% endif %}">{{ 'administrateur' if user.role == 'admin' else 'lecture seule' }}</span>
+            <span class="ro {% if user.role in ('admin', 'superadmin') %}admin{% endif %}">{{ 'super-administrateur' if user.role == 'superadmin' else ('administrateur' if user.role == 'admin' else 'lecture seule') }}</span>
           </div>
           <div class="avatar">{{ user.email[:2] | upper }}</div>
           <a href="{{ url_for('web.logout') }}" class="logout-link" title="Déconnexion"><svg><use href="#i-logout"/></svg></a>

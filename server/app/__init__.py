@@ -47,10 +47,12 @@ def create_app(config_object: type | None = None) -> Flask:
     # --- Blueprints ---
     from .api_agent import bp as api_agent_bp
     from .api_dashboard import bp as api_dashboard_bp
+    from .api_users import bp as api_users_bp
     from .web import bp as web_bp
 
     app.register_blueprint(api_agent_bp)
     app.register_blueprint(api_dashboard_bp)
+    app.register_blueprint(api_users_bp)
     app.register_blueprint(web_bp)
 
     # --- Healthcheck simple (utile derrière nginx / Docker) ---

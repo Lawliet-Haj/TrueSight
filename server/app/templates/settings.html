@@ -16,7 +16,7 @@
   <div class="pbody">
     <div class="dl">
       <div class="kv"><dt>Adresse e-mail</dt><dd class="mono">{{ user.email }}</dd></div>
-      <div class="kv"><dt>Rôle</dt><dd>{{ 'Administrateur' if user.role == 'admin' else 'Lecture seule' }}</dd></div>
+      <div class="kv"><dt>Rôle</dt><dd>{{ 'Super-administrateur' if user.role == 'superadmin' else ('Administrateur' if user.role == 'admin' else 'Lecture seule') }}</dd></div>
     </div>
   </div>
 </div>
@@ -98,8 +98,61 @@
     </div>
   </div>
 </div>
+
+{% if user.role == 'superadmin' %}
+<!-- Gestion des accès (super-administrateur uniquement) -->
+<div class="panel" style="margin-top:14px">
+  <div class="phead">
+    <svg class="ico"><use href="#i-shield"/></svg>
+    <h2>Gestion des accès</h2>
+    <span class="tag" id="users-count">—</span>
+  </div>
+  <div class="pbody">
+    <!-- Création d'un accès -->
+    <form id="user-create" class="user-create" autocomplete="off">
+      <div class="field grow">
+        <label for="nu-email">E-mail du nouvel accès</label>
+        <input type="email" id="nu-email" class="input" placeholder="prenom.nom@medicofi.fr" required>
+      </div>
+      <div class="field">
+        <label for="nu-pw">Mot de passe</label>
+        <input type="password" id="nu-pw" class="input" minlength="8" autocomplete="new-password" required>
+      </div>
+      <div class="field">
+        <label for="nu-role">Rôle</label>
+        <select id="nu-role" class="input">
+          <option value="viewer">Lecture seule</option>
+          <option value="admin">Administrateur</option>
+          <option value="superadmin">Super-administrateur</option>
+        </select>
+      </div>
+      <button type="submit" class="btn go">Créer l'accès</button>
+      <span class="form-msg" id="uc-msg"></span>
+    </form>
+  </div>
+  <div class="scroll-y sticky-head" style="max-height:none;border-top:1px solid var(--line)">
+    <table>
+      <thead>
+        <tr>
+          <th>Compte</th>
+          <th>Rôle</th>
+          <th>MFA</th>
+          <th>État</th>
+          <th class="num">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="users-body">
+        <tr><td colspan="5" class="empty-cell">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% if user.role == 'superadmin' %}
+<script src="{{ url_for('static', filename='js/users.js') }}"></script>
+{% endif %}
 {% endblock %}

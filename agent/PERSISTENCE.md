@@ -43,9 +43,34 @@ Unregister-ScheduledTask -TaskName "TrueSight Agent" -Confirm:$false   # désins
 Get-Content "$env:TRUESIGHT_DATA_DIR\truesight-agent.log" -Tail 30     # journal
 ```
 
+### Terminal & commandes en ADMINISTRATEUR (mode A)
+
+Le terminal interactif (PowerShell/cmd) et les commandes héritent des **privilèges
+du processus agent**. Pour un shell **administrateur** (élévation sans invite UAC),
+ré-enregistrer la tâche avec `-RunLevel Highest` **depuis un PowerShell élevé**
+(« Exécuter en tant qu'administrateur »), l'utilisateur devant être admin local :
+
+```powershell
+$agentDir = "C:\Users\Haja\Documents\MCM_odoo\parc-monitoring\agent"
+$pyw      = "$agentDir\.venv\Scripts\pythonw.exe"
+$action    = New-ScheduledTaskAction -Execute $pyw -Argument "-m truesight_agent" -WorkingDirectory $agentDir
+$trigger   = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERNAME"
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+             -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+             -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+Register-ScheduledTask -TaskName "TrueSight Agent" -Action $action -Trigger $trigger `
+             -Settings $settings -Principal $principal -Force
+Stop-ScheduledTask -TaskName "TrueSight Agent"; Start-ScheduledTask -TaskName "TrueSight Agent"
+```
+
+Le bureau à distance continue de fonctionner (session utilisateur). En **mode B**
+(service SYSTEM), le terminal tourne directement en **SYSTEM** (privilèges encore
+supérieurs à l'admin) — c'est le mode cible du parc.
+
 Limites :
 - Tourne **uniquement quand un utilisateur est connecté** (pas à l'écran de verrouillage sans session ouverte).
-- `RunLevel Limited` (droits utilisateur standard) : verrouiller / message / déconnecter / redémarrer fonctionnent ; pour des commandes **admin** profondes, enregistrer la tâche depuis un PowerShell **élevé** avec `-RunLevel Highest`, ou utiliser le mode B.
+- `RunLevel Limited` (droits utilisateur standard) : verrouiller / message / déconnecter / redémarrer fonctionnent, mais le terminal n'est PAS admin → passer en `-RunLevel Highest` (ci-dessus) ou utiliser le mode B.
 
 ---
 

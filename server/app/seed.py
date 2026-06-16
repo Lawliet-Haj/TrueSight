@@ -37,12 +37,23 @@ def ensure_admin():
         db.func.lower(User.email) == email
     ).one_or_none()
     if existing is not None:
+        # Auto-promotion : garantit qu'il existe TOUJOURS au moins un superadmin.
+        # Sur une base déjà déployée (admin créé en rôle « admin » avant
+        # l'introduction de « superadmin »), on promeut le compte ADMIN_EMAIL au
+        # premier boot tant qu'aucun superadmin n'existe — pas de SQL manuel.
+        has_superadmin = (
+            db.session.query(User).filter_by(role="superadmin").first() is not None
+        )
+        if not has_superadmin and existing.role != "superadmin":
+            existing.role = "superadmin"
+            db.session.commit()
+            _logger.info("Compte %s promu super-administrateur (bootstrap).", email)
         return existing
 
     admin = User(
         email=email,
         password_hash=hash_password(password),
-        role="admin",
+        role="superadmin",
         mfa_enabled=False,
         is_active=True,
         created_at=utcnow(),
@@ -56,7 +67,7 @@ def ensure_admin():
         return db.session.query(User).filter(
             db.func.lower(User.email) == email
         ).one_or_none()
-    _logger.info("Administrateur initial créé : %s", email)
+    _logger.info("Super-administrateur initial créé : %s", email)
     return admin
 
 

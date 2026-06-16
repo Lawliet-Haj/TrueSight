@@ -693,3 +693,107 @@ def test_settings_mfa_enable_without_pending(client, admin_session):
     """Enable sans secret en attente renvoie 400."""
     resp = admin_session.post("/api/v1/settings/mfa/enable", json={"code": "123456"})
     assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Gestion des accès (superadmin) — /api/v1/users
+# --------------------------------------------------------------------------
+def test_seeded_admin_is_superadmin(client, admin_session):
+    """Le compte initial (ADMIN_EMAIL) est promu/créé super-administrateur."""
+    me = next(u for u in admin_session.get("/api/v1/users").get_json() if u["is_self"])
+    assert me["role"] == "superadmin"
+
+
+def test_users_unauthenticated(client):
+    """Sans session, la gestion des accès renvoie 401."""
+    assert client.get("/api/v1/users", headers={"Accept": "application/json"}).status_code == 401
+
+
+def test_users_management_forbidden_for_admin(client, admin_session):
+    """Un simple administrateur (non superadmin) ne peut pas gérer les accès (403)."""
+    r = admin_session.post(
+        "/api/v1/users",
+        json={"email": "adm@medicofi.fr", "password": "adminpass1", "role": "admin"},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    admin_session.get("/logout")
+    login = admin_session.post(
+        "/login", data={"email": "adm@medicofi.fr", "password": "adminpass1"}
+    )
+    assert login.status_code in (302, 303)
+
+    assert admin_session.get(
+        "/api/v1/users", headers={"Accept": "application/json"}
+    ).status_code == 403
+    assert admin_session.post(
+        "/api/v1/users",
+        json={"email": "z@z.fr", "password": "abcdefgh", "role": "viewer"},
+    ).status_code == 403
+
+
+def test_user_management_cycle(client, admin_session):
+    """CRUD complet d'un accès par le superadmin + validations + audit."""
+    # Validations de création.
+    assert admin_session.post(
+        "/api/v1/users", json={"email": "bad", "password": "abcdefgh", "role": "viewer"}
+    ).status_code == 400
+    assert admin_session.post(
+        "/api/v1/users", json={"email": "a@b.fr", "password": "court", "role": "viewer"}
+    ).status_code == 400
+    assert admin_session.post(
+        "/api/v1/users", json={"email": "a@b.fr", "password": "abcdefgh", "role": "king"}
+    ).status_code == 400
+
+    # Création OK.
+    created = admin_session.post(
+        "/api/v1/users",
+        json={"email": "op@medicofi.fr", "password": "motdepasse1", "role": "admin"},
+    )
+    assert created.status_code == 201, created.get_data(as_text=True)
+    uid = created.get_json()["id"]
+
+    # E-mail en doublon -> 409.
+    assert admin_session.post(
+        "/api/v1/users",
+        json={"email": "op@medicofi.fr", "password": "motdepasse1", "role": "viewer"},
+    ).status_code == 409
+
+    # Changement de rôle, activation/désactivation, reset de mot de passe.
+    assert admin_session.post(f"/api/v1/users/{uid}/role", json={"role": "viewer"}).status_code == 200
+    assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": False}).status_code == 200
+    assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": True}).status_code == 200
+    assert admin_session.post(
+        f"/api/v1/users/{uid}/reset-password", json={"new_password": "court"}
+    ).status_code == 400
+    assert admin_session.post(
+        f"/api/v1/users/{uid}/reset-password", json={"new_password": "nouveaupass1"}
+    ).status_code == 200
+
+    # Le nouveau mot de passe permet de se connecter.
+    admin_session.get("/logout")
+    assert admin_session.post(
+        "/login", data={"email": "op@medicofi.fr", "password": "nouveaupass1"}
+    ).status_code in (302, 303)
+    admin_session.get("/logout")
+    admin_session.post(
+        "/login", data={"email": TestConfig.ADMIN_EMAIL, "password": TestConfig.ADMIN_PASSWORD}
+    )
+
+    # Suppression.
+    assert admin_session.delete(f"/api/v1/users/{uid}").status_code == 200
+    assert all(u["id"] != uid for u in admin_session.get("/api/v1/users").get_json())
+
+    # Audit complet.
+    actions = [e["action"] for e in admin_session.get("/api/v1/audit?limit=100").get_json()]
+    for a in ("user.create", "user.role", "user.active", "user.password_reset", "user.delete"):
+        assert a in actions
+
+
+def test_user_guards_last_superadmin_and_self(client, admin_session):
+    """Garde-fous : pas de rétrogradation/désactivation/suppression du dernier superadmin (soi-même)."""
+    me = next(u for u in admin_session.get("/api/v1/users").get_json() if u["is_self"])
+    uid = me["id"]
+    assert admin_session.post(f"/api/v1/users/{uid}/role", json={"role": "viewer"}).status_code == 409
+    assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": False}).status_code == 409
+    assert admin_session.delete(f"/api/v1/users/{uid}").status_code == 409

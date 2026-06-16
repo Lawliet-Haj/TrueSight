@@ -268,7 +268,12 @@ def login_required(view):
 
 
 def admin_required(view):
-    """Décorateur : exige une session authentifiée avec le rôle ``admin``."""
+    """Décorateur : exige une session authentifiée avec un rôle administrateur.
+
+    ``superadmin`` est un sur-ensemble d'``admin`` : il dispose de tous les
+    pouvoirs admin (commandes, bureau à distance, actions rapides) EN PLUS de la
+    gestion des accès.
+    """
 
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
@@ -277,10 +282,32 @@ def admin_required(view):
             if _wants_json():
                 return jsonify({"error": "authentification requise"}), 401
             return redirect(url_for("web.login", next=request.path))
-        if user.role != "admin":
+        if user.role not in ("admin", "superadmin"):
             if _wants_json():
                 return jsonify({"error": "accès réservé aux administrateurs"}), 403
             return jsonify({"error": "accès réservé aux administrateurs"}), 403
+        g.user = user
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def superadmin_required(view):
+    """Décorateur : exige une session authentifiée avec le rôle ``superadmin``.
+
+    Réservé à la gestion des accès (création / rôle / activation / suppression
+    de comptes du dashboard).
+    """
+
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if user is None:
+            if _wants_json():
+                return jsonify({"error": "authentification requise"}), 401
+            return redirect(url_for("web.login", next=request.path))
+        if user.role != "superadmin":
+            return jsonify({"error": "accès réservé au super-administrateur"}), 403
         g.user = user
         return view(*args, **kwargs)
 

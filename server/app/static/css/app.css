@@ -393,6 +393,23 @@ textarea.input{
 .btn.quick.script-btn.danger{color:var(--danger);border-color:rgba(255,93,99,.3)}
 .btn.quick.script-btn.danger:hover{background:rgba(255,93,99,.1);color:#ffd2d4}
 
+/* Étiquettes éditables (fiche poste) */
+.tagbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:10px 14px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r-lg)}
+.tag-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chip.tag.tag-removable{display:inline-flex;align-items:center;gap:5px;padding-right:5px}
+.tag-x{background:none;border:none;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:0 2px;transition:.16s}
+.tag-x:hover{color:var(--danger)}
+.tagbar .input{height:30px;width:180px;padding:5px 10px;font-size:12.5px}
+
+/* Liste du parc : sélection multiple + actions groupées + tags cliquables */
+.cb-col{width:36px;text-align:center}
+.cb-col input{width:15px;height:15px;accent-color:var(--signal);cursor:pointer;vertical-align:middle}
+.chip.tag.tag-click{cursor:pointer}
+.chip.tag.tag-click:hover{color:var(--signal);border-color:var(--signal-dim)}
+.bulkbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 17px;border-bottom:1px solid var(--line);background:rgba(43,227,198,.05)}
+.bulkbar .grow{flex:1}
+.bulk-count{font-family:var(--font-mono);font-size:11.5px;color:var(--signal);letter-spacing:.04em}
+
 /* ---------------------------------------------------------------------------
    Barre d'état (bas)
    --------------------------------------------------------------------------- */

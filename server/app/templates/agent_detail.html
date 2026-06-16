@@ -30,6 +30,15 @@
        class="hidden"></div>
 
   {% if is_admin %}
+  <!-- Étiquettes du poste (éditables) -->
+  <div class="tagbar" id="tagbar">
+    <span class="field-label">Étiquettes</span>
+    <span class="tag-chips" id="tag-chips"></span>
+    <input type="text" id="tag-input" class="input" placeholder="ajouter une étiquette…" maxlength="24">
+  </div>
+  {% endif %}
+
+  {% if is_admin %}
   {# ============================================================
      Zone de travail à onglets — prioritaire, sans scroll.
      Bureau à distance · Terminal · Commande ponctuelle (admin).

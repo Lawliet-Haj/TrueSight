@@ -926,3 +926,68 @@ def test_scripts_catalog_requires_admin(client):
     """Sans session admin, le catalogue est refusé (401 sans session)."""
     resp = client.get("/api/v1/scripts", headers={"Accept": "application/json"})
     assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# Étiquettes (POST /api/v1/agents/<id>/tags)
+# --------------------------------------------------------------------------
+def test_set_agent_tags_normalizes(client, admin_session):
+    """Les étiquettes sont normalisées (trim, dédoublonnage insensible à la casse)."""
+    agent_id, _ = _enroll(client, "MACHINE-TAGS")
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/tags",
+        json={"tags": ["  Compta ", "compta", "Accueil", ""]},
+    )
+    assert r.status_code == 200
+    assert r.get_json()["tags"] == ["Compta", "Accueil"]
+
+    agents = admin_session.get("/api/v1/agents").get_json()
+    a = next(x for x in agents if x["id"] == agent_id)
+    assert a["tags"] == ["Compta", "Accueil"]
+
+
+# --------------------------------------------------------------------------
+# Actions groupées (POST /api/v1/agents/bulk)
+# --------------------------------------------------------------------------
+def test_bulk_quick_action(client, admin_session):
+    """Une action rapide groupée crée une commande par poste."""
+    a1, t1 = _enroll(client, "MACHINE-BULK-1")
+    a2, t2 = _enroll(client, "MACHINE-BULK-2")
+    r = admin_session.post(
+        "/api/v1/agents/bulk",
+        json={"agent_ids": [a1, a2], "kind": "quick", "action": "lock"},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert r.get_json()["count"] == 2
+
+    cmds1 = client.get(f"/api/v1/agents/{a1}/commands", headers=_auth(t1)).get_json()["commands"]
+    assert len(cmds1) == 1 and cmds1[0]["shell"] == "cmd"
+
+
+def test_bulk_command_and_validation(client, admin_session):
+    """Validation du bulk + création d'une commande groupée."""
+    a1, _ = _enroll(client, "MACHINE-BULK-3")
+    assert admin_session.post(
+        "/api/v1/agents/bulk", json={"agent_ids": [], "kind": "quick", "action": "lock"}
+    ).status_code == 400
+    assert admin_session.post(
+        "/api/v1/agents/bulk", json={"agent_ids": [a1], "kind": "bogus"}
+    ).status_code == 400
+    assert admin_session.post(
+        "/api/v1/agents/bulk",
+        json={"agent_ids": [a1], "kind": "command", "shell": "bash", "command_text": "x"},
+    ).status_code == 400
+    ok = admin_session.post(
+        "/api/v1/agents/bulk",
+        json={"agent_ids": [a1], "kind": "command", "shell": "powershell", "command_text": "Get-Date"},
+    )
+    assert ok.status_code == 201 and ok.get_json()["count"] == 1
+
+
+def test_bulk_requires_admin(client):
+    """Le bulk sans session est refusé (401)."""
+    assert client.post(
+        "/api/v1/agents/bulk",
+        json={"agent_ids": ["x"], "kind": "quick", "action": "lock"},
+        headers={"Accept": "application/json"},
+    ).status_code == 401

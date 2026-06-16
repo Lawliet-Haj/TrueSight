@@ -1,13 +1,18 @@
 // TrueSight — page Parc : KPIs instrumentés + tableau du parc, rafraîchi toutes les 10 s.
 // Données : GET /api/v1/agents → [{id,hostname,os_version,status,last_seen_at,cpu_pct,ram_used_pct,tags,is_active}]
+// Admin : sélection multiple + actions groupées (POST /api/v1/agents/bulk).
 (function () {
   "use strict";
 
   var REFRESH_MS = 10000;
-  // Seuils d'alerte (cohérents avec la charte : ambre 60–84, rouge ≥85).
   var CPU_ALERT = 85;
   var RAM_ALERT = 85;
   var lastData = [];
+
+  var pd = document.getElementById("parc-data");
+  var IS_ADMIN = !!(pd && pd.getAttribute("data-is-admin") === "1");
+  var COLSPAN = IS_ADMIN ? 8 : 7;
+  var selected = {};  // { agent_id: true } — sélection persistée entre rafraîchissements
 
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -16,7 +21,6 @@
     });
   }
 
-  // Formate une date ISO UTC en heure locale lisible.
   function fmtDate(iso) {
     if (!iso) return "jamais";
     var d = new Date(iso);
@@ -24,7 +28,6 @@
     return d.toLocaleString("fr-FR");
   }
 
-  // Temps relatif court ("il y a 2 min").
   function fmtRelative(iso) {
     if (!iso) return "jamais vu";
     var d = new Date(iso);
@@ -36,17 +39,14 @@
     return "il y a " + Math.floor(secs / 86400) + " j";
   }
 
-  // Couleur d'une valeur selon le seuil (vert <60, ambre 60–84, rouge ≥85).
   function gaugeColor(v) {
     if (v >= 85) return "var(--danger)";
     if (v >= 60) return "var(--warn)";
     return "var(--ok)";
   }
 
-  // Jauge CPU/RAM : track + remplissage coloré + valeur mono. "off" → tiret.
   function gauge(pct, off) {
-    if (off) return '<span class="seen">—</span>';
-    if (pct === null || pct === undefined) return '<span class="seen">—</span>';
+    if (off || pct === null || pct === undefined) return '<span class="seen">—</span>';
     var v = Math.max(0, Math.min(100, pct));
     return (
       '<div class="gauge">' +
@@ -56,7 +56,6 @@
     );
   }
 
-  // Détermine l'état d'affichage : online / alert (online mais surchargé) / offline.
   function rowState(r) {
     if (r.status !== "online") return "off";
     var cpu = r.cpu_pct, ram = r.ram_used_pct;
@@ -69,7 +68,6 @@
     if (el) el.textContent = txt;
   }
 
-  // Met à jour les 4 KPIs en haut de page.
   function renderKpis(rows) {
     var online = 0, offline = 0, alert = 0;
     rows.forEach(function (r) {
@@ -84,12 +82,8 @@
 
     var availEl = document.getElementById("count-avail");
     if (availEl) {
-      if (total === 0) {
-        availEl.innerHTML = "—<small>%</small>";
-      } else {
-        var pct = (online / total) * 100;
-        availEl.innerHTML = pct.toFixed(1).replace(".", ",") + '<small>%</small>';
-      }
+      if (total === 0) availEl.innerHTML = "—<small>%</small>";
+      else availEl.innerHTML = ((online / total) * 100).toFixed(1).replace(".", ",") + '<small>%</small>';
     }
 
     setText("kpi-online-sub", online === 1 ? "poste joignable" : "postes joignables");
@@ -98,7 +92,6 @@
     setText("kpi-avail-sub", total + (total === 1 ? " poste supervisé" : " postes supervisés"));
     setText("fleet-count", total + (total === 1 ? " poste" : " postes"));
 
-    // Télémétrie de la barre d'état (si présente).
     var sbAgents = document.getElementById("sb-agents");
     if (sbAgents) sbAgents.innerHTML = "agents&nbsp;<b>" + online + "/" + total + "</b>&nbsp;reportent";
   }
@@ -111,6 +104,11 @@
 
     renderKpis(rows);
 
+    // Purge la sélection des postes disparus.
+    var present = {};
+    rows.forEach(function (r) { present[r.id] = true; });
+    Object.keys(selected).forEach(function (id) { if (!present[id]) delete selected[id]; });
+
     var filtered = rows.filter(function (r) {
       if (!filter) return true;
       var hay = [r.hostname, r.os_version, (r.tags || []).join(" ")].join(" ").toLowerCase();
@@ -118,7 +116,8 @@
     });
 
     if (!filtered.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-cell">Aucun poste</td></tr>';
+      body.innerHTML = '<tr><td colspan="' + COLSPAN + '" class="empty-cell">Aucun poste</td></tr>';
+      updateBulkBar();
       return;
     }
 
@@ -129,14 +128,19 @@
         var stateTitle = st === "on" ? "En ligne" : st === "alert" ? "En alerte" : "Hors ligne";
 
         var tags = (r.tags || [])
-          .map(function (t) { return '<span class="chip tag">' + esc(t) + "</span>"; })
+          .map(function (t) { return '<span class="chip tag tag-click" data-tag="' + esc(t) + '">' + esc(t) + "</span>"; })
           .join("");
         var revoked = r.is_active === false ? '<span class="revoked">révoqué</span>' : "";
-
         var remoteDisabled = off ? "disabled" : "";
+
+        var cb = IS_ADMIN
+          ? '<td class="cb-col"><input type="checkbox" class="row-cb" data-id="' + esc(r.id) + '"' +
+            (selected[r.id] ? " checked" : "") + "></td>"
+          : "";
 
         return (
           '<tr class="clickable" data-href="/agents/' + esc(r.id) + '">' +
+          cb +
           '<td><div class="host"><span class="dot ' + st + '" title="' + stateTitle + '"></span>' +
             '<div><div class="nm">' + esc(r.hostname || r.id) + revoked + "</div>" +
             '<div class="us">' + stateTitle + "</div></div></div></td>" +
@@ -154,24 +158,127 @@
       })
       .join("");
 
-    // Lignes cliquables → fiche poste (sauf clic sur un bouton d'action).
+    // Ligne cliquable → fiche poste (sauf clic sur action / case / tag).
     Array.prototype.forEach.call(body.querySelectorAll("tr.clickable"), function (tr) {
-      tr.addEventListener("click", function () {
-        window.location.href = tr.getAttribute("data-href");
-      });
+      tr.addEventListener("click", function () { window.location.href = tr.getAttribute("data-href"); });
     });
 
-    // Boutons d'action : ouvrent la fiche (où vivent la console + le bureau à distance).
+    // Boutons d'action ligne.
     Array.prototype.forEach.call(body.querySelectorAll(".btn-ico"), function (b) {
       b.addEventListener("click", function (ev) {
         ev.stopPropagation();
         if (b.classList.contains("disabled")) return;
         var id = b.getAttribute("data-id");
         var act = b.getAttribute("data-act");
-        // Ancres : #remote ouvre directement la fenêtre bureau à distance, #console la commande.
         window.location.href = "/agents/" + id + (act === "remote" ? "#remote" : "#console");
       });
     });
+
+    // Tags cliquables → filtre la liste.
+    Array.prototype.forEach.call(body.querySelectorAll(".tag-click"), function (c) {
+      c.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var t = c.getAttribute("data-tag");
+        var gs = document.getElementById("global-search");
+        if (gs) gs.value = t;
+        if (filterEl) filterEl.value = t;
+        render(lastData);
+      });
+    });
+
+    // Cases à cocher (admin).
+    Array.prototype.forEach.call(body.querySelectorAll(".row-cb"), function (cb) {
+      cb.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      cb.addEventListener("change", function () {
+        var id = cb.getAttribute("data-id");
+        if (cb.checked) selected[id] = true; else delete selected[id];
+        updateBulkBar();
+      });
+    });
+
+    updateBulkBar();
+  }
+
+  // --- Actions groupées (admin) ---
+  function selectedIds() { return Object.keys(selected); }
+
+  function updateBulkBar() {
+    var bar = document.getElementById("bulkbar");
+    if (!bar) return;
+    var ids = selectedIds();
+    var countEl = document.getElementById("bulk-count");
+    if (countEl) countEl.textContent = ids.length + (ids.length === 1 ? " poste sélectionné" : " postes sélectionnés");
+    bar.classList.toggle("hidden", ids.length === 0);
+    var all = document.getElementById("cb-all");
+    if (all) {
+      var visible = Array.prototype.slice.call(document.querySelectorAll(".row-cb"));
+      var checkedVisible = visible.filter(function (c) { return c.checked; }).length;
+      all.checked = visible.length > 0 && checkedVisible === visible.length;
+      all.indeterminate = checkedVisible > 0 && checkedVisible < visible.length;
+    }
+  }
+
+  var BULK_LABELS = { lock: "Verrouiller", restart: "Redémarrer" };
+
+  async function applyBulk(kind, payload, confirmMsg) {
+    var ids = selectedIds();
+    if (!ids.length) return;
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    var body = Object.assign({ agent_ids: ids, kind: kind }, payload);
+    try {
+      var resp = await fetch("/api/v1/agents/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) { window.alert("Échec : " + (data.error || resp.status)); return; }
+      window.alert("Action envoyée à " + data.count + " poste(s).");
+      selected = {};
+      render(lastData);
+    } catch (e) {
+      window.alert("Erreur réseau lors de l'envoi groupé.");
+    }
+  }
+
+  function setupBulk() {
+    var bar = document.getElementById("bulkbar");
+    if (!bar) return;
+
+    Array.prototype.forEach.call(bar.querySelectorAll("[data-bulk]"), function (b) {
+      b.addEventListener("click", function () {
+        var kind = b.getAttribute("data-bulk");
+        var n = selectedIds().length;
+        if (kind === "lock" || kind === "restart") {
+          applyBulk("quick", { action: kind }, BULK_LABELS[kind] + " " + n + " poste(s) ?");
+        } else if (kind === "message") {
+          var msg = window.prompt("Message à afficher sur les " + n + " poste(s) :");
+          if (msg && msg.trim()) applyBulk("quick", { action: "message", text: msg.trim() });
+        } else if (kind === "command") {
+          var cmd = window.prompt("Commande PowerShell à exécuter sur les " + n + " poste(s) :");
+          if (cmd && cmd.trim()) {
+            applyBulk("command", { shell: "powershell", command_text: cmd.trim(), timeout_seconds: 120 },
+              "Exécuter cette commande sur " + n + " poste(s) ?\n\n" + cmd.trim());
+          }
+        }
+      });
+    });
+
+    var clear = document.getElementById("bulk-clear");
+    if (clear) clear.addEventListener("click", function () { selected = {}; render(lastData); });
+
+    var all = document.getElementById("cb-all");
+    if (all) {
+      all.addEventListener("change", function () {
+        var visible = Array.prototype.slice.call(document.querySelectorAll(".row-cb"));
+        visible.forEach(function (c) {
+          c.checked = all.checked;
+          var id = c.getAttribute("data-id");
+          if (all.checked) selected[id] = true; else delete selected[id];
+        });
+        updateBulkBar();
+      });
+    }
   }
 
   async function load() {
@@ -182,7 +289,6 @@
       lastData = await resp.json();
       render(lastData);
     } catch (e) {
-      // Erreur réseau ponctuelle : on conserve l'affichage précédent.
       console.error("Échec du chargement des agents :", e);
     }
   }
@@ -197,7 +303,6 @@
     });
   }
 
-  // Raccourci "/" pour focaliser la recherche.
   document.addEventListener("keydown", function (e) {
     if (e.key === "/" && document.activeElement !== globalSearch &&
         !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "")) {
@@ -205,6 +310,7 @@
     }
   });
 
+  if (IS_ADMIN) setupBulk();
   load();
   setInterval(load, REFRESH_MS);
 })();

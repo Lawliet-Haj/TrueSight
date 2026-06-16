@@ -10,6 +10,9 @@
   </div>
 </div>
 
+<!-- Données injectées pour le JS -->
+<div id="parc-data" data-is-admin="{{ '1' if user.role in ('admin', 'superadmin') else '0' }}" class="hidden"></div>
+
 <!-- KPIs instrumentés (alimentés par agents.js) -->
 <section class="kpis">
   <div class="kpi accent">
@@ -45,10 +48,25 @@
     <h2>Parc — temps réel</h2>
     <span class="tag" id="fleet-count">— postes</span>
   </div>
+
+  {% if user.role in ('admin', 'superadmin') %}
+  <!-- Barre d'actions groupées (apparaît quand ≥ 1 poste sélectionné) -->
+  <div class="bulkbar hidden" id="bulkbar">
+    <span class="bulk-count" id="bulk-count">0 sélectionné</span>
+    <span class="grow"></span>
+    <button class="btn xs" type="button" data-bulk="lock"><svg><use href="#i-lock"/></svg>Verrouiller</button>
+    <button class="btn xs" type="button" data-bulk="restart"><svg><use href="#i-power"/></svg>Redémarrer</button>
+    <button class="btn xs" type="button" data-bulk="message"><svg><use href="#i-message"/></svg>Message</button>
+    <button class="btn xs" type="button" data-bulk="command"><svg><use href="#i-terminal"/></svg>Commande…</button>
+    <button class="btn xs" type="button" id="bulk-clear">Désélectionner</button>
+  </div>
+  {% endif %}
+
   <div class="scroll-y sticky-head">
     <table>
       <thead>
         <tr>
+          {% if user.role in ('admin', 'superadmin') %}<th class="cb-col"><input type="checkbox" id="cb-all" title="Tout sélectionner"></th>{% endif %}
           <th>Poste</th>
           <th>Système</th>
           <th>CPU</th>
@@ -59,7 +77,7 @@
         </tr>
       </thead>
       <tbody id="agents-body">
-        <tr><td colspan="7" class="empty-cell">Chargement…</td></tr>
+        <tr><td colspan="{{ 8 if user.role in ('admin', 'superadmin') else 7 }}" class="empty-cell">Chargement…</td></tr>
       </tbody>
     </table>
   </div>

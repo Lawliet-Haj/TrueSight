@@ -608,6 +608,135 @@ def quick_action(agent_id):
 
 
 # --------------------------------------------------------------------------
+# POST /agents/<id>/tags — étiquettes du poste (admin)
+# --------------------------------------------------------------------------
+def _normalize_tags(raw):
+    """Normalise une liste d'étiquettes : trim, sans doublon (insensible à la casse),
+    24 caractères max chacune, 15 au total."""
+    seen = set()
+    out = []
+    for t in raw:
+        if not isinstance(t, str):
+            continue
+        t = t.strip()[:24]
+        if not t:
+            continue
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+        if len(out) >= 15:
+            break
+    return out
+
+
+@bp.post("/agents/<agent_id>/tags")
+@admin_required
+def set_agent_tags(agent_id):
+    """Remplace les étiquettes d'un poste. Body : ``{tags: [...]}``."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    raw = data.get("tags")
+    if not isinstance(raw, list):
+        return jsonify({"error": "tags doit être une liste"}), 400
+
+    tags = _normalize_tags(raw)
+    agent.tags = tags
+    write_audit(
+        action="agent.tags", user_id=g.user.id, target_agent=aid,
+        details={"tags": tags}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"tags": tags}), 200
+
+
+# --------------------------------------------------------------------------
+# POST /agents/bulk — action groupée sur plusieurs postes (admin)
+# --------------------------------------------------------------------------
+@bp.post("/agents/bulk")
+@admin_required
+def bulk_action():
+    """Exécute une commande ou une action rapide sur PLUSIEURS postes.
+
+    Body : ``{agent_ids:[...], kind:"command"|"quick", ...}`` où
+    - kind="command" → ``shell`` ('powershell'|'cmd'), ``command_text``, ``timeout_seconds`` ;
+    - kind="quick"   → ``action`` ('lock'|'restart'|'logoff'|'message'), ``text`` (si message).
+    Crée une commande ``pending`` par poste, audite ``command.bulk`` une fois, et
+    renvoie 201 ``{count, results:[{agent_id, command_id|error}]}``.
+    """
+    data = request.get_json(silent=True) or {}
+    agent_ids = data.get("agent_ids")
+    kind = (data.get("kind") or "").strip().lower()
+
+    if not isinstance(agent_ids, list) or not agent_ids:
+        return jsonify({"error": "agent_ids requis (liste non vide)"}), 400
+    if len(agent_ids) > 200:
+        return jsonify({"error": "trop de postes (max 200)"}), 400
+    if kind not in ("command", "quick"):
+        return jsonify({"error": "kind invalide (command|quick)"}), 400
+
+    if kind == "command":
+        shell = (data.get("shell") or "").strip().lower()
+        command_text = data.get("command_text") or ""
+        if shell not in ("powershell", "cmd"):
+            return jsonify({"error": "shell invalide (powershell ou cmd)"}), 400
+        if not command_text.strip():
+            return jsonify({"error": "command_text requis"}), 400
+        try:
+            timeout = int(data.get("timeout_seconds", 120))
+            if timeout <= 0 or timeout > 3600:
+                timeout = 120
+        except (TypeError, ValueError):
+            timeout = 120
+    else:  # quick
+        action = (data.get("action") or "").strip().lower()
+        if action not in ("lock", "restart", "logoff", "message"):
+            return jsonify({"error": "action invalide (lock, restart, logoff, message)"}), 400
+        if action == "message":
+            text = _clean_message_text(data.get("text") or "")
+            if not text:
+                return jsonify({"error": "text requis pour l'action message"}), 400
+            shell, command_text, timeout = "cmd", f'msg * "{text}"', 15
+        else:
+            shell, command_text, timeout = "cmd", _QUICK_ACTIONS[action], 30
+
+    results = []
+    created = 0
+    for raw_id in agent_ids:
+        aid = _parse_uuid(raw_id)
+        if aid is None:
+            results.append({"agent_id": str(raw_id), "error": "id invalide"})
+            continue
+        agent = db.session.get(Agent, aid)
+        if agent is None:
+            results.append({"agent_id": str(raw_id), "error": "introuvable"})
+            continue
+        cmd = Command(
+            agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
+            status="pending", timeout_seconds=timeout, created_at=utcnow(),
+        )
+        db.session.add(cmd)
+        db.session.flush()
+        results.append({"agent_id": str(aid), "command_id": str(cmd.id)})
+        created += 1
+
+    write_audit(
+        action="command.bulk", user_id=g.user.id,
+        details={"kind": kind, "count": created, "command_text": command_text},
+        commit=False,
+    )
+    db.session.commit()
+    return jsonify({"count": created, "results": results}), 201
+
+
+# --------------------------------------------------------------------------
 # GET /scripts — bibliothèque de scripts prêts à l'emploi (admin)
 # --------------------------------------------------------------------------
 @bp.get("/scripts")

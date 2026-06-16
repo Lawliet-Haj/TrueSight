@@ -60,6 +60,7 @@
       renderHeader(d);
       renderHardware(d);
       renderCurrent(d);
+      renderTags(d.tags);
     } catch (e) {
       console.error("Échec du chargement du détail :", e);
     }
@@ -431,6 +432,50 @@
     }
   }
 
+  // --- Étiquettes du poste (admin) ---
+  var currentTags = [];
+  function renderTags(tags) {
+    var box = document.getElementById("tag-chips");
+    if (!box) return;
+    currentTags = Array.isArray(tags) ? tags.slice() : [];
+    if (!currentTags.length) {
+      box.innerHTML = '<span class="muted" style="font-size:12px">aucune</span>';
+      return;
+    }
+    box.innerHTML = currentTags.map(function (t) {
+      return '<span class="chip tag tag-removable">' + esc(t) +
+        '<button type="button" class="tag-x" data-tag="' + esc(t) + '" title="Retirer">×</button></span>';
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll(".tag-x"), function (b) {
+      b.addEventListener("click", function () {
+        var t = b.getAttribute("data-tag");
+        saveTags(currentTags.filter(function (x) { return x !== t; }));
+      });
+    });
+  }
+  function saveTags(tags) {
+    fetch("/api/v1/agents/" + AGENT_ID + "/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ tags: tags }),
+    }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) renderTags(d.tags); })
+      .catch(function () {});
+  }
+  function setupTags() {
+    var input = document.getElementById("tag-input");
+    if (!input) return;
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      var v = input.value.trim();
+      input.value = "";
+      if (!v) return;
+      var lower = currentTags.map(function (x) { return x.toLowerCase(); });
+      if (lower.indexOf(v.toLowerCase()) === -1) saveTags(currentTags.concat([v]));
+    });
+  }
+
   // --- Bibliothèque de scripts 1-clic (admin) ---
   function setupScriptLibrary() {
     var container = document.getElementById("script-groups");
@@ -611,6 +656,7 @@
     setupQuickActions();
     setupScriptLibrary();
     setupProcesses();
+    setupTags();
     setupTabs();
   }
 

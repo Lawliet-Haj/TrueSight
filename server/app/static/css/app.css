@@ -16,6 +16,26 @@
   --r:7px; --r-lg:11px;
 }
 
+/* ============================================================================
+   Thème CLAIR — surcharge des tokens (activé via <html class="theme-light">).
+   Les « écrans » (terminal, bureau à distance, sortie de commande) restent
+   volontairement sombres dans les deux thèmes.
+   ============================================================================ */
+:root.theme-light{
+  --bg:#eef1f5; --bg-2:#ffffff; --bg-3:#f3f6f9; --raised:#e9eef3;
+  --line:rgba(16,32,48,.10); --line-2:rgba(16,32,48,.16); --line-3:rgba(16,32,48,.26);
+  --text:#13212e; --dim:#4a5a67; --faint:#7a8794;
+  --signal:#0c9b89; --signal-dim:#0a8576; --ok:#1a9d6f; --warn:#a9730f; --danger:#d6373d; --info:#2477cf;
+  --glow:0 0 0 1px rgba(12,155,137,.30),0 0 18px -6px rgba(12,155,137,.45);
+}
+/* Surfaces définies en dur (non variabilisées) : on les adapte au thème clair. */
+:root.theme-light body::before{background-image:radial-gradient(circle at 1px 1px,rgba(16,32,48,.06) 1px,transparent 0)}
+:root.theme-light body::after{background:radial-gradient(ellipse at center,rgba(12,155,137,.08),transparent 60%)}
+:root.theme-light .topbar{background:rgba(255,255,255,.72)}
+:root.theme-light .flash.error{color:#a3262b}
+:root.theme-light .flash.info{color:#1c5fa0}
+:root.theme-light .gauge .track{background:#dfe5ec}
+
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
@@ -103,6 +123,9 @@ button{font-family:inherit}
 .logout-link{width:32px;height:32px;border-radius:8px;border:1px solid var(--line-2);background:var(--bg-3);color:var(--dim);display:grid;place-items:center;transition:.16s}
 .logout-link:hover{color:var(--danger);border-color:rgba(255,93,99,.4)}
 .logout-link svg{width:15px;height:15px}
+.icon-btn{width:32px;height:32px;border-radius:8px;border:1px solid var(--line-2);background:var(--bg-3);color:var(--dim);display:grid;place-items:center;cursor:pointer;transition:.16s;flex:none}
+.icon-btn:hover{color:var(--signal);border-color:var(--signal-dim)}
+.icon-btn svg{width:16px;height:16px}
 
 /* ---- zone de défilement ---- */
 .scroll{overflow:auto;padding:22px;flex:1;position:relative}

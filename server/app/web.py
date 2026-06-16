@@ -249,7 +249,7 @@ def agent_detail_page(agent_id):
         user=g.user,
         agent_id=str(agent.id),
         agent_hostname=agent.hostname or str(agent.id),
-        is_admin=(g.user.role == "admin"),
+        is_admin=(g.user.role in ("admin", "superadmin")),
         not_found=False,
     )
 

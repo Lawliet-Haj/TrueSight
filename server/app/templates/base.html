@@ -44,7 +44,7 @@
 
     <div class="spacer"></div>
 
-    {% if user.role == 'admin' %}
+    {% if user.role in ('admin', 'superadmin') %}
     <a href="{{ url_for('web.audit_page') }}"
        class="navi {% if request.endpoint == 'web.audit_page' %}on{% endif %}"
        title="Journal d'audit"><svg><use href="#i-shield"/></svg></a>

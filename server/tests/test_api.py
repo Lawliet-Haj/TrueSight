@@ -852,3 +852,29 @@ def test_login_success_clears_failures(client):
         data={"email": TestConfig.ADMIN_EMAIL, "password": TestConfig.ADMIN_PASSWORD},
     )
     assert "127.0.0.1" not in web._login_failures
+
+
+# --------------------------------------------------------------------------
+# Fiche poste : la zone de travail admin est visible pour admin ET superadmin
+# (non-régression : superadmin doit hériter des pouvoirs admin côté UI)
+# --------------------------------------------------------------------------
+def test_agent_detail_workzone_visible_for_superadmin(client, admin_session):
+    """Le superadmin voit le bureau à distance / terminal / commande sur la fiche poste."""
+    agent_id, _ = _enroll(client, "MACHINE-WZ")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    for marker in ("remote-start", "terminal-open", "cmd-run", "qa-lock", "workzone"):
+        assert marker in html, f"marqueur zone de travail manquant : {marker}"
+
+
+def test_agent_detail_workzone_hidden_for_viewer(client, admin_session):
+    """Un viewer (lecture seule) ne voit PAS la zone de travail admin."""
+    agent_id, _ = _enroll(client, "MACHINE-WZ2")
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "vv@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
+    )
+    admin_session.get("/logout")
+    admin_session.post("/login", data={"email": "vv@medicofi.fr", "password": "viewerpass1"})
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    assert "remote-start" not in html
+    assert "terminal-open" not in html

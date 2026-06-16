@@ -207,6 +207,12 @@ class RemoteSession:
         if msg_type == "set_quality":
             self._capturer.set_quality(data.get("q", 70))
             return
+        if msg_type == "set_fps":
+            self._capturer.set_fps(data.get("fps", 18))
+            return
+        if msg_type == "set_max_width":
+            self._capturer.set_max_width(data.get("w", 1600))
+            return
         if msg_type == "request_keyframe":
             self._capturer.request_keyframe()
             return

@@ -98,6 +98,13 @@
         <div class="remote-error" id="remote-error"></div>
 
         <div class="rfoot">
+          <span class="field-label">Fluidité</span>
+          <select id="remote-mode" class="input" title="Qualité / fluidité du flux">
+            <option value="auto">Auto</option>
+            <option value="fluid">Fluide</option>
+            <option value="balanced" selected>Équilibré</option>
+            <option value="sharp">Net</option>
+          </select>
           <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
           <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
           <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>

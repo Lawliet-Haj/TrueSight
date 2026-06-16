@@ -230,6 +230,23 @@ class ScreenCapturer:
         self.quality = _clamp_quality(quality)
         _logger.info("Qualité JPEG réglée à %d.", self.quality)
 
+    def set_fps(self, fps) -> None:
+        """Règle la cadence cible (images/s, bornée 1..60). Piloté par le viewer."""
+        try:
+            self.target_fps = max(1.0, min(60.0, float(fps)))
+        except (TypeError, ValueError):
+            return
+        _logger.info("Cadence cible réglée à %.0f i/s.", self.target_fps)
+
+    def set_max_width(self, width) -> None:
+        """Règle le cap de largeur du downscale (0 = pleine résolution) ; force une keyframe."""
+        try:
+            self.max_width = max(0, int(width))
+        except (TypeError, ValueError):
+            return
+        self._force_keyframe = True
+        _logger.info("Largeur max réglée à %d px.", self.max_width)
+
     def set_monitor(self, index: int) -> None:
         """Change le moniteur capturé (0-based) ; force une keyframe."""
         try:
@@ -264,7 +281,6 @@ class ScreenCapturer:
             _logger.error("Capture indisponible (mss/encodeur manquant) : aucun flux.")
             return
 
-        min_interval = 1.0 / self.target_fps
         try:
             with mss.mss() as sct:
                 while not stop_check():
@@ -272,9 +288,10 @@ class ScreenCapturer:
                     frame = self._grab_and_encode(sct)
                     if frame is not None:
                         yield frame
-                    # Régulation de cadence : on dort le reste de l'intervalle.
+                    # Régulation de cadence : on relit target_fps à chaque tour
+                    # (réglable à chaud via set_fps) et on dort le reste de l'intervalle.
                     elapsed = time.monotonic() - loop_start
-                    remaining = min_interval - elapsed
+                    remaining = (1.0 / self.target_fps) - elapsed
                     if remaining > 0:
                         time.sleep(remaining)
         except Exception as exc:  # noqa: BLE001 - la capture ne crashe jamais.

@@ -34,6 +34,7 @@
   var elMonitor = document.getElementById("remote-monitor");
   var elMonitors = document.getElementById("remote-monitors");
   var elError = document.getElementById("remote-error");
+  var elMode = document.getElementById("remote-mode");
   if (!elStart || !elCanvas) return;
 
   var ctx = elCanvas.getContext("2d", { alpha: false });
@@ -52,6 +53,18 @@
   var lastFrameAt = 0;
   var pingTimer = null;
   var lastPingSentAt = 0;
+
+  // --- Fluidité : presets de flux + mode Auto adaptatif (selon la latence) ---
+  // q = qualité JPEG, fps = cadence cible, w = largeur max (0 = pleine résolution).
+  var PRESETS = {
+    fluid:    { q: 45, fps: 24, w: 1280 },
+    balanced: { q: 65, fps: 18, w: 1600 },
+    sharp:    { q: 85, fps: 14, w: 0 },
+  };
+  var currentPreset = "balanced";
+  var adaptiveOn = false;
+  var autoApplied = null;
+  var lastRtt = null;
 
   // ---------------------------------------------------------------------------
   // Utilitaires UI
@@ -170,8 +183,9 @@
       bindInputs();
       startFpsCounter();
       startPing();
-      // Demande une keyframe pleine trame dès l'ouverture.
-      sendInput({ t: "request_keyframe" });
+      // Applique le mode de fluidité choisi (qualité + cadence + largeur) puis
+      // demande une keyframe pleine trame.
+      applyPreset(currentPreset);
     };
 
     ws.onmessage = function (ev) {
@@ -254,6 +268,7 @@
     if (msg.t === "pong") {
       var rtt = Math.round(performance.now() - lastPingSentAt);
       if (elLatency) elLatency.textContent = rtt;
+      maybeAdapt(rtt);
     } else if (msg.t === "monitors" && Array.isArray(msg.list)) {
       renderMonitorButtons(msg.list);
     } else if (msg.t === "user" && elUser) {
@@ -406,6 +421,47 @@
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
   }
 
+  // Réglages cible en mode Auto selon la latence mesurée (RTT).
+  function autoSettingsForRtt(rtt) {
+    if (rtt == null) return { q: 65, fps: 18, w: 1600 };
+    if (rtt < 80) return { q: 75, fps: 22, w: 1600 };
+    if (rtt < 180) return { q: 60, fps: 18, w: 1600 };
+    if (rtt < 350) return { q: 48, fps: 14, w: 1366 };
+    return { q: 35, fps: 10, w: 1280 };
+  }
+
+  function applySettings(s) {
+    sendInput({ t: "set_max_width", w: s.w });
+    sendInput({ t: "set_quality", q: s.q });
+    sendInput({ t: "set_fps", fps: s.fps });
+    sendInput({ t: "request_keyframe" });
+  }
+
+  function applyPreset(name) {
+    currentPreset = name;
+    try { localStorage.setItem("ts-remote-mode", name); } catch (e) { /* ignore */ }
+    if (name === "auto") {
+      adaptiveOn = true;
+      autoApplied = autoSettingsForRtt(lastRtt);
+      applySettings(autoApplied);
+    } else {
+      adaptiveOn = false;
+      applySettings(PRESETS[name] || PRESETS.balanced);
+    }
+  }
+
+  // En mode Auto : réagit aux variations de latence (sans osciller : on ne ré-applique
+  // que si le palier qualité/cadence change réellement).
+  function maybeAdapt(rtt) {
+    lastRtt = rtt;
+    if (!adaptiveOn) return;
+    var s = autoSettingsForRtt(rtt);
+    if (!autoApplied || s.q !== autoApplied.q || s.fps !== autoApplied.fps) {
+      autoApplied = s;
+      applySettings(s);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Arrêt / nettoyage
   // ---------------------------------------------------------------------------
@@ -458,6 +514,19 @@
   window.addEventListener("beforeunload", function () {
     if (ws) { try { ws.close(1000, "page_unload"); } catch (e) { /* ignore */ } }
   });
+
+  // Sélecteur de fluidité : restaure le choix mémorisé et applique à la volée.
+  if (elMode) {
+    var saved = null;
+    try { saved = localStorage.getItem("ts-remote-mode"); } catch (e) { /* ignore */ }
+    if (saved && (saved === "auto" || PRESETS[saved])) elMode.value = saved;
+    currentPreset = elMode.value || "balanced";
+    elMode.addEventListener("change", function () {
+      currentPreset = elMode.value;
+      if (ws && ws.readyState === WebSocket.OPEN) applyPreset(currentPreset);
+      else { try { localStorage.setItem("ts-remote-mode", currentPreset); } catch (e) { /* ignore */ } }
+    });
+  }
 
   // État initial.
   setButtonsForActive(false);

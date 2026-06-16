@@ -863,7 +863,7 @@ def test_agent_detail_workzone_visible_for_superadmin(client, admin_session):
     agent_id, _ = _enroll(client, "MACHINE-WZ")
     html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
     for marker in ("remote-start", "terminal-open", "cmd-run", "qa-lock", "workzone",
-                   "script-groups", "proc-load", "tab-processes"):
+                   "script-groups", "proc-load", "tab-processes", "tab-activity", "act-session"):
         assert marker in html, f"marqueur zone de travail manquant : {marker}"
 
 

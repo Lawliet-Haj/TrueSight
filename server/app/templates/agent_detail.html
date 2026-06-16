@@ -61,6 +61,10 @@
               aria-selected="false" aria-controls="panel-processes" data-tab="processes" tabindex="-1">
         <svg><use href="#i-activity"/></svg>Processus
       </button>
+      <button class="tab" id="tab-activity" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-activity" data-tab="activity" tabindex="-1">
+        <svg><use href="#i-clock"/></svg>Activité
+      </button>
     </div>
 
     <!-- Onglet : Bureau à distance -->
@@ -201,6 +205,40 @@
               <tr><td colspan="5" class="empty-cell">Cliquez sur « Charger les processus ».</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onglet : Activité du poste (sessions, applications, journaux) -->
+    <div class="tabpanel hidden" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity">
+      <div class="activity-win">
+        <div class="act-card">
+          <div class="act-head">
+            <span class="field-label">Session en cours &amp; applications ouvertes</span>
+            <button class="btn xs" type="button" data-act-cmd="session">Rafraîchir</button>
+          </div>
+          <pre class="act-out" id="act-session">Ouvrez l'onglet pour charger…</pre>
+        </div>
+        <div class="act-card">
+          <div class="act-head">
+            <span class="field-label">Ouvertures de session (24 h)</span>
+            <button class="btn xs" type="button" data-act-cmd="logons">Charger</button>
+          </div>
+          <pre class="act-out hidden" id="act-logons"></pre>
+        </div>
+        <div class="act-card">
+          <div class="act-head">
+            <span class="field-label">Démarrages / arrêts (7 j)</span>
+            <button class="btn xs" type="button" data-act-cmd="boots">Charger</button>
+          </div>
+          <pre class="act-out hidden" id="act-boots"></pre>
+        </div>
+        <div class="act-card">
+          <div class="act-head">
+            <span class="field-label">Erreurs &amp; avertissements système (24 h)</span>
+            <button class="btn xs" type="button" data-act-cmd="errors">Charger</button>
+          </div>
+          <pre class="act-out hidden" id="act-errors"></pre>
         </div>
       </div>
     </div>

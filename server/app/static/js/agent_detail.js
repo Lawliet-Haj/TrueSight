@@ -609,6 +609,75 @@
     loadBtn.addEventListener("click", load);
   }
 
+  // --- Activité du poste (sessions / applications / journaux), via le pipeline ---
+  function setupActivity() {
+    var panel = document.getElementById("panel-activity");
+    if (!panel) return;
+
+    // Commandes (sortie texte, affichée telle quelle — robuste, pas de parsing).
+    var ACT = {
+      session: { shell: "powershell", timeout: 40, out: "act-session",
+        text: "'=== UTILISATEURS / SESSIONS ==='; query user 2>$null; " +
+              "'=== APPLICATIONS OUVERTES ==='; " +
+              "Get-Process | Where-Object {$_.MainWindowTitle} | Select-Object Name,Id,MainWindowTitle | Sort-Object Name | Format-Table -AutoSize" },
+      logons: { shell: "powershell", timeout: 60, out: "act-logons",
+        text: "Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=(Get-Date).AddDays(-1)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
+              "Select-Object TimeCreated,@{n='Compte';e={$_.Properties[5].Value}},@{n='Type';e={$_.Properties[8].Value}} | Format-Table -AutoSize" },
+      boots: { shell: "powershell", timeout: 60, out: "act-boots",
+        text: "Get-WinEvent -FilterHashtable @{LogName='System';Id=6005,6006,1074,6008;StartTime=(Get-Date).AddDays(-7)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
+              "Select-Object TimeCreated,Id,@{n='Evenement';e={($_.Message.Split([char]10))[0]}} | Format-Table -AutoSize -Wrap" },
+      errors: { shell: "powershell", timeout: 60, out: "act-errors",
+        text: "Get-WinEvent -FilterHashtable @{LogName='System';Level=1,2,3;StartTime=(Get-Date).AddDays(-1)} -MaxEvents 25 -ErrorAction SilentlyContinue | " +
+              "Select-Object TimeCreated,LevelDisplayName,ProviderName,@{n='Message';e={($_.Message.Split([char]10))[0]}} | Format-Table -AutoSize -Wrap" },
+    };
+
+    function submit(shell, text, timeout) {
+      return fetch("/api/v1/agents/" + AGENT_ID + "/commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ shell: shell, command_text: text, timeout_seconds: timeout }),
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          return new Promise(function (resolve) { pollCommand(d.command_id, null, null, resolve); });
+        });
+      });
+    }
+
+    function loadCard(key) {
+      var spec = ACT[key];
+      if (!spec) return;
+      var pre = document.getElementById(spec.out);
+      if (!pre) return;
+      pre.classList.remove("hidden");
+      pre.textContent = "Chargement…";
+      submit(spec.shell, spec.text, spec.timeout).then(function (data) {
+        var r = (data && data.result) || {};
+        if (!data || data.status !== "done") {
+          pre.textContent = "Échec : " + cmdStatusLabel(data ? data.status : "?") +
+            (r.stderr ? "\n" + r.stderr : "");
+          return;
+        }
+        var txt = (r.stdout || "").trim();
+        var err = (r.stderr || "").trim();
+        pre.textContent = txt || (err ? "⚠ " + err : "(aucune donnée — nécessite peut-être des droits administrateur)");
+      }).catch(function (e) { pre.textContent = "Erreur : " + e.message; });
+    }
+
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-act-cmd]"), function (b) {
+      b.addEventListener("click", function () { loadCard(b.getAttribute("data-act-cmd")); });
+    });
+
+    // Auto-charge la session à la première ouverture de l'onglet Activité.
+    var loadedOnce = false;
+    document.addEventListener("ts:tab-activated", function (ev) {
+      if (ev.detail && ev.detail.tab === "activity" && !loadedOnce) {
+        loadedOnce = true;
+        loadCard("session");
+      }
+    });
+  }
+
   // --- Onglets de la zone de travail (bureau / terminal / commande) ---
   function setupTabs() {
     var tabs = Array.prototype.slice.call(document.querySelectorAll(".workzone .tab"));
@@ -656,6 +725,7 @@
     setupQuickActions();
     setupScriptLibrary();
     setupProcesses();
+    setupActivity();
     setupTags();
     setupTabs();
   }

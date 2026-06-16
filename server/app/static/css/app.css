@@ -410,6 +410,16 @@ textarea.input{
 .bulkbar .grow{flex:1}
 .bulk-count{font-family:var(--font-mono);font-size:11.5px;color:var(--signal);letter-spacing:.04em}
 
+/* Onglet Activité (cartes de sortie texte) */
+.activity-win{display:flex;flex-direction:column;gap:14px}
+.act-card{border:1px solid var(--line);border-radius:var(--r);background:var(--bg-2);overflow:hidden}
+.act-head{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
+.act-head .field-label{flex:1}
+.act-out{margin:0;background:#05080a;color:#cfe7df;font-family:var(--font-mono);font-size:12px;line-height:1.55;padding:12px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-word}
+.act-out.hidden{display:none}
+.act-out::-webkit-scrollbar{width:9px;height:9px}
+.act-out::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:9px;border:2px solid #05080a}
+
 /* ---------------------------------------------------------------------------
    Barre d'état (bas)
    --------------------------------------------------------------------------- */

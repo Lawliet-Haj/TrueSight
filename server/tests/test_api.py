@@ -1305,3 +1305,28 @@ def test_socle_permissions(app, client, admin_session):
     assert vw.post("/api/v1/sites", json={"name": "X"}).status_code == 403
     assert vw.post(f"/api/v1/agents/{a}/name", json={"name": "x"}).status_code == 403
     assert vw.delete(f"/api/v1/agents/{a}").status_code == 403
+
+
+def test_enroll_with_site_assigns(client, admin_session):
+    """Un poste enrôlé avec un ``site`` rejoint cet emplacement (find-or-create)."""
+    resp = client.post("/api/v1/enroll", json={
+        "enrollment_token": TestConfig.ENROLLMENT_TOKEN,
+        "machine_id": "MACHINE-SITE-ENROLL",
+        "hostname": "PC", "os_version": "Windows 11", "agent_version": "1.0.0",
+        "site": "Tunisie",
+    })
+    assert resp.status_code == 200
+    aid = resp.get_json()["agent_id"]
+    assert admin_session.get(f"/api/v1/agents/{aid}").get_json()["site_name"] == "Tunisie"
+
+
+def test_install_token_with_site(client, admin_session):
+    """Un lien d'installation lié à un site écrit ``site = ...`` dans config.ini."""
+    sid = admin_session.post("/api/v1/sites", json={"name": "Direction"}).get_json()["id"]
+    r = admin_session.post("/api/v1/install-tokens", json={"site_id": sid})
+    assert r.status_code == 201 and r.get_json()["site_name"] == "Direction"
+    token = r.get_json()["token"]
+    cfg = client.get(f"/api/v1/install/{token}/config").get_data(as_text=True)
+    assert "site = Direction" in cfg
+    toks = admin_session.get("/api/v1/install-tokens").get_json()
+    assert any(t.get("site_name") == "Direction" for t in toks)

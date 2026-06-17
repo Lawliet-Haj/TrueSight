@@ -63,6 +63,7 @@ def _perform_enroll(client: ApiClient, agent_config: cfg.AgentConfig) -> cfg.Age
         hostname=hostname,
         os_version=os_version,
         agent_version=__version__,
+        site=getattr(agent_config, "site", ""),
     )
 
     if not result.ok:

@@ -16,7 +16,8 @@ param(
     [Parameter(Mandatory = $true)][string]$AppDir,
     [string]$ServerUrl = "",
     [string]$Token = "",
-    [string]$VerifyTls = "true"
+    [string]$VerifyTls = "true",
+    [string]$Site = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,8 +60,9 @@ heartbeat_interval = 30
 command_poll_interval = 8
 inventory_interval_hours = 12
 "@
+        if ($Site) { $cfg = $cfg + "site = $Site`r`n" }
         Set-Content -Path $cfgPath -Value $cfg -Encoding UTF8
-        Log "config.ini ecrit ($ServerUrl)."
+        Log "config.ini ecrit ($ServerUrl, site=$Site)."
     } elseif (-not (Test-Path $cfgPath)) {
         Log "AVERT : aucune configuration fournie et aucun config.ini existant."
     } else {

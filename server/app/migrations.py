@@ -26,6 +26,9 @@ def ensure_schema():
     statements = [
         "ALTER TABLE agents ADD COLUMN IF NOT EXISTS display_name text",
         "ALTER TABLE agents ADD COLUMN IF NOT EXISTS site_id uuid",
+        # Emplacement pré-affecté sur un lien d'installation (si la table existait
+        # déjà d'un déploiement antérieur sans cette colonne).
+        "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS site_id uuid",
     ]
     for stmt in statements:
         try:

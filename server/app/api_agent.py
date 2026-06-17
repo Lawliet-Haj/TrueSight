@@ -18,6 +18,7 @@ from .models import (
     HardwareInventory,
     Metric,
     RemoteSession,
+    Site,
     SoftwareInventory,
 )
 from .models import utcnow
@@ -212,9 +213,33 @@ def enroll():
         agent.agent_version = agent_version or agent.agent_version
         agent.token_hash = token_h
 
+    # Emplacement (installeur par site) : le poste indique son site via config.ini.
+    # On l'affecte UNIQUEMENT s'il n'a pas déjà d'emplacement (ne pas écraser une
+    # affectation manuelle de l'admin). Le site est créé s'il n'existe pas encore.
+    _assign_enroll_site(agent, data.get("site"))
+
     db.session.commit()
 
     return jsonify({"agent_id": str(agent.id), "agent_token": token}), 200
+
+
+def _assign_enroll_site(agent: Agent, raw_site) -> None:
+    """Affecte l'agent à un emplacement nommé (find-or-create), si pertinent."""
+    if not raw_site or not isinstance(raw_site, str):
+        return
+    name = raw_site.strip()[:60]
+    if not name or agent.site_id is not None:
+        return
+    site = (
+        db.session.query(Site)
+        .filter(db.func.lower(Site.name) == name.lower())
+        .one_or_none()
+    )
+    if site is None:
+        site = Site(name=name)
+        db.session.add(site)
+        db.session.flush()
+    agent.site_id = site.id
 
 
 # --------------------------------------------------------------------------

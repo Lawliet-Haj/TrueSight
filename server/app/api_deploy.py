@@ -26,7 +26,7 @@ from datetime import timedelta, timezone
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 
 from .extensions import db
-from .models import AgentRelease, InstallToken, User, utcnow
+from .models import AgentRelease, InstallToken, Site, User, utcnow
 from .releases import (
     current_release,
     read_zip_version,
@@ -260,10 +260,12 @@ def _token_active(it: InstallToken) -> bool:
     return True
 
 
-def _token_payload(it: InstallToken, emails: dict) -> dict:
+def _token_payload(it: InstallToken, emails: dict, sites: dict) -> dict:
     return {
         "id": str(it.id),
         "label": it.label,
+        "site_id": str(it.site_id) if it.site_id else None,
+        "site_name": sites.get(it.site_id),
         "created_by": emails.get(it.created_by),
         "created_at": _iso(it.created_at),
         "expires_at": _iso(it.expires_at),
@@ -289,7 +291,8 @@ def list_install_tokens():
     if user_ids:
         for u in db.session.query(User).filter(User.id.in_(user_ids)).all():
             emails[u.id] = u.email
-    return jsonify([_token_payload(r, emails) for r in rows]), 200
+    sites = {s.id: s.name for s in db.session.query(Site).all()}
+    return jsonify([_token_payload(r, emails, sites) for r in rows]), 200
 
 
 @bp.get("/enrollment-token")
@@ -319,6 +322,22 @@ def create_install_token():
     except (TypeError, ValueError):
         ttl_days = default_ttl
 
+    # Emplacement pré-affecté (optionnel) : les postes installés via ce lien le
+    # rejoignent automatiquement à l'enrôlement.
+    site_id = None
+    site_name = None
+    raw_site = data.get("site_id")
+    if raw_site:
+        try:
+            site_uuid = uuid.UUID(str(raw_site))
+        except (ValueError, TypeError):
+            return jsonify({"error": "site_id invalide"}), 400
+        site = db.session.get(Site, site_uuid)
+        if site is None:
+            return jsonify({"error": "emplacement introuvable"}), 404
+        site_id = site.id
+        site_name = site.name
+
     expires_at = None
     if ttl_days > 0:
         expires_at = utcnow() + timedelta(days=ttl_days)
@@ -327,6 +346,7 @@ def create_install_token():
     it = InstallToken(
         token_hash=hash_token(token),
         label=label,
+        site_id=site_id,
         created_by=g.user.id,
         created_at=utcnow(),
         expires_at=expires_at,
@@ -350,6 +370,7 @@ def create_install_token():
         jsonify({
             "id": str(it.id),
             "token": token,
+            "site_name": site_name,
             "install_url": install_url,
             "one_liner": one_liner,
             "expires_at": _iso(expires_at),
@@ -426,6 +447,13 @@ def install_config(token):
 
     base = request.host_url.rstrip("/")
     enrollment_token = current_app.config.get("ENROLLMENT_TOKEN", "")
+    # Emplacement pré-affecté : écrit dans config.ini ; l'agent l'envoie à
+    # l'enrôlement et le serveur l'affecte au poste (find-or-create).
+    site_line = ""
+    if it.site_id:
+        site = db.session.get(Site, it.site_id)
+        if site is not None:
+            site_line = f"site = {site.name}\n"
     config_text = (
         "[server]\n"
         f"url = {base}\n"
@@ -436,6 +464,7 @@ def install_config(token):
         "heartbeat_interval = 30\n"
         "command_poll_interval = 8\n"
         "inventory_interval_hours = 12\n"
+        f"{site_line}"
     )
 
     it.use_count = (it.use_count or 0) + 1

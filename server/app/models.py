@@ -304,6 +304,10 @@ class InstallToken(db.Model):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     label: Mapped[str | None] = mapped_column(Text)
+    # Emplacement pré-affecté : les postes installés via ce lien rejoignent ce site.
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sites.id", ondelete="SET NULL"), nullable=True
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id"), nullable=True
     )

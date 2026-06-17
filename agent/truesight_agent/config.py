@@ -114,6 +114,7 @@ class AgentConfig:
         heartbeat_interval: int,
         command_poll_interval: int,
         inventory_interval_hours: float,
+        site: str = "",
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.enrollment_token = enrollment_token
@@ -121,6 +122,8 @@ class AgentConfig:
         self.heartbeat_interval = int(heartbeat_interval)
         self.command_poll_interval = int(command_poll_interval)
         self.inventory_interval_hours = float(inventory_interval_hours)
+        # Emplacement (site) pré-affecté via config.ini : envoyé à l'enrôlement.
+        self.site = (site or "").strip()
 
     def apply_server_config(self, server_config: dict) -> bool:
         """Applique les intervalles renvoyés par le serveur dans le heartbeat.
@@ -188,6 +191,8 @@ def load_config(path: str | None = None) -> AgentConfig:
     heartbeat_interval = parser.getint("agent", "heartbeat_interval", fallback=45)
     command_poll_interval = parser.getint("agent", "command_poll_interval", fallback=8)
     inventory_interval_hours = parser.getfloat("agent", "inventory_interval_hours", fallback=12.0)
+    # Emplacement pré-affecté (optionnel) : posé par l'installeur/lien par site.
+    site = parser.get("agent", "site", fallback="").strip()
 
     return AgentConfig(
         server_url=server_url,
@@ -196,6 +201,7 @@ def load_config(path: str | None = None) -> AgentConfig:
         heartbeat_interval=heartbeat_interval,
         command_poll_interval=command_poll_interval,
         inventory_interval_hours=inventory_interval_hours,
+        site=site,
     )
 
 

@@ -51,8 +51,10 @@
       var revoke = (!t.revoked && t.active)
         ? '<button type="button" class="btn xs danger" data-action="revoke-link" data-id="' + esc(t.id) + '">Révoquer</button>'
         : "";
+      var siteChip = t.site_name
+        ? ' <span class="chip tag">' + esc(t.site_name) + "</span>" : "";
       return "<tr>" +
-        "<td>" + esc(t.label || "Lien d'installation") + "</td>" +
+        "<td>" + esc(t.label || "Lien d'installation") + siteChip + "</td>" +
         "<td>" + fmtDate(t.created_at) + "</td>" +
         "<td>" + (t.expires_at ? fmtDate(t.expires_at) : "sans limite") + "</td>" +
         '<td class="num mono">' + (t.use_count || 0) + "</td>" +
@@ -73,6 +75,20 @@
     }
   }
 
+  // Remplit le sélecteur d'emplacement du formulaire de lien.
+  async function loadLinkSites() {
+    var sel = document.getElementById("link-site");
+    if (!sel) return;
+    try {
+      var r = await fetch("/api/v1/sites", { headers: { Accept: "application/json" } });
+      if (!r.ok) return;
+      var sites = (await r.json()).filter(function (s) { return s.id; });
+      sel.innerHTML = '<option value="">Aucun</option>' + sites.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>";
+      }).join("");
+    } catch (_) { /* non bloquant */ }
+  }
+
   if (linkForm) {
     linkForm.addEventListener("submit", async function (e) {
       e.preventDefault();
@@ -81,18 +97,21 @@
       var label = document.getElementById("link-label").value.trim();
       var ttl = parseInt(document.getElementById("link-ttl").value, 10);
       if (isNaN(ttl)) ttl = 7;
+      var siteSel = document.getElementById("link-site");
+      var siteId = siteSel ? siteSel.value : "";
       try {
         var r = await fetch("/api/v1/install-tokens", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ label: label, ttl_days: ttl }),
+          body: JSON.stringify({ label: label, ttl_days: ttl, site_id: siteId || null }),
         });
         var d = await jsonOf(r);
         if (!r.ok) { setMsg(m, d.error || "Échec.", false); return; }
         linkOneliner.textContent = d.one_liner || "";
+        var siteTxt = d.site_name ? (" Les postes installés rejoindront « " + d.site_name + " ».") : "";
         document.getElementById("link-expire").textContent =
-          d.expires_at ? ("Ce lien expire le " + fmtDate(d.expires_at) + ". À usage de déploiement uniquement.")
-                       : "Ce lien n'expire pas — pensez à le révoquer après le déploiement.";
+          (d.expires_at ? ("Ce lien expire le " + fmtDate(d.expires_at) + ".")
+                        : "Ce lien n'expire pas — pensez à le révoquer après le déploiement.") + siteTxt;
         linkResult.classList.remove("hidden");
         linkForm.reset();
         document.getElementById("link-ttl").value = "7";
@@ -296,5 +315,6 @@
   }
 
   loadLinks();
+  loadLinkSites();
   loadReleases();
 })();

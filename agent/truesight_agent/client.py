@@ -249,8 +249,13 @@ class ApiClient:
         hostname: str,
         os_version: str,
         agent_version: str,
+        site: str = "",
     ) -> ApiResult:
-        """POST /api/v1/enroll (aucune auth) → renvoie agent_id + agent_token."""
+        """POST /api/v1/enroll (aucune auth) → renvoie agent_id + agent_token.
+
+        ``site`` (optionnel) : emplacement à pré-affecter au poste (installeur par
+        site). Le serveur ne l'applique que si le poste n'a pas déjà un emplacement.
+        """
         body = {
             "enrollment_token": enrollment_token,
             "machine_id": machine_id,
@@ -258,6 +263,8 @@ class ApiClient:
             "os_version": os_version,
             "agent_version": agent_version,
         }
+        if site:
+            body["site"] = site
         # /enroll : pas de Bearer ; 401 = token d'enrôlement invalide, on remonte
         # un ApiResult plutôt qu'une AuthError (le flux enroll a sa propre logique).
         url = self.base_url + API_BASE + "/enroll"

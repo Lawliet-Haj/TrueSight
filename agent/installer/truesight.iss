@@ -116,6 +116,8 @@ begin
   p := p + ' -VerifyTls "' + GetVerifyTls('') + '"';
   if Trim(GetToken('')) <> '' then
     p := p + ' -Token "' + GetToken('') + '"';
+  if Trim(ExpandConstant('{param:SITE|}')) <> '' then
+    p := p + ' -Site "' + ExpandConstant('{param:SITE|}') + '"';
   Result := p;
 end;
 

@@ -135,6 +135,37 @@ et l'agent l'utilise en priorité (encodage ~5-10× plus rapide). Sinon, repli
 automatique sur Pillow — le build reste valide. Au runtime, l'agent localise la
 DLL embarquée (`_internal\turbojpeg.dll`) sans configuration.
 
+## 8. Installeur .exe (Inno Setup) — manuel & silencieux
+
+Pour les installs **par double-clic** (et un désinstalleur propre), produire un
+`setup.exe` qui emballe le dossier onedir :
+
+```powershell
+cd agent
+.\build-installer.ps1          # produit dist\TrueSightAgent-Setup-<version>.exe
+```
+
+Prérequis : **Inno Setup 6** (`winget install JRSoftware.InnoSetup`). Le script
+lance `build.ps1` au besoin, puis compile `installer\truesight.iss`.
+
+- **Manuel** : double-clic → UAC → assistant (URL serveur + jeton d'enrôlement) →
+  installé dans `C:\Program Files\TrueSight`, service SYSTEM + tâche compagnon
+  configurés et démarrés (via `installer\postinstall.ps1`). Désinstalle proprement
+  depuis « Applications » (`installer\preuninstall.ps1` arrête/supprime service +
+  tâche, purge `C:\ProgramData\TrueSight`).
+- **Silencieux (parc / GPO / Intune)** :
+  ```
+  TrueSightAgent-Setup-<v>.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVERURL=https://srv778935.hstgr.cloud /TOKEN=<jeton>
+  ```
+  Déployable par GPO (script de démarrage appelant le setup silencieux depuis un
+  partage) ou Intune (Win32). Le jeton = `ENROLLMENT_TOKEN` du `.env` serveur.
+
+> **Trois voies d'installation** coexistent — choisir selon le contexte :
+> 1. **Installeur .exe** (§8) — manuel/double-clic, ou silencieux GPO/Intune ;
+> 2. **Lien d'installation** (§5) — one-liner PowerShell, jeton révocable, zéro fichier ;
+> 3. **GPO startup-script** (§3.B, `gpo-install.ps1`) — copie onedir depuis un partage.
+> L'**auto-update** (§6) prend ensuite le relais pour toutes les montées de version.
+
 ## Points à valider / à venir
 - **Bureau à distance en session 0** : le service (SYSTEM) relance un *helper* dans
   la session interactive (`remote/launcher.py`, `CreateProcessAsUser`) ou pilote le

@@ -56,12 +56,13 @@ def _num(value):
         return None
 
 
-def agent_health(agent, metric, active_alert_types, cfg) -> tuple[str, list]:
+def agent_health(agent, metric, active_alert_types, cfg, security=None) -> tuple[str, list]:
     """Renvoie ``(status, reasons)`` pour un poste.
 
     - ``metric`` : dernier point de métriques (ou None) ;
     - ``active_alert_types`` : ensemble des types d'alertes actives du poste ;
-    - ``cfg`` : configuration de l'app (seuils).
+    - ``cfg`` : configuration de l'app (seuils) ;
+    - ``security`` : dict ``{defender, windows_update}`` (ou None).
     """
     threshold = cfg.get("OFFLINE_THRESHOLD_SECONDS", 300)
     if not is_online(agent, threshold):
@@ -88,6 +89,22 @@ def agent_health(agent, metric, active_alert_types, cfg) -> tuple[str, list]:
         if ram is not None and ram >= cfg.get("ALERT_RAM_HIGH_PCT", 90):
             status = _escalate(status, "warning")
             reasons.append(f"RAM {ram:.0f}%")
+
+    # Signaux sécurité (Defender + MAJ Windows en attente).
+    if security:
+        defender = security.get("defender") or {}
+        if defender:
+            if defender.get("enabled") is False:
+                status = _escalate(status, "warning")
+                reasons.append("antivirus désactivé")
+            elif defender.get("realtime") is False:
+                status = _escalate(status, "warning")
+                reasons.append("protection temps réel désactivée")
+        wu = security.get("windows_update") or {}
+        crit = wu.get("pending_critical")
+        if isinstance(crit, int) and crit > 0:
+            status = _escalate(status, "warning")
+            reasons.append(f"{crit} MAJ critique" + ("s" if crit > 1 else ""))
 
     # Dédoublonne les raisons en conservant l'ordre.
     seen = set()

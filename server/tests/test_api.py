@@ -1330,3 +1330,36 @@ def test_install_token_with_site(client, admin_session):
     assert "site = Direction" in cfg
     toks = admin_session.get("/api/v1/install-tokens").get_json()
     assert any(t.get("site_name") == "Direction" for t in toks)
+
+
+def test_security_collection_and_health(client, admin_session):
+    """Inventaire avec sécurité : stocké, reflété dans la santé + la vue d'ensemble."""
+    a, t = _enroll(client, "MACHINE-SEC")
+    client.post(
+        f"/api/v1/agents/{a}/heartbeat",
+        json={"metrics": {"cpu_pct": 3, "ram_used_pct": 20}}, headers=_auth(t),
+    )
+    r = client.post(
+        f"/api/v1/agents/{a}/inventory",
+        json={
+            "hardware": {}, "software": [],
+            "security": {
+                "defender": {"enabled": False, "realtime": False},
+                "windows_update": {"pending_count": 5, "pending_critical": 2},
+            },
+        },
+        headers=_auth(t),
+    )
+    assert r.status_code == 200
+
+    ag = admin_session.get(f"/api/v1/agents/{a}").get_json()
+    assert ag["security"]["pending_updates"] == 5 and ag["security"]["defender_enabled"] is False
+    assert ag["health"] == "warning"
+    assert any("antivirus" in x.lower() for x in ag["health_reasons"])
+
+    ov = admin_session.get("/api/v1/overview").get_json()
+    probs = {p["type"]: p["count"] for p in ov["problems"]}
+    assert probs.get("updates") == 1 and probs.get("defender") == 1
+
+    assert len(admin_session.get("/api/v1/agents?security=updates").get_json()) == 1
+    assert len(admin_session.get("/api/v1/agents?security=defender").get_json()) == 1

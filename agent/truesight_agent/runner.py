@@ -413,7 +413,9 @@ class AgentRunner:
         _logger.info("Collecte de l'inventaire matériel + logiciel...")
         hardware = collectors.collect_hardware()
         software = collectors.collect_software()
-        result = self.client.send_inventory(hardware, software)
+        # Sécurité (Defender + MAJ Windows en attente) : collecté à la même cadence.
+        security = collectors.collect_security()
+        result = self.client.send_inventory(hardware, software, security)
         if result.ok:
             _logger.info("Inventaire envoyé (%d logiciels).", len(software))
         else:

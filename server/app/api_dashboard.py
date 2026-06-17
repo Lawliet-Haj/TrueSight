@@ -18,6 +18,7 @@ from .extensions import db
 from .health import PROBLEM_LABELS, agent_health, is_online
 from .models import (
     Agent,
+    AgentSecurity,
     Alert,
     AlertRule,
     AuditLog,
@@ -136,6 +137,33 @@ def _sites_map() -> dict:
     return {s.id: s for s in db.session.query(Site).all()}
 
 
+def _security_map() -> dict:
+    """Renvoie {agent_id: AgentSecurity} pour tout le parc."""
+    return {s.agent_id: s for s in db.session.query(AgentSecurity).all()}
+
+
+def _sec_dict(sec):
+    """Normalise un AgentSecurity en dict {defender, windows_update} (ou None)."""
+    if sec is None:
+        return None
+    return {"defender": sec.defender or {}, "windows_update": sec.windows_update or {}}
+
+
+def _security_summary(sec):
+    """Résumé compact pour la liste : MAJ en attente + état antivirus."""
+    if sec is None:
+        return None
+    wu = sec.windows_update or {}
+    df = sec.defender or {}
+    return {
+        "pending_updates": wu.get("pending_count"),
+        "pending_critical": wu.get("pending_critical"),
+        "defender_enabled": df.get("enabled"),
+        "defender_realtime": df.get("realtime"),
+        "collected_at": _iso_utc(sec.collected_at),
+    }
+
+
 def _agent_display_name(agent: Agent) -> str:
     """Nom affiché : nom convivial s'il existe, sinon hostname, sinon id."""
     return agent.display_name or agent.hostname or str(agent.id)
@@ -152,10 +180,12 @@ def list_agents():
     threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
     site_filter = (request.args.get("site") or "").strip()
     health_filter = (request.args.get("health") or "").strip()
+    security_filter = (request.args.get("security") or "").strip()
 
     agents = db.session.query(Agent).order_by(Agent.hostname.asc()).all()
     sites = _sites_map()
     alert_map = _active_alert_types_map()
+    sec_map = _security_map()
 
     out = []
     for agent in agents:
@@ -164,9 +194,18 @@ def list_agents():
                 continue
             if site_filter != "none" and str(agent.site_id) != site_filter:
                 continue
+        sec = sec_map.get(agent.id)
+        if security_filter == "updates":
+            wu = (sec.windows_update if sec else None) or {}
+            if not (isinstance(wu.get("pending_count"), int) and wu["pending_count"] > 0):
+                continue
+        elif security_filter == "defender":
+            df = (sec.defender if sec else None) or {}
+            if df.get("enabled") is not False:
+                continue
         metric = _latest_metric(agent.id)
         health, reasons = agent_health(
-            agent, metric, alert_map.get(agent.id, set()), current_app.config
+            agent, metric, alert_map.get(agent.id, set()), current_app.config, _sec_dict(sec)
         )
         if health_filter and health != health_filter:
             continue
@@ -189,6 +228,7 @@ def list_agents():
                 "site_color": (site.color if site else None),
                 "health": health,
                 "health_reasons": reasons,
+                "security": _security_summary(sec),
             }
         )
     return jsonify(out), 200
@@ -246,7 +286,8 @@ def get_agent(agent_id):
         .filter(Alert.agent_id == aid, Alert.resolved_at.is_(None))
         .all()
     }
-    health, reasons = agent_health(agent, metric, alert_types, current_app.config)
+    sec = db.session.get(AgentSecurity, aid)
+    health, reasons = agent_health(agent, metric, alert_types, current_app.config, _sec_dict(sec))
     site = db.session.get(Site, agent.site_id) if agent.site_id else None
 
     payload = {
@@ -266,6 +307,7 @@ def get_agent(agent_id):
         "status": "online" if _is_online(agent, threshold) else "offline",
         "health": health,
         "health_reasons": reasons,
+        "security": _security_summary(sec),
         "hardware": hardware_payload,
         "last_metric": last_metric_payload,
         "software_count": software_count,
@@ -1066,9 +1108,12 @@ def overview():
     agents = db.session.query(Agent).all()
     sites = _sites_map()
     alert_map = _active_alert_types_map()
+    sec_map = _security_map()
 
     health_counts = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}
     online = 0
+    updates_pending = 0   # postes avec des MAJ Windows en attente
+    defender_off = 0      # postes dont l'antivirus est désactivé
 
     def _blank_site(name, color):
         return {"name": name, "color": color, "total": 0, "online": 0,
@@ -1082,8 +1127,9 @@ def overview():
 
     for agent in agents:
         metric = _latest_metric(agent.id)
+        sec = sec_map.get(agent.id)
         health, _reasons = agent_health(
-            agent, metric, alert_map.get(agent.id, set()), current_app.config
+            agent, metric, alert_map.get(agent.id, set()), current_app.config, _sec_dict(sec)
         )
         health_counts[health] += 1
         is_on = _is_online(agent, threshold)
@@ -1091,6 +1137,12 @@ def overview():
             online += 1
         if rel and version_gt(rel.version, agent.agent_version):
             updates_available += 1
+        if sec is not None:
+            wu = sec.windows_update or {}
+            if isinstance(wu.get("pending_count"), int) and wu["pending_count"] > 0:
+                updates_pending += 1
+            if (sec.defender or {}).get("enabled") is False:
+                defender_off += 1
 
         key = str(agent.site_id) if agent.site_id else "none"
         bucket = site_stats.get(key)
@@ -1121,6 +1173,8 @@ def overview():
             "count": int(count or 0),
         })
     problems.append({"type": "offline", "label": PROBLEM_LABELS["offline"], "count": offline})
+    problems.append({"type": "updates", "label": "MAJ Windows en attente", "count": updates_pending})
+    problems.append({"type": "defender", "label": "Antivirus désactivé", "count": defender_off})
     problems.sort(key=lambda p: p["count"], reverse=True)
 
     active_alerts = (

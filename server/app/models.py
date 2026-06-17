@@ -143,6 +143,23 @@ class SoftwareInventory(db.Model):
     agent = relationship("Agent", back_populates="software")
 
 
+class AgentSecurity(db.Model):
+    """État de sécurité d'un poste (1 ligne par agent — table ``agent_security``).
+
+    Collecté avec l'inventaire (~12 h) : antivirus Defender + MAJ Windows en
+    attente. Stocké en JSON pour rester souple (structure susceptible d'évoluer).
+    """
+
+    __tablename__ = "agent_security"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    defender: Mapped[dict | None] = mapped_column(JSONType)
+    windows_update: Mapped[dict | None] = mapped_column(JSONType)
+    collected_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+
 class Metric(db.Model):
     """Point de télémétrie (série temporelle — table ``metrics``)."""
 

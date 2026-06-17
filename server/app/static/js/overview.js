@@ -62,7 +62,15 @@
     setText("ov-updated", "actualisé à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
   }
 
-  var PROBLEM_ICON = { offline: "i-unplug", disk_low: "i-hdd", cpu_high: "i-cpu", ram_high: "i-cpu" };
+  var PROBLEM_ICON = {
+    offline: "i-unplug", disk_low: "i-hdd", cpu_high: "i-cpu", ram_high: "i-cpu",
+    updates: "i-download", defender: "i-shield",
+  };
+  var PROBLEM_HREF = {
+    offline: "/agents?status=offline",
+    updates: "/agents?security=updates",
+    defender: "/agents?security=defender",
+  };
 
   function renderProblems(problems) {
     var box = document.getElementById("ov-problems");
@@ -73,9 +81,9 @@
       return;
     }
     box.innerHTML = rows.map(function (p) {
-      // offline -> Parc filtré hors ligne ; sinon -> page Alertes.
-      var href = p.type === "offline" ? "/agents?status=offline" : "/alerts";
-      var sev = p.type === "offline" || p.type === "disk_low" ? "crit" : "warn";
+      // Drill-down : Parc filtré (offline/updates/defender) ; sinon page Alertes.
+      var href = PROBLEM_HREF[p.type] || "/alerts";
+      var sev = (p.type === "offline" || p.type === "disk_low") ? "crit" : "warn";
       return '<a class="prob-row" href="' + href + '">' +
         '<span class="prob-ic ' + sev + '"><svg><use href="#' + (PROBLEM_ICON[p.type] || "i-alert") + '"/></svg></span>' +
         '<span class="prob-lb">' + esc(p.label) + "</span>" +

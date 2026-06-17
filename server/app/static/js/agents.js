@@ -22,6 +22,7 @@
   var qp = new URLSearchParams(window.location.search);
   var siteParam = qp.get("site") || "";
   var healthParam = (qp.get("health") || "").toLowerCase();
+  var securityParam = (qp.get("security") || "").toLowerCase();
   if ((qp.get("status") || "").toLowerCase() === "offline") statusFilter = "offline";
 
   function esc(s) {
@@ -380,6 +381,8 @@
       parts.push("Emplacement : " + nm);
     }
     if (healthParam && HEALTH_LABEL[healthParam]) parts.push("Santé : " + HEALTH_LABEL[healthParam]);
+    if (securityParam === "updates") parts.push("MAJ Windows en attente");
+    else if (securityParam === "defender") parts.push("Antivirus désactivé");
     if (!parts.length) { banner.classList.add("hidden"); return; }
     txt.textContent = parts.join("  ·  ");
     banner.classList.remove("hidden");
@@ -421,6 +424,7 @@
       var qs = [];
       if (siteParam) qs.push("site=" + encodeURIComponent(siteParam));
       if (healthParam) qs.push("health=" + encodeURIComponent(healthParam));
+      if (securityParam) qs.push("security=" + encodeURIComponent(securityParam));
       var url = "/api/v1/agents" + (qs.length ? "?" + qs.join("&") : "");
       var resp = await fetch(url, { headers: { Accept: "application/json" } });
       if (resp.status === 401) { window.location.href = "/login"; return; }

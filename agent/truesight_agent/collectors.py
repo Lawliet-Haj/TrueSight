@@ -13,11 +13,16 @@ valeurs par défaut propres plutôt que de crasher l'agent.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import re
+import subprocess
 import time
 
 import psutil
+
+# Drapeau Windows : exécuter un sous-processus sans fenêtre console (évite un flash).
+_CREATE_NO_WINDOW = 0x08000000
 
 _logger = logging.getLogger("truesight.collectors")
 
@@ -140,6 +145,101 @@ def _drive_label(mountpoint: str) -> str:
     if match:
         return match.group(1).upper()
     return mp.rstrip("\\/")
+
+
+# ============================================================================
+# Sécurité : antivirus Defender + MAJ Windows en attente (collecté avec l'inventaire)
+# ============================================================================
+def collect_security() -> dict:
+    """Collecte l'état de sécurité : Defender + MAJ Windows en attente.
+
+    Renvoie ``{"defender": {...}, "windows_update": {...}}``. Chaque sous-collecte
+    est tolérante : en cas d'échec (poste non Windows, droits, délai), le dict
+    correspondant est vide — jamais d'exception.
+    """
+    return {
+        "defender": _collect_defender(),
+        "windows_update": _collect_windows_update(),
+    }
+
+
+def _collect_defender() -> dict:
+    """État de Windows Defender via ``Get-MpComputerStatus`` (PowerShell)."""
+    cmd = (
+        "Get-MpComputerStatus | Select-Object AntivirusEnabled,"
+        "RealTimeProtectionEnabled,AMServiceEnabled,AntivirusSignatureAge,"
+        "AntispywareSignatureAge,QuickScanAge | ConvertTo-Json -Compress"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+            capture_output=True, text=True, timeout=45, creationflags=_CREATE_NO_WINDOW,
+        )
+        raw = (proc.stdout or "").strip()
+        if not raw:
+            return {}
+        data = json.loads(raw)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        _logger.info("État Defender indisponible : %s", exc)
+        return {}
+    except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+        _logger.info("État Defender indisponible (%s).", exc)
+        return {}
+    return {
+        "enabled": bool(data.get("AntivirusEnabled")),
+        "realtime": bool(data.get("RealTimeProtectionEnabled")),
+        "service_enabled": bool(data.get("AMServiceEnabled")),
+        "signature_age_days": _safe_int_or_none(data.get("AntivirusSignatureAge")),
+    }
+
+
+def _collect_windows_update() -> dict:
+    """Nombre de MAJ Windows en attente via l'API COM Microsoft.Update.Session.
+
+    Recherche en ligne (peut être lente) : appelée uniquement depuis la boucle
+    inventaire (~12 h). Tolérante à l'absence de pywin32 / aux erreurs WU.
+    """
+    try:
+        import pythoncom  # type: ignore
+        import win32com.client  # type: ignore
+    except Exception:  # noqa: BLE001 - pywin32 absent.
+        return {}
+
+    initialized = False
+    try:
+        pythoncom.CoInitialize()
+        initialized = True
+        session = win32com.client.Dispatch("Microsoft.Update.Session")
+        searcher = session.CreateUpdateSearcher()
+        result = searcher.Search("IsInstalled=0 and IsHidden=0")
+        updates = result.Updates
+        total = int(updates.Count)
+        critical = 0
+        for i in range(total):
+            try:
+                sev = updates.Item(i).MsrcSeverity
+            except Exception:  # noqa: BLE001
+                sev = None
+            if sev in ("Critical", "Important"):
+                critical += 1
+        return {"pending_count": total, "pending_critical": critical}
+    except Exception as exc:  # noqa: BLE001 - WU indisponible / hors ligne.
+        _logger.info("MAJ Windows en attente indisponibles : %s", exc)
+        return {}
+    finally:
+        if initialized:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _safe_int_or_none(value):
+    """Convertit en entier, ou None si impossible."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _collect_uptime() -> int:

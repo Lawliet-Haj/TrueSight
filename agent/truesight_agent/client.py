@@ -331,14 +331,20 @@ class ApiClient:
             json_body=body,
         )
 
-    def send_inventory(self, hardware: dict, software: list) -> ApiResult:
-        """POST /api/v1/agents/{agent_id}/inventory → {ok}."""
+    def send_inventory(self, hardware: dict, software: list, security: dict | None = None) -> ApiResult:
+        """POST /api/v1/agents/{agent_id}/inventory → {ok}.
+
+        ``security`` (optionnel) : état Defender + MAJ Windows en attente.
+        """
         if not self._agent_id:
             return ApiResult(False, error="inventaire sans agent_id.")
+        body = {"hardware": hardware, "software": software}
+        if security:
+            body["security"] = security
         return self._request(
             "POST",
             f"/agents/{self._agent_id}/inventory",
-            json_body={"hardware": hardware, "software": software},
+            json_body=body,
         )
 
     def get_commands(self) -> ApiResult:

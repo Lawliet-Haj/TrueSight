@@ -13,6 +13,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 from .extensions import db
 from .models import (
     Agent,
+    AgentSecurity,
     Command,
     CommandResult,
     HardwareInventory,
@@ -349,6 +350,7 @@ def inventory(agent_id):
     data = _json_body()
     hardware = data.get("hardware") or {}
     software = data.get("software") or []
+    security = data.get("security")
 
     now = utcnow()
 
@@ -385,6 +387,16 @@ def inventory(agent_id):
                     collected_at=now,
                 )
             )
+
+    # --- Upsert sécurité (Defender + MAJ Windows), si fourni ---
+    if isinstance(security, dict):
+        sec = db.session.get(AgentSecurity, agent.id)
+        if sec is None:
+            sec = AgentSecurity(agent_id=agent.id)
+            db.session.add(sec)
+        sec.defender = security.get("defender") or {}
+        sec.windows_update = security.get("windows_update") or {}
+        sec.collected_at = now
 
     db.session.commit()
     return jsonify({"ok": True}), 200

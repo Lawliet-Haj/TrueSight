@@ -41,7 +41,8 @@ import sys
 import threading
 
 from .. import config as cfg
-from . import session as session_mod
+# NB : les modules de session (remote/terminal) sont importés PARESSEUSEMENT dans
+# les fonctions, pour ne pas tirer mss/Pillow quand seul le terminal est demandé.
 
 _logger = logging.getLogger("truesight.remote.launcher")
 
@@ -82,20 +83,25 @@ def is_session_zero() -> bool:
         return False
 
 
-def _helper_command(token: str, ws_url: str) -> list[str]:
+def _helper_command(token: str, ws_url: str, kind: str = "remote", shell: str = "powershell") -> list[str]:
     """Construit la ligne de commande du helper à lancer dans la session active.
 
-    - Exécutable figé (.exe) : ``truesight-agent.exe remote-helper --token .. --ws-url ..``
+    - Exécutable figé (.exe) : ``truesight-agent.exe remote-helper --token .. --ws-url .. --kind ..``
     - Mode développement (python -m) : ``python -m truesight_agent remote-helper ...``
+
+    ``kind`` vaut 'remote' (capture écran) ou 'terminal' (shell PTY) ; pour le
+    terminal on transmet aussi ``--shell``.
     """
-    args = ["remote-helper", "--token", token, "--ws-url", ws_url]
+    args = ["remote-helper", "--token", token, "--ws-url", ws_url, "--kind", kind]
+    if kind == "terminal":
+        args += ["--shell", shell]
     if cfg.is_frozen():
         return [sys.executable, *args]
     # Dev : relancer l'interpréteur sur le paquet.
     return [sys.executable, "-m", "truesight_agent", *args]
 
 
-def _launch_in_active_session(token: str, ws_url: str) -> bool:
+def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote", shell: str = "powershell") -> bool:
     """Lance le helper dans la session console active via CreateProcessAsUser.
 
     Renvoie True si le process a été créé. Tolérant : journalise et renvoie
@@ -135,7 +141,7 @@ def _launch_in_active_session(token: str, ws_url: str) -> bool:
             _logger.debug("CreateEnvironmentBlock indisponible (%s), env par défaut.", exc)
             environment = None
 
-        cmdline = _helper_command(token, ws_url)
+        cmdline = _helper_command(token, ws_url, kind, shell)
         # On reconstruit une ligne de commande citée correctement.
         cmdline_str = subprocess.list2cmdline(cmdline)
 
@@ -158,8 +164,8 @@ def _launch_in_active_session(token: str, ws_url: str) -> bool:
             None,            # current directory
             startup,
         )
-        _logger.info("Helper de bureau à distance lancé dans la session console %s.",
-                     console_session_id)
+        _logger.info("Helper (%s) lancé dans la session console %s.",
+                     kind, console_session_id)
         return True
     except Exception as exc:  # noqa: BLE001 - jamais bloquant.
         _logger.error("Lancement du helper en session active impossible : %s", exc)
@@ -179,11 +185,21 @@ def _launch_in_active_session(token: str, ws_url: str) -> bool:
                 pass
 
 
-def _run_session_inline(token: str, ws_url: str, verify_tls: bool) -> None:
-    """Exécute la session dans un thread du process courant (mode console)."""
+def _run_session_inline(token: str, ws_url: str, verify_tls: bool,
+                        kind: str = "remote", shell: str = "powershell") -> None:
+    """Exécute la session dans un thread du process courant (agent en session user).
+
+    Dispatche selon ``kind`` : 'remote' (capture/injection) ou 'terminal' (shell PTY).
+    Les imports sont paresseux pour ne charger que ce qui est nécessaire.
+    """
     def _target() -> None:
         try:
-            session_mod.run(token, ws_url, verify_tls=verify_tls)
+            if kind == "terminal":
+                from ..terminal import session as terminal_session
+                terminal_session.run(token, ws_url, shell=shell, verify_tls=verify_tls)
+            else:
+                from . import session as remote_session
+                remote_session.run(token, ws_url, verify_tls=verify_tls)
         except Exception as exc:  # noqa: BLE001
             _logger.error("Session inline interrompue : %s", exc)
 
@@ -191,17 +207,19 @@ def _run_session_inline(token: str, ws_url: str, verify_tls: bool) -> None:
     thread.start()
 
 
-def start_session(token: str, ws_url: str, verify_tls: bool = True) -> bool:
-    """Démarre une session de bureau à distance.
+def start_session(token: str, ws_url: str, verify_tls: bool = True,
+                  kind: str = "remote", shell: str = "powershell") -> bool:
+    """Démarre une session distante (bureau à distance OU terminal).
 
     - En session 0 (service SYSTEM) : lance un helper dans la session console
-      active (CreateProcessAsUser). La capture/injection s'y déroule.
-    - Sinon (mode console / session utilisateur) : exécute la session
-      directement dans un thread du process courant.
+      active (CreateProcessAsUser). C'est INDISPENSABLE non seulement pour la
+      capture écran mais AUSSI pour le terminal : ConPTY/pywinpty n'est pas fiable
+      dans la session 0 headless d'un service → le shell s'y lance dans la session
+      interactive de l'utilisateur.
+    - Sinon (mode console / agent en session utilisateur) : exécute directement
+      dans un thread du process courant.
 
-    Renvoie True si le démarrage a été initié (le helper a été lancé ou la
-    session inline a démarré), False sinon. Ne bloque jamais l'appelant et ne
-    lève jamais.
+    Renvoie True si le démarrage a été initié. Ne bloque jamais, ne lève jamais.
     """
     if not token or not ws_url:
         _logger.error("Démarrage de session impossible : token ou ws_url manquant.")
@@ -209,13 +227,13 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True) -> bool:
 
     try:
         if is_session_zero():
-            _logger.info("Service en session 0 : lancement d'un helper dans la session active.")
-            return _launch_in_active_session(token, ws_url)
-        _logger.info("Session utilisateur : exécution directe de la session de bureau.")
-        _run_session_inline(token, ws_url, verify_tls)
+            _logger.info("Service en session 0 : lancement d'un helper (kind=%s) dans la session active.", kind)
+            return _launch_in_active_session(token, ws_url, kind, shell)
+        _logger.info("Session utilisateur : exécution directe de la session (kind=%s).", kind)
+        _run_session_inline(token, ws_url, verify_tls, kind, shell)
         return True
     except Exception as exc:  # noqa: BLE001 - filet ultime.
-        _logger.error("Démarrage de la session de bureau à distance échoué : %s", exc)
+        _logger.error("Démarrage de la session distante échoué : %s", exc)
         return False
 
 

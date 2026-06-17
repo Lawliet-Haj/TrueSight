@@ -203,16 +203,14 @@ class AgentRunner:
 
         _logger.info("Session distante : démarrage de %s (kind=%s).", session_id, kind)
         try:
-            if kind == "terminal":
-                started = self._start_terminal_inline(token, ws_url, shell)
-            else:
-                # Import différé : évite de charger mss/ctypes si la fonction
-                # n'est jamais sollicitée (et n'empêche pas l'agent de démarrer
-                # si une dépendance remote manque).
-                from .remote import launcher as remote_launcher
-                started = remote_launcher.start_session(
-                    token, ws_url, verify_tls=self.config.verify_tls
-                )
+            # Import différé : ne charge le launcher (et ses dépendances) qu'à la
+            # demande. Le launcher gère les DEUX types : en service (session 0) il
+            # lance un helper dans la session utilisateur — requis pour la capture
+            # ÉCRAN mais aussi pour le TERMINAL (ConPTY peu fiable en session 0).
+            from .remote import launcher as remote_launcher
+            started = remote_launcher.start_session(
+                token, ws_url, verify_tls=self.config.verify_tls, kind=kind, shell=shell
+            )
             if not started:
                 _logger.warning("Session distante %s non démarrée.", session_id)
                 # On libère le verrou de session pour autoriser une nouvelle tentative.
@@ -228,30 +226,6 @@ class AgentRunner:
             with self._remote_lock:
                 if self._remote_active_session_id == session_id:
                     self._remote_active_session_id = None
-
-    def _start_terminal_inline(self, token: str, ws_url: str, shell: str) -> bool:
-        """Lance une session de terminal INLINE (thread démon du process agent).
-
-        Contrairement à la capture écran, le terminal n'a pas besoin de la session
-        interactive de l'utilisateur : un shell tourne très bien dans le process
-        de l'agent. On l'exécute donc directement dans un thread démon. Renvoie
-        True si le thread a démarré (le lancement ne bloque jamais l'appelant).
-        """
-        def _target() -> None:
-            try:
-                # Import différé : ne charge pywinpty que si un terminal est demandé.
-                from .terminal import session as terminal_session
-                terminal_session.run(
-                    token, ws_url, shell=shell, verify_tls=self.config.verify_tls
-                )
-            except Exception as exc:  # noqa: BLE001 - jamais fatal pour l'agent.
-                _logger.error("Session terminal inline interrompue : %s", exc)
-
-        thread = threading.Thread(
-            target=_target, name="truesight-terminal-session", daemon=True
-        )
-        thread.start()
-        return True
 
     def _schedule_remote_dedup_reset(self, session_id: str) -> None:
         """Oublie ``session_id`` du dédoublonnage après le TTL (thread minuteur)."""

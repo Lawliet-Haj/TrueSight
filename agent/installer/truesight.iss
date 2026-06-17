@@ -55,8 +55,10 @@ Source: "preuninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
 ; Post-installation : configuration + service + compagnon + démarrage.
+; La ligne de commande est construite par GetRunParams (omet -Token s'il est vide :
+; passer -Token "" à powershell -File casse l'analyse des arguments → exit 1).
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\postinstall.ps1"" -AppDir ""{app}"" -ServerUrl ""{code:GetServerUrl}"" -Token ""{code:GetToken}"" -VerifyTls ""{code:GetVerifyTls}"""; \
+  Parameters: "{code:GetRunParams}"; \
   StatusMsg: "Configuration du service TrueSight..."; \
   Flags: runhidden waituntilterminated
 
@@ -99,6 +101,22 @@ end;
 function GetVerifyTls(Param: String): String;
 begin
   Result := ExpandConstant('{param:VERIFYTLS|true}');
+end;
+
+{ Construit la ligne de commande de postinstall.ps1. On OMET -Token quand il est
+  vide : un argument vide "" passé à « powershell -File » casse l'analyse des
+  arguments (décalage des paramètres → exit 1, le script ne démarre pas). }
+function GetRunParams(Param: String): String;
+var
+  p: String;
+begin
+  p := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}') + '\postinstall.ps1"';
+  p := p + ' -AppDir "' + ExpandConstant('{app}') + '"';
+  p := p + ' -ServerUrl "' + GetServerUrl('') + '"';
+  p := p + ' -VerifyTls "' + GetVerifyTls('') + '"';
+  if Trim(GetToken('')) <> '' then
+    p := p + ' -Token "' + GetToken('') + '"';
+  Result := p;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

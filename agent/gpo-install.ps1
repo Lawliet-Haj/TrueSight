@@ -113,8 +113,12 @@ try {
     Log "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))."
 }
 
-# --- Démarrage -----------------------------------------------------------------
-Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+# --- Démarrage (avec ré-essais) ------------------------------------------------
+# Juste après l'installation, le SCM peut refuser le 1er Start-Service.
+for ($i = 1; $i -le 6; $i++) {
+    try { Start-Service -Name $ServiceName -ErrorAction Stop; break }
+    catch { Start-Sleep -Seconds 3 }
+}
 Start-Sleep -Seconds 2
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {

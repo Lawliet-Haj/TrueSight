@@ -171,9 +171,17 @@ try {
     Write-Host "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))." -ForegroundColor Yellow
 }
 
-# --- 8. Démarre le service -----------------------------------------------------
+# --- 8. Démarre le service (avec ré-essais) ------------------------------------
+# Juste après l'installation, le SCM peut refuser le 1er Start-Service (service
+# pas encore prêt) — on ré-essaie quelques fois avant de conclure à un échec.
 Write-Host "Démarrage du service..." -ForegroundColor Yellow
-Start-Service -Name $ServiceName
+for ($i = 1; $i -le 6; $i++) {
+    try { Start-Service -Name $ServiceName -ErrorAction Stop; break }
+    catch {
+        Write-Host "  tentative $i échouée, nouvel essai dans 3 s..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 3
+    }
+}
 
 Start-Sleep -Seconds 2
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue

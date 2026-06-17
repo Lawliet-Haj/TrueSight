@@ -82,8 +82,20 @@ try {
     Log "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))."
 }
 
-# --- 5. Démarrage -------------------------------------------------------------
-Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+# --- 5. Démarrage (avec ré-essais) --------------------------------------------
+# Juste après sc delete + réinstallation + sc config obj=, le SCM peut refuser le
+# 1er Start-Service (service pas encore prêt). On ré-essaie quelques fois.
+$started = $false
+for ($i = 1; $i -le 6; $i++) {
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+        $started = $true
+        break
+    } catch {
+        Log "Démarrage : tentative $i échouée ($($_.Exception.Message)) — nouvel essai dans 3 s."
+        Start-Sleep -Seconds 3
+    }
+}
 Start-Sleep -Seconds 2
 try { Start-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
 

@@ -127,9 +127,13 @@ try {
         Info "AVERTISSEMENT : tache compagnon non installee ($($_.Exception.Message))."
     }
 
-    # --- 9. Demarrage ----------------------------------------------------------
+    # --- 9. Demarrage (avec re-essais) -----------------------------------------
+    # Juste apres sc delete + reinstall, le SCM peut refuser le 1er Start-Service.
     Info "Demarrage du service..."
-    Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    for ($i = 1; $i -le 6; $i++) {
+        try { Start-Service -Name $ServiceName -ErrorAction Stop; break }
+        catch { Info "Demarrage tentative $i echouee, nouvel essai dans 3 s."; Start-Sleep -Seconds 3 }
+    }
     Start-Sleep -Seconds 2
     $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     # Lance aussi le compagnon pour la session courante (sans attendre un re-logon).

@@ -285,9 +285,44 @@
     <div class="phead">
       <svg class="ico"><use href="#i-box"/></svg>
       <h2>Logiciels installés</h2>
-      <span class="tag" style="margin-left:auto;margin-right:12px"></span>
+      {% if is_admin %}
+      <button type="button" id="sw-install-toggle" class="btn xs" style="margin-left:auto"
+              title="Installer une application à distance, en silence">
+        <svg><use href="#i-download"/></svg>Installer une application
+      </button>
+      <input type="text" id="sw-filter" class="input" placeholder="Filtrer…" style="margin-left:12px">
+      {% else %}
       <input type="text" id="sw-filter" class="input" placeholder="Filtrer…" style="margin-left:auto">
+      {% endif %}
     </div>
+
+    {% if is_admin %}
+    <!-- Formulaire d'installation silencieuse (déployé par le bouton ci-dessus) -->
+    <div class="sw-install hidden" id="sw-install">
+      <div class="sw-install-row">
+        <span class="field-label">Source</span>
+        <select id="sw-src" class="input">
+          <option value="catalog">Catalogue</option>
+          <option value="winget">ID winget</option>
+          <option value="url">URL (MSI / EXE)</option>
+        </select>
+
+        <select id="sw-catalog" class="input grow"><option value="">Chargement du catalogue…</option></select>
+        <input type="text" id="sw-winget-id" class="input grow hidden" placeholder="Ex. Google.Chrome (winget show)">
+        <input type="url" id="sw-url" class="input grow hidden" placeholder="https://…/installeur.msi (HTTPS)">
+        <input type="text" id="sw-args" class="input w-sm hidden" placeholder="Args EXE (déf. /S)" title="Arguments silencieux pour un .exe">
+
+        <button type="button" id="sw-install-run" class="btn go"><svg><use href="#i-download"/></svg>Installer</button>
+      </div>
+      <div class="sw-install-hint text-faint">
+        Exécuté en silence sous le compte SYSTEM du poste. Certaines applications ne proposent qu'une
+        installation au niveau utilisateur (repli automatique). Le résultat s'affiche ci-dessous.
+      </div>
+      <div id="sw-status" class="cmd-status"></div>
+      <pre id="sw-output" class="cmd-output hidden"></pre>
+    </div>
+    {% endif %}
+
     <div class="scroll-y sticky-head">
       <table>
         <thead>
@@ -296,10 +331,11 @@
             <th>Version</th>
             <th>Éditeur</th>
             <th>Installé le</th>
+            {% if is_admin %}<th class="num">Action</th>{% endif %}
           </tr>
         </thead>
         <tbody id="software-body">
-          <tr><td colspan="4" class="empty-cell">Chargement…</td></tr>
+          <tr><td colspan="{{ 5 if is_admin else 4 }}" class="empty-cell">Chargement…</td></tr>
         </tbody>
       </table>
     </div>

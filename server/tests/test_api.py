@@ -1375,3 +1375,144 @@ def test_export_agents_csv(client, admin_session):
     body = r.get_data(as_text=True)
     assert "Nom;Hote;Emplacement" in body
     assert "PC-TEST-01" in body
+
+
+# ==========================================================================
+# Déploiement logiciel : installation / désinstallation silencieuse
+# ==========================================================================
+def _last_command_text(client, agent_id, token):
+    """L'agent récupère sa commande en attente et renvoie son command_text."""
+    cmds = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token)).get_json()["commands"]
+    assert len(cmds) == 1, cmds
+    return cmds[0]["command_text"], cmds[0]["shell"]
+
+
+def test_software_catalog(admin_session):
+    """Le catalogue d'apps est servi à l'admin avec la structure attendue."""
+    rows = admin_session.get("/api/v1/software/catalog").get_json()
+    assert len(rows) >= 8
+    for key in ("key", "label", "category", "winget_id"):
+        assert key in rows[0]
+    assert len({r["key"] for r in rows}) == len(rows)
+
+
+def test_software_install_from_catalog(client, admin_session):
+    """Installer depuis le catalogue crée une commande PowerShell winget pour le poste."""
+    agent_id, token = _enroll(client, "MACHINE-SW-CAT")
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "catalog", "key": "chrome"},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    text, shell = _last_command_text(client, agent_id, token)
+    assert shell == "powershell"
+    assert "Google.Chrome" in text and "winget" in text.lower() and "--silent" in text
+
+
+def test_software_install_winget_validation(client, admin_session):
+    """ID winget : valide -> 201 ; injection -> 400 (refusé par le validateur)."""
+    agent_id, token = _enroll(client, "MACHINE-SW-WID")
+    ok = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "winget", "winget_id": "VideoLAN.VLC"},
+    )
+    assert ok.status_code == 201
+    bad = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "winget", "winget_id": "VLC'; Remove-Item C:\\ -Recurse"},
+    )
+    assert bad.status_code == 400
+    # Catalogue inconnu -> 400.
+    assert admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "catalog", "key": "inexistant"},
+    ).status_code == 400
+
+
+def test_software_install_url_requires_https(client, admin_session):
+    """URL : HTTPS .msi accepté ; HTTP refusé. MSI -> msiexec /qn."""
+    agent_id, token = _enroll(client, "MACHINE-SW-URL")
+    ok = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "url", "url": "https://example.com/setup.msi"},
+    )
+    assert ok.status_code == 201
+    text, _ = _last_command_text(client, agent_id, token)
+    assert "msiexec.exe" in text and "/qn" in text
+    assert admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "url", "url": "http://example.com/setup.exe"},
+    ).status_code == 400
+
+
+def test_software_uninstall_registry(client, admin_session):
+    """Désinstallation par nom : le nom est injecté en littéral PS échappé (anti-injection)."""
+    agent_id, token = _enroll(client, "MACHINE-SW-UNINST")
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/uninstall",
+        json={"source": "registry", "name": "7-Zip 23.01 (x64)"},
+    )
+    assert r.status_code == 201
+    text, shell = _last_command_text(client, agent_id, token)
+    assert shell == "powershell"
+    assert "QuietUninstallString" in text and "7-Zip 23.01 (x64)" in text
+    # Nom manquant -> 400.
+    assert admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/uninstall",
+        json={"source": "registry", "name": "  "},
+    ).status_code == 400
+
+
+def test_software_uninstall_quote_escaping(client, admin_session):
+    """Une apostrophe dans le nom est doublée (échappement littéral PowerShell)."""
+    agent_id, token = _enroll(client, "MACHINE-SW-QUOTE")
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/software/uninstall",
+        json={"source": "registry", "name": "L'éditeur"},
+    )
+    assert r.status_code == 201
+    text, _ = _last_command_text(client, agent_id, token)
+    # La quote simple doit être doublée -> aucune évasion possible de la chaîne.
+    assert "L''" in text
+
+
+def test_software_bulk_install(client, admin_session):
+    """Installation groupée : une commande par poste."""
+    a1, t1 = _enroll(client, "MACHINE-SW-B1")
+    a2, t2 = _enroll(client, "MACHINE-SW-B2")
+    r = admin_session.post(
+        "/api/v1/software/bulk-install",
+        json={"agent_ids": [a1, a2], "source": "catalog", "key": "7zip"},
+    )
+    assert r.status_code == 201 and r.get_json()["count"] == 2
+    text1, _ = _last_command_text(client, a1, t1)
+    assert "7zip.7zip" in text1
+    # Spec invalide -> 400 global (aucune commande créée).
+    assert admin_session.post(
+        "/api/v1/software/bulk-install",
+        json={"agent_ids": [a1], "source": "winget", "winget_id": "bad id with spaces"},
+    ).status_code == 400
+
+
+def test_software_requires_admin(client, app, admin_session):
+    """Install/uninstall réservés aux admins (401 sans session, 403 pour un viewer)."""
+    agent_id, _ = _enroll(client, "MACHINE-SW-PERM")
+    # Sans session : client frais non authentifié (le fixture admin_session
+    # connecte le client partagé, d'où un client dédié pour ce contrôle).
+    fresh = app.test_client()
+    assert fresh.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "catalog", "key": "chrome"}, headers={"Accept": "application/json"},
+    ).status_code == 401
+    assert fresh.get("/api/v1/software/catalog", headers={"Accept": "application/json"}).status_code == 401
+    # Viewer connecté -> 403.
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "vwsw@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
+    )
+    vw = _new_session(app, "vwsw@medicofi.fr", "viewerpass1")
+    assert vw.post(
+        f"/api/v1/agents/{agent_id}/software/install",
+        json={"source": "catalog", "key": "chrome"},
+    ).status_code == 403
+    assert vw.get("/api/v1/software/catalog").status_code == 403

@@ -268,7 +268,7 @@
       renderSoftware();
     } catch (e) {
       document.getElementById("software-body").innerHTML =
-        '<tr><td colspan="4" class="empty-cell err-cell">Erreur de chargement</td></tr>';
+        '<tr><td colspan="' + (IS_ADMIN ? 5 : 4) + '" class="empty-cell err-cell">Erreur de chargement</td></tr>';
     }
   }
 
@@ -276,26 +276,152 @@
     var body = document.getElementById("software-body");
     var filterEl = document.getElementById("sw-filter");
     var filter = (filterEl ? filterEl.value : "").toLowerCase();
+    var span = IS_ADMIN ? 5 : 4;
     var rows = softwareCache.filter(function (s) {
       if (!filter) return true;
       return [s.name, s.publisher, s.version].join(" ").toLowerCase().indexOf(filter) !== -1;
     });
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="4" class="empty-cell">Aucun logiciel</td></tr>';
+      body.innerHTML = '<tr><td colspan="' + span + '" class="empty-cell">Aucun logiciel</td></tr>';
       return;
     }
     body.innerHTML = rows.map(function (s) {
+      var action = "";
+      if (IS_ADMIN) {
+        action = '<td class="num"><button type="button" class="btn xs danger sw-uninstall" ' +
+          'data-name="' + esc(s.name || "") + '"' + (s.name ? "" : " disabled") +
+          '><svg><use href="#i-x"/></svg>Désinstaller</button></td>';
+      }
       return "<tr>" +
         '<td>' + esc(s.name || "—") + "</td>" +
         '<td class="mono text-dim">' + esc(s.version || "—") + "</td>" +
         '<td class="text-dim">' + esc(s.publisher || "—") + "</td>" +
         '<td class="mono text-faint">' + esc(s.install_date || "—") + "</td>" +
+        action +
         "</tr>";
     }).join("");
+    if (IS_ADMIN) bindUninstallButtons();
   }
 
   var swFilter = document.getElementById("sw-filter");
   if (swFilter) swFilter.addEventListener("input", renderSoftware);
+
+  // --- Déploiement logiciel (install / uninstall silencieux — admin) ---
+  // Réutilise pollCommand / renderCmdResult (définis plus bas, hoistés).
+  function runSoftwareCommand(kind, payload, label) {
+    var statusEl = document.getElementById("sw-status");
+    var outputEl = document.getElementById("sw-output");
+    if (statusEl) statusEl.textContent = label + " — envoi…";
+    if (outputEl) outputEl.classList.add("hidden");
+    fetch("/api/v1/agents/" + AGENT_ID + "/software/" + kind, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        if (statusEl) statusEl.textContent = "Erreur : " + (res.data.error || "envoi impossible");
+        return;
+      }
+      if (statusEl) statusEl.textContent = label + " — en file, exécution sur le poste…";
+      pollCommand(res.data.command_id, statusEl, outputEl);
+    }).catch(function () {
+      if (statusEl) statusEl.textContent = "Erreur réseau lors de l'envoi.";
+    });
+  }
+
+  function bindUninstallButtons() {
+    Array.prototype.forEach.call(document.querySelectorAll(".sw-uninstall"), function (b) {
+      b.addEventListener("click", function () {
+        var name = b.getAttribute("data-name");
+        if (!name) return;
+        if (!window.confirm("Désinstaller « " + name + " » sur ce poste ?\n\n" +
+          "Désinstallation silencieuse (QuietUninstallString / MSI). Indisponible pour certains EXE.")) return;
+        runSoftwareCommand("uninstall", { source: "registry", name: name }, "Désinstallation de " + name);
+      });
+    });
+  }
+
+  function setupSoftwareDeploy() {
+    var toggle = document.getElementById("sw-install-toggle");
+    var box = document.getElementById("sw-install");
+    if (!toggle || !box) return;
+
+    var srcSel = document.getElementById("sw-src");
+    var catSel = document.getElementById("sw-catalog");
+    var widInput = document.getElementById("sw-winget-id");
+    var urlInput = document.getElementById("sw-url");
+    var argsInput = document.getElementById("sw-args");
+    var runBtn = document.getElementById("sw-install-run");
+    var catalogLoaded = false;
+
+    function loadCatalog() {
+      if (catalogLoaded) return;
+      catalogLoaded = true;
+      fetch("/api/v1/software/catalog", { headers: { Accept: "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (items) {
+          if (!Array.isArray(items) || !items.length) {
+            catSel.innerHTML = '<option value="">Catalogue indisponible</option>';
+            return;
+          }
+          var groups = {};
+          items.forEach(function (it) { (groups[it.category] = groups[it.category] || []).push(it); });
+          var html = "";
+          Object.keys(groups).forEach(function (cat) {
+            html += '<optgroup label="' + esc(cat) + '">';
+            groups[cat].forEach(function (it) {
+              html += '<option value="' + esc(it.key) + '">' + esc(it.label) + "</option>";
+            });
+            html += "</optgroup>";
+          });
+          catSel.innerHTML = html;
+        })
+        .catch(function () { catalogLoaded = false; catSel.innerHTML = '<option value="">Erreur catalogue</option>'; });
+    }
+
+    function syncFields() {
+      var src = srcSel.value;
+      catSel.classList.toggle("hidden", src !== "catalog");
+      widInput.classList.toggle("hidden", src !== "winget");
+      urlInput.classList.toggle("hidden", src !== "url");
+      argsInput.classList.toggle("hidden", src !== "url");
+    }
+
+    toggle.addEventListener("click", function () {
+      box.classList.toggle("hidden");
+      if (!box.classList.contains("hidden")) loadCatalog();
+    });
+    srcSel.addEventListener("change", syncFields);
+    syncFields();
+
+    runBtn.addEventListener("click", function () {
+      var src = srcSel.value;
+      var statusEl = document.getElementById("sw-status");
+      var payload = { source: src };
+      var label;
+      if (src === "catalog") {
+        if (!catSel.value) { if (statusEl) statusEl.textContent = "Choisissez une application."; return; }
+        payload.key = catSel.value;
+        var opt = catSel.options[catSel.selectedIndex];
+        label = "Installation de " + (opt ? opt.text : catSel.value);
+      } else if (src === "winget") {
+        var wid = widInput.value.trim();
+        if (!wid) { widInput.focus(); return; }
+        payload.winget_id = wid;
+        label = "Installation de " + wid;
+      } else {
+        var url = urlInput.value.trim();
+        if (!url) { urlInput.focus(); return; }
+        payload.url = url;
+        if (argsInput.value.trim()) payload.exe_args = argsInput.value.trim();
+        label = "Installation depuis URL";
+      }
+      if (!window.confirm(label + " sur ce poste ?\n\nInstallation silencieuse sous le compte SYSTEM.")) return;
+      runSoftwareCommand("install", payload, label);
+    });
+  }
 
   // --- Affichage / polling d'une commande (partagé console + actions rapides) ---
   function cmdStatusLabel(s) {
@@ -853,6 +979,7 @@
     setupTags();
     setupFocus();
     setupTabs();
+    setupSoftwareDeploy();
   }
 
   setInterval(loadDetail, DETAIL_REFRESH_MS);

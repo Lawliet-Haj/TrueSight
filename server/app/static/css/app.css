@@ -641,6 +641,17 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 .btn-ico.danger:hover{color:var(--danger);border-color:rgba(255,93,99,.4)}
 
 /* ---------------------------------------------------------------------------
+   Déploiement logiciel (fiche poste — install / uninstall silencieux)
+   --------------------------------------------------------------------------- */
+.sw-install{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--bg-2);animation:rise .3s ease}
+.sw-install-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.sw-install-row .grow{flex:1;min-width:200px}
+.sw-install-hint{font-size:11.5px;line-height:1.5;margin:10px 0 0;max-width:760px}
+.sw-install #sw-status{display:block;margin-top:10px}
+.sw-install #sw-output{margin-top:10px}
+.btn.xs.danger svg{width:13px;height:13px}
+
+/* ---------------------------------------------------------------------------
    Utilitaires
    --------------------------------------------------------------------------- */
 .hidden{display:none !important}

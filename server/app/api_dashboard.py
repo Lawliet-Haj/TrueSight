@@ -1299,6 +1299,192 @@ def list_scripts():
 
 
 # --------------------------------------------------------------------------
+# Déploiement logiciel — installation / désinstallation silencieuse (admin)
+#
+# Pas de code agent dédié : on matérialise une commande PowerShell construite de
+# façon sûre (cf. software_catalog) via le pipeline ``Command`` existant. Le
+# résultat se lit comme une commande normale (GET /api/v1/commands/<id>).
+# --------------------------------------------------------------------------
+def _resolve_install_spec(data):
+    """À partir du corps de requête, renvoie ``(spec, None)`` ou ``(None, msg)``.
+
+    ``spec`` = ``{shell, command_text, timeout, target}``.
+    Sources : ``catalog`` (clé du catalogue), ``winget`` (ID libre), ``url`` (MSI/EXE HTTPS).
+    """
+    from . import software_catalog as sc
+
+    source = (data.get("source") or "").strip().lower()
+    if source == "catalog":
+        wid = sc.catalog_winget_id((data.get("key") or "").strip())
+        if not wid:
+            return None, "application inconnue dans le catalogue"
+        shell, text, timeout = sc.build_winget_install(wid)
+        return {"shell": shell, "command_text": text, "timeout": timeout, "target": wid}, None
+    if source == "winget":
+        wid = (data.get("winget_id") or "").strip()
+        if not sc.valid_winget_id(wid):
+            return None, "winget_id invalide"
+        shell, text, timeout = sc.build_winget_install(wid)
+        return {"shell": shell, "command_text": text, "timeout": timeout, "target": wid}, None
+    if source == "url":
+        url = (data.get("url") or "").strip()
+        if not sc.valid_url(url):
+            return None, "url invalide (HTTPS et extension .msi/.exe requis)"
+        shell, text, timeout = sc.build_url_install(url, data.get("exe_args"))
+        return {"shell": shell, "command_text": text, "timeout": timeout, "target": url}, None
+    return None, "source invalide (catalog | winget | url)"
+
+
+def _resolve_uninstall_spec(data):
+    """Renvoie ``(spec, None)`` ou ``(None, msg)`` pour une désinstallation.
+
+    Sources : ``registry`` (par nom affiché — défaut, correspond à l'inventaire)
+    ou ``winget`` (par ID ou par nom).
+    """
+    from . import software_catalog as sc
+
+    source = (data.get("source") or "registry").strip().lower()
+    if source == "winget":
+        wid = (data.get("winget_id") or "").strip()
+        if wid:
+            if not sc.valid_winget_id(wid):
+                return None, "winget_id invalide"
+            shell, text, timeout = sc.build_winget_uninstall(winget_id=wid)
+            return {"shell": shell, "command_text": text, "timeout": timeout, "target": wid}, None
+        name = sc.clean_name(data.get("name"))
+        if name:
+            shell, text, timeout = sc.build_winget_uninstall(name=name)
+            return {"shell": shell, "command_text": text, "timeout": timeout, "target": name}, None
+        return None, "winget_id ou name requis"
+    if source == "registry":
+        name = sc.clean_name(data.get("name"))
+        if not name:
+            return None, "name requis"
+        shell, text, timeout = sc.build_registry_uninstall(name)
+        return {"shell": shell, "command_text": text, "timeout": timeout, "target": name}, None
+    return None, "source invalide (registry | winget)"
+
+
+def _queue_software_command(aid, spec, audit_action, source):
+    """Crée la commande ``pending`` + l'audit (sans commit). Renvoie l'id."""
+    cmd = Command(
+        agent_id=aid,
+        created_by=g.user.id,
+        shell=spec["shell"],
+        command_text=spec["command_text"],
+        status="pending",
+        timeout_seconds=spec["timeout"],
+        created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()
+    write_audit(
+        action=audit_action,
+        user_id=g.user.id,
+        target_agent=aid,
+        details={"command_id": str(cmd.id), "source": source, "target": spec["target"]},
+        commit=False,
+    )
+    return cmd.id
+
+
+@bp.get("/software/catalog")
+@admin_required
+def software_catalog_list():
+    """Catalogue d'applications installables en 1 clic."""
+    from . import software_catalog as sc
+
+    return jsonify(sc.public_catalog()), 200
+
+
+@bp.post("/agents/<agent_id>/software/install")
+@admin_required
+def software_install(agent_id):
+    """Installe silencieusement une application sur un poste (admin only)."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    spec, err = _resolve_install_spec(data)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cmd_id = _queue_software_command(aid, spec, "software.install", (data.get("source") or "").strip().lower())
+    db.session.commit()
+    return jsonify({"command_id": str(cmd_id)}), 201
+
+
+@bp.post("/agents/<agent_id>/software/uninstall")
+@admin_required
+def software_uninstall(agent_id):
+    """Désinstalle silencieusement une application sur un poste (admin only)."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    spec, err = _resolve_uninstall_spec(data)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cmd_id = _queue_software_command(aid, spec, "software.uninstall", (data.get("source") or "registry").strip().lower())
+    db.session.commit()
+    return jsonify({"command_id": str(cmd_id)}), 201
+
+
+@bp.post("/software/bulk-install")
+@admin_required
+def software_bulk_install():
+    """Installe une application sur PLUSIEURS postes. Body : ``{agent_ids:[...], source, ...}``."""
+    return _software_bulk(_resolve_install_spec, "software.bulk-install", "")
+
+
+@bp.post("/software/bulk-uninstall")
+@admin_required
+def software_bulk_uninstall():
+    """Désinstalle une application sur PLUSIEURS postes. Body : ``{agent_ids:[...], source, ...}``."""
+    return _software_bulk(_resolve_uninstall_spec, "software.bulk-uninstall", "registry")
+
+
+def _software_bulk(resolver, audit_action, default_source):
+    data = request.get_json(silent=True) or {}
+    agent_ids = data.get("agent_ids")
+    if not isinstance(agent_ids, list) or not agent_ids:
+        return jsonify({"error": "agent_ids requis (liste non vide)"}), 400
+    if len(agent_ids) > 200:
+        return jsonify({"error": "trop de postes (max 200)"}), 400
+
+    spec, err = resolver(data)
+    if err:
+        return jsonify({"error": err}), 400
+
+    source = (data.get("source") or default_source).strip().lower()
+    results = []
+    created = 0
+    for raw_id in agent_ids:
+        aid = _parse_uuid(raw_id)
+        if aid is None:
+            results.append({"agent_id": str(raw_id), "error": "id invalide"})
+            continue
+        if db.session.get(Agent, aid) is None:
+            results.append({"agent_id": str(raw_id), "error": "introuvable"})
+            continue
+        cmd_id = _queue_software_command(aid, spec, audit_action, source)
+        results.append({"agent_id": str(aid), "command_id": str(cmd_id)})
+        created += 1
+
+    db.session.commit()
+    return jsonify({"count": created, "results": results}), 201
+
+
+# --------------------------------------------------------------------------
 # GET /alerts?status=active|all — liste des alertes du parc
 # --------------------------------------------------------------------------
 @bp.get("/alerts")

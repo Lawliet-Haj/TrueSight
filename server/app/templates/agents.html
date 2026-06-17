@@ -52,7 +52,16 @@
       <button type="button" class="seg-btn" data-st="offline">Hors ligne</button>
       <button type="button" class="seg-btn" data-st="alert">Alerte</button>
     </div>
+    <select id="site-filter" class="input site-filter" title="Filtrer par emplacement">
+      <option value="">Tous les emplacements</option>
+    </select>
     <span class="tag" id="fleet-count">— postes</span>
+  </div>
+
+  <!-- Bandeau de filtre actif (emplacement / santé) -->
+  <div class="filter-banner hidden" id="filter-banner">
+    <span id="filter-banner-text"></span>
+    <a href="/agents" class="banner-clear">Tout afficher</a>
   </div>
 
   {% if user.role in ('admin', 'superadmin') %}
@@ -64,6 +73,12 @@
     <button class="btn xs" type="button" data-bulk="restart"><svg><use href="#i-power"/></svg>Redémarrer</button>
     <button class="btn xs" type="button" data-bulk="message"><svg><use href="#i-message"/></svg>Message</button>
     <button class="btn xs" type="button" data-bulk="command"><svg><use href="#i-terminal"/></svg>Commande…</button>
+    <span class="bulk-sep"></span>
+    <select id="bulk-site" class="input bulk-site" title="Emplacement à affecter">
+      <option value="">Emplacement…</option>
+      <option value="none">— Désaffecter</option>
+    </select>
+    <button class="btn xs" type="button" id="bulk-site-apply"><svg><use href="#i-pin"/></svg>Affecter</button>
     <button class="btn xs" type="button" id="bulk-clear">Désélectionner</button>
   </div>
   {% endif %}
@@ -75,6 +90,7 @@
           {% if user.role in ('admin', 'superadmin') %}<th class="cb-col"><input type="checkbox" id="cb-all" title="Tout sélectionner"></th>{% endif %}
           <th>Poste</th>
           <th>Système</th>
+          <th>Emplacement</th>
           <th>CPU</th>
           <th>RAM</th>
           <th>Tags</th>
@@ -83,7 +99,7 @@
         </tr>
       </thead>
       <tbody id="agents-body">
-        <tr><td colspan="{{ 8 if user.role in ('admin', 'superadmin') else 7 }}" class="empty-cell">Chargement…</td></tr>
+        <tr><td colspan="{{ 9 if user.role in ('admin', 'superadmin') else 8 }}" class="empty-cell">Chargement…</td></tr>
       </tbody>
     </table>
   </div>

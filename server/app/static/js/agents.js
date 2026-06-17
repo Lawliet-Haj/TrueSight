@@ -11,9 +11,18 @@
 
   var pd = document.getElementById("parc-data");
   var IS_ADMIN = !!(pd && pd.getAttribute("data-is-admin") === "1");
-  var COLSPAN = IS_ADMIN ? 8 : 7;
+  var COLSPAN = IS_ADMIN ? 9 : 8;
   var selected = {};  // { agent_id: true } — sélection persistée entre rafraîchissements
   var statusFilter = "all";  // all | online | offline | alert
+  var sitesById = {};  // { site_id: {name,color} } — pour la résolution / les libellés
+
+  var HEALTH_LABEL = { healthy: "Sain", warning: "Attention", critical: "Défectueux", unknown: "Inconnu" };
+
+  // Filtres issus de l'URL (clic depuis la Vue d'ensemble) : ?site= / ?health= / ?status=.
+  var qp = new URLSearchParams(window.location.search);
+  var siteParam = qp.get("site") || "";
+  var healthParam = (qp.get("health") || "").toLowerCase();
+  if ((qp.get("status") || "").toLowerCase() === "offline") statusFilter = "offline";
 
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -132,7 +141,10 @@
       .map(function (r) {
         var st = rowState(r);
         var off = st === "off";
-        var stateTitle = st === "on" ? "En ligne" : st === "alert" ? "En alerte" : "Hors ligne";
+        var hk = r.health || (off ? "unknown" : "healthy");
+        var hlabel = HEALTH_LABEL[hk] || "Inconnu";
+        var reasons = (r.health_reasons || []).join(", ");
+        var sub = hlabel + (reasons && hk !== "healthy" ? " · " + reasons : "");
 
         var tags = (r.tags || [])
           .map(function (t) { return '<span class="chip tag tag-click" data-tag="' + esc(t) + '">' + esc(t) + "</span>"; })
@@ -140,18 +152,28 @@
         var revoked = r.is_active === false ? '<span class="revoked">révoqué</span>' : "";
         var remoteDisabled = off ? "disabled" : "";
 
+        var site = r.site_name
+          ? '<span class="site-chip"><i style="background:' + esc(r.site_color || "#5A6773") + '"></i>' + esc(r.site_name) + "</span>"
+          : '<span class="muted">—</span>';
+
         var cb = IS_ADMIN
           ? '<td class="cb-col"><input type="checkbox" class="row-cb" data-id="' + esc(r.id) + '"' +
             (selected[r.id] ? " checked" : "") + "></td>"
           : "";
 
+        var adminActs = IS_ADMIN
+          ? '<div class="btn-ico" data-act="rename" data-id="' + esc(r.id) + '" data-name="' + esc(r.display_name || "") + '" title="Renommer"><svg><use href="#i-cog"/></svg></div>' +
+            '<div class="btn-ico danger" data-act="del" data-id="' + esc(r.id) + '" data-name="' + esc(r.name || r.hostname || r.id) + '" title="Supprimer du parc"><svg><use href="#i-x"/></svg></div>'
+          : "";
+
         return (
           '<tr class="clickable" data-href="/agents/' + esc(r.id) + '">' +
           cb +
-          '<td><div class="host"><span class="dot ' + st + '" title="' + stateTitle + '"></span>' +
-            '<div><div class="nm">' + esc(r.hostname || r.id) + revoked + "</div>" +
-            '<div class="us">' + stateTitle + "</div></div></div></td>" +
+          '<td><div class="host"><span class="dot ' + esc(hk) + '" title="' + esc(hlabel) + '"></span>' +
+            '<div><div class="nm">' + esc(r.name || r.hostname || r.id) + revoked + "</div>" +
+            '<div class="us hs-' + esc(hk) + '">' + esc(sub) + "</div></div></div></td>" +
           '<td class="text-dim">' + esc(r.os_version || "—") + "</td>" +
+          "<td>" + site + "</td>" +
           "<td>" + gauge(r.cpu_pct, off) + "</td>" +
           "<td>" + gauge(r.ram_used_pct, off) + "</td>" +
           "<td>" + (tags || '<span class="muted">—</span>') + "</td>" +
@@ -159,6 +181,7 @@
           '<td><div class="act">' +
             '<div class="btn-ico ' + remoteDisabled + '" data-act="remote" data-id="' + esc(r.id) + '" title="Bureau à distance"><svg><use href="#i-screen"/></svg></div>' +
             '<div class="btn-ico ' + remoteDisabled + '" data-act="cmd" data-id="' + esc(r.id) + '" title="Commande à distance"><svg><use href="#i-terminal"/></svg></div>' +
+            adminActs +
           "</div></td>" +
           "</tr>"
         );
@@ -177,6 +200,8 @@
         if (b.classList.contains("disabled")) return;
         var id = b.getAttribute("data-id");
         var act = b.getAttribute("data-act");
+        if (act === "rename") { renameAgent(id, b.getAttribute("data-name") || ""); return; }
+        if (act === "del") { deleteAgent(id, b.getAttribute("data-name") || ""); return; }
         window.location.href = "/agents/" + id + (act === "remote" ? "#remote" : "#console");
       });
     });
@@ -288,9 +313,116 @@
     }
   }
 
+  // --- Renommer / supprimer un poste (admin) ---
+  async function renameAgent(id, current) {
+    var name = window.prompt("Nom convivial du poste (laisser vide pour utiliser le nom d'hôte) :", current);
+    if (name === null) return;
+    try {
+      var r = await fetch("/api/v1/agents/" + id + "/name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); window.alert(d.error || "Échec du renommage."); }
+    } catch (e) { window.alert("Erreur réseau."); }
+    load();
+  }
+
+  async function deleteAgent(id, name) {
+    if (!window.confirm("Supprimer définitivement le poste « " + name + " » du parc ?\n" +
+        "Toutes ses données (inventaire, métriques, historique) seront effacées.\n" +
+        "À utiliser après désinstallation de l'agent sur le poste.")) return;
+    try {
+      var r = await fetch("/api/v1/agents/" + id, { method: "DELETE", headers: { Accept: "application/json" } });
+      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); window.alert(d.error || "Échec de la suppression."); }
+    } catch (e) { window.alert("Erreur réseau."); }
+    delete selected[id];
+    load();
+  }
+
+  // --- Emplacements : remplit le filtre + le sélecteur d'affectation groupée ---
+  async function loadSites() {
+    try {
+      var r = await fetch("/api/v1/sites", { headers: { Accept: "application/json" } });
+      if (!r.ok) return;
+      var sites = await r.json();
+      sitesById = {};
+      var realSites = sites.filter(function (s) { return s.id; });
+      realSites.forEach(function (s) { sitesById[s.id] = { name: s.name, color: s.color }; });
+
+      var opts = realSites.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>";
+      }).join("");
+
+      var filterSel = document.getElementById("site-filter");
+      if (filterSel) {
+        filterSel.innerHTML = '<option value="">Tous les emplacements</option>' + opts +
+          '<option value="none">Non assigné</option>';
+        filterSel.value = siteParam || "";
+      }
+      var bulkSel = document.getElementById("bulk-site");
+      if (bulkSel) {
+        bulkSel.innerHTML = '<option value="">Emplacement…</option>' + opts +
+          '<option value="none">— Désaffecter</option>';
+      }
+      applyBanner();
+    } catch (e) { /* non bloquant */ }
+  }
+
+  function applyBanner() {
+    var banner = document.getElementById("filter-banner");
+    var txt = document.getElementById("filter-banner-text");
+    if (!banner || !txt) return;
+    var parts = [];
+    if (siteParam) {
+      var nm = siteParam === "none" ? "Non assigné"
+        : (sitesById[siteParam] ? sitesById[siteParam].name : "emplacement");
+      parts.push("Emplacement : " + nm);
+    }
+    if (healthParam && HEALTH_LABEL[healthParam]) parts.push("Santé : " + HEALTH_LABEL[healthParam]);
+    if (!parts.length) { banner.classList.add("hidden"); return; }
+    txt.textContent = parts.join("  ·  ");
+    banner.classList.remove("hidden");
+  }
+
+  function setupSitesUI() {
+    var filterSel = document.getElementById("site-filter");
+    if (filterSel) {
+      filterSel.addEventListener("change", function () {
+        var v = filterSel.value;
+        window.location.href = v ? "/agents?site=" + encodeURIComponent(v) : "/agents";
+      });
+    }
+    var apply = document.getElementById("bulk-site-apply");
+    if (apply) {
+      apply.addEventListener("click", async function () {
+        var sel = document.getElementById("bulk-site");
+        var v = sel ? sel.value : "";
+        var ids = selectedIds();
+        if (!ids.length) return;
+        if (v === "") { window.alert("Choisissez un emplacement à affecter."); return; }
+        try {
+          var r = await fetch("/api/v1/agents/bulk-site", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ agent_ids: ids, site_id: v === "none" ? null : v }),
+          });
+          var d = await r.json().catch(function () { return {}; });
+          if (!r.ok) { window.alert(d.error || "Échec de l'affectation."); return; }
+          selected = {};
+          load();
+        } catch (e) { window.alert("Erreur réseau."); }
+      });
+    }
+  }
+
   async function load() {
     try {
-      var resp = await fetch("/api/v1/agents", { headers: { Accept: "application/json" } });
+      var qs = [];
+      if (siteParam) qs.push("site=" + encodeURIComponent(siteParam));
+      if (healthParam) qs.push("health=" + encodeURIComponent(healthParam));
+      var url = "/api/v1/agents" + (qs.length ? "?" + qs.join("&") : "");
+      var resp = await fetch(url, { headers: { Accept: "application/json" } });
       if (resp.status === 401) { window.location.href = "/login"; return; }
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       lastData = await resp.json();
@@ -332,6 +464,8 @@
   }
 
   if (IS_ADMIN) setupBulk();
+  setupSitesUI();
+  loadSites();
   load();
   setInterval(load, REFRESH_MS);
 })();

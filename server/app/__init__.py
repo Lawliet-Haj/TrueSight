@@ -71,9 +71,10 @@ def create_app(config_object: type | None = None) -> Flask:
 
     # --- Initialisation base + seed ---
     with app.app_context():
-        from . import seed
+        from . import migrations, seed
 
         db.create_all()
+        migrations.ensure_schema()  # colonnes récentes sur une base existante
         seed.ensure_admin()
         seed.ensure_alert_rules()
 

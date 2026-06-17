@@ -15,6 +15,7 @@ import qrcode
 from flask import Blueprint, current_app, g, jsonify, request, session
 
 from .extensions import db
+from .health import PROBLEM_LABELS, agent_health, is_online
 from .models import (
     Agent,
     Alert,
@@ -25,6 +26,7 @@ from .models import (
     HardwareInventory,
     Metric,
     RemoteSession,
+    Site,
     SoftwareInventory,
     User,
 )
@@ -115,20 +117,66 @@ def _ws_base_url() -> str:
 # --------------------------------------------------------------------------
 # GET /agents — liste du parc
 # --------------------------------------------------------------------------
+def _active_alert_types_map() -> dict:
+    """Construit {agent_id: set(types d'alertes actives)} pour tout le parc."""
+    rows = (
+        db.session.query(Alert.agent_id, AlertRule.type)
+        .join(AlertRule, Alert.rule_id == AlertRule.id)
+        .filter(Alert.resolved_at.is_(None))
+        .all()
+    )
+    out: dict = {}
+    for agent_id, atype in rows:
+        out.setdefault(agent_id, set()).add(atype)
+    return out
+
+
+def _sites_map() -> dict:
+    """Renvoie {site_id: Site} pour résolution rapide."""
+    return {s.id: s for s in db.session.query(Site).all()}
+
+
+def _agent_display_name(agent: Agent) -> str:
+    """Nom affiché : nom convivial s'il existe, sinon hostname, sinon id."""
+    return agent.display_name or agent.hostname or str(agent.id)
+
+
 @bp.get("/agents")
 @login_required
 def list_agents():
-    """Liste des agents avec statut online/offline calculé et dernières métriques."""
+    """Liste des agents : statut, métriques, emplacement et santé calculée.
+
+    Filtres optionnels : ``?site=<uuid>`` (ou ``none`` pour les non assignés) et
+    ``?health=healthy|warning|critical|unknown``.
+    """
     threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
+    site_filter = (request.args.get("site") or "").strip()
+    health_filter = (request.args.get("health") or "").strip()
+
     agents = db.session.query(Agent).order_by(Agent.hostname.asc()).all()
+    sites = _sites_map()
+    alert_map = _active_alert_types_map()
 
     out = []
     for agent in agents:
+        if site_filter:
+            if site_filter == "none" and agent.site_id is not None:
+                continue
+            if site_filter != "none" and str(agent.site_id) != site_filter:
+                continue
         metric = _latest_metric(agent.id)
+        health, reasons = agent_health(
+            agent, metric, alert_map.get(agent.id, set()), current_app.config
+        )
+        if health_filter and health != health_filter:
+            continue
+        site = sites.get(agent.site_id)
         out.append(
             {
                 "id": str(agent.id),
                 "hostname": agent.hostname,
+                "display_name": agent.display_name,
+                "name": _agent_display_name(agent),
                 "os_version": agent.os_version,
                 "status": "online" if _is_online(agent, threshold) else "offline",
                 "last_seen_at": _iso_utc(agent.last_seen_at),
@@ -136,6 +184,11 @@ def list_agents():
                 "ram_used_pct": _num(metric.ram_used_pct) if metric else None,
                 "tags": agent.tags or [],
                 "is_active": agent.is_active,
+                "site_id": str(agent.site_id) if agent.site_id else None,
+                "site_name": site.name if site else None,
+                "site_color": (site.color if site else None),
+                "health": health,
+                "health_reasons": reasons,
             }
         )
     return jsonify(out), 200
@@ -187,17 +240,32 @@ def get_agent(agent_id):
             "logged_in_user": metric.logged_in_user,
         }
 
+    alert_types = {
+        t for (t,) in db.session.query(AlertRule.type)
+        .join(Alert, Alert.rule_id == AlertRule.id)
+        .filter(Alert.agent_id == aid, Alert.resolved_at.is_(None))
+        .all()
+    }
+    health, reasons = agent_health(agent, metric, alert_types, current_app.config)
+    site = db.session.get(Site, agent.site_id) if agent.site_id else None
+
     payload = {
         "id": str(agent.id),
         "machine_id": agent.machine_id,
         "hostname": agent.hostname,
+        "display_name": agent.display_name,
+        "name": _agent_display_name(agent),
         "agent_version": agent.agent_version,
         "os_version": agent.os_version,
         "enrolled_at": _iso_utc(agent.enrolled_at),
         "last_seen_at": _iso_utc(agent.last_seen_at),
         "is_active": agent.is_active,
         "tags": agent.tags or [],
+        "site_id": str(agent.site_id) if agent.site_id else None,
+        "site_name": site.name if site else None,
         "status": "online" if _is_online(agent, threshold) else "offline",
+        "health": health,
+        "health_reasons": reasons,
         "hardware": hardware_payload,
         "last_metric": last_metric_payload,
         "software_count": software_count,
@@ -734,6 +802,353 @@ def bulk_action():
     )
     db.session.commit()
     return jsonify({"count": created, "results": results}), 201
+
+
+# --------------------------------------------------------------------------
+# Nom convivial d'un poste (admin)
+# --------------------------------------------------------------------------
+@bp.post("/agents/<agent_id>/name")
+@admin_required
+def set_agent_name(agent_id):
+    """Définit (ou efface) le nom convivial d'un poste. Body : ``{name: "..."}``."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()[:80]
+    agent.display_name = name or None
+    write_audit(
+        action="agent.rename", user_id=g.user.id, target_agent=aid,
+        details={"display_name": agent.display_name}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"display_name": agent.display_name, "name": _agent_display_name(agent)}), 200
+
+
+# --------------------------------------------------------------------------
+# Affectation d'un poste à un emplacement (admin)
+# --------------------------------------------------------------------------
+def _resolve_site_id(value):
+    """Valide un site_id : None (désaffecter), un UUID de site existant, ou ('err')."""
+    if value in (None, "", "none"):
+        return None, None
+    sid = _parse_uuid(value)
+    if sid is None or db.session.get(Site, sid) is None:
+        return None, "emplacement introuvable"
+    return sid, None
+
+
+@bp.post("/agents/<agent_id>/site")
+@admin_required
+def set_agent_site(agent_id):
+    """Affecte un poste à un emplacement (ou le désaffecte). Body : ``{site_id}``."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    sid, err = _resolve_site_id(data.get("site_id"))
+    if err:
+        return jsonify({"error": err}), 400
+    agent.site_id = sid
+    write_audit(
+        action="agent.site", user_id=g.user.id, target_agent=aid,
+        details={"site_id": str(sid) if sid else None}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"site_id": str(sid) if sid else None}), 200
+
+
+@bp.post("/agents/bulk-site")
+@admin_required
+def bulk_set_site():
+    """Affecte PLUSIEURS postes à un emplacement. Body : ``{agent_ids:[...], site_id}``."""
+    data = request.get_json(silent=True) or {}
+    agent_ids = data.get("agent_ids")
+    if not isinstance(agent_ids, list) or not agent_ids:
+        return jsonify({"error": "agent_ids requis (liste non vide)"}), 400
+    if len(agent_ids) > 500:
+        return jsonify({"error": "trop de postes (max 500)"}), 400
+    sid, err = _resolve_site_id(data.get("site_id"))
+    if err:
+        return jsonify({"error": err}), 400
+
+    count = 0
+    for raw_id in agent_ids:
+        aid = _parse_uuid(raw_id)
+        if aid is None:
+            continue
+        agent = db.session.get(Agent, aid)
+        if agent is None:
+            continue
+        agent.site_id = sid
+        count += 1
+    write_audit(
+        action="agent.site.bulk", user_id=g.user.id,
+        details={"site_id": str(sid) if sid else None, "count": count}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"count": count, "site_id": str(sid) if sid else None}), 200
+
+
+# --------------------------------------------------------------------------
+# Suppression d'un poste (admin) — retire l'enregistrement du parc
+# --------------------------------------------------------------------------
+@bp.delete("/agents/<agent_id>")
+@admin_required
+def delete_agent(agent_id):
+    """Supprime un poste et toutes ses données (inventaire, métriques, commandes,
+    alertes, sessions). Utile après désinstallation de l'agent (poste fantôme)."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    hostname = _agent_display_name(agent)
+    # Nettoyage explicite des dépendances sans relation ORM en cascade côté Agent
+    # (alertes + sessions distantes), pour un comportement identique SQLite/PostgreSQL.
+    db.session.query(Alert).filter_by(agent_id=aid).delete(synchronize_session=False)
+    db.session.query(RemoteSession).filter_by(agent_id=aid).delete(synchronize_session=False)
+    db.session.delete(agent)  # cascade ORM : matériel, logiciels, métriques, commandes
+    write_audit(
+        action="agent.delete", user_id=g.user.id, target_agent=aid,
+        details={"hostname": hostname}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"ok": True}), 200
+
+
+# --------------------------------------------------------------------------
+# Emplacements (sites) — CRUD
+# --------------------------------------------------------------------------
+@bp.get("/sites")
+@login_required
+def list_sites():
+    """Liste des emplacements avec compteurs (postes, en ligne, santé)."""
+    threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
+    sites = db.session.query(Site).order_by(Site.name.asc()).all()
+    agents = db.session.query(Agent).all()
+    alert_map = _active_alert_types_map()
+
+    def _blank():
+        return {"total": 0, "online": 0,
+                "health": {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}}
+
+    stats = {str(s.id): _blank() for s in sites}
+    stats["none"] = _blank()
+    for agent in agents:
+        key = str(agent.site_id) if agent.site_id else "none"
+        bucket = stats.get(key)
+        if bucket is None:
+            continue
+        bucket["total"] += 1
+        if _is_online(agent, threshold):
+            bucket["online"] += 1
+        metric = _latest_metric(agent.id)
+        h, _ = agent_health(agent, metric, alert_map.get(agent.id, set()), current_app.config)
+        bucket["health"][h] += 1
+
+    out = [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "color": s.color,
+            "notes": s.notes,
+            **stats[str(s.id)],
+        }
+        for s in sites
+    ]
+    # Pseudo-emplacement « non assigné » (si des postes n'ont pas de site).
+    if stats["none"]["total"]:
+        out.append({"id": None, "name": "Non assigné", "color": None, "notes": None, **stats["none"]})
+    return jsonify(out), 200
+
+
+@bp.post("/sites")
+@admin_required
+def create_site():
+    """Crée un emplacement. Body : ``{name, color?, notes?}``."""
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()[:60]
+    if not name:
+        return jsonify({"error": "nom requis"}), 400
+    if db.session.query(Site).filter(db.func.lower(Site.name) == name.lower()).first():
+        return jsonify({"error": "un emplacement porte déjà ce nom"}), 409
+    site = Site(
+        name=name,
+        color=(data.get("color") or "").strip()[:16] or None,
+        notes=(data.get("notes") or "").strip()[:240] or None,
+    )
+    db.session.add(site)
+    db.session.flush()
+    write_audit(action="site.create", user_id=g.user.id,
+                details={"site_id": str(site.id), "name": name}, commit=False)
+    db.session.commit()
+    return jsonify({"id": str(site.id), "name": site.name, "color": site.color}), 201
+
+
+@bp.patch("/sites/<site_id>")
+@admin_required
+def update_site(site_id):
+    """Renomme / recolore un emplacement. Body : ``{name?, color?, notes?}``."""
+    sid = _parse_uuid(site_id)
+    if sid is None:
+        return jsonify({"error": "site_id invalide"}), 400
+    site = db.session.get(Site, sid)
+    if site is None:
+        return jsonify({"error": "emplacement introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    if "name" in data:
+        name = (data.get("name") or "").strip()[:60]
+        if not name:
+            return jsonify({"error": "nom requis"}), 400
+        clash = (
+            db.session.query(Site)
+            .filter(db.func.lower(Site.name) == name.lower(), Site.id != sid)
+            .first()
+        )
+        if clash:
+            return jsonify({"error": "un emplacement porte déjà ce nom"}), 409
+        site.name = name
+    if "color" in data:
+        site.color = (data.get("color") or "").strip()[:16] or None
+    if "notes" in data:
+        site.notes = (data.get("notes") or "").strip()[:240] or None
+
+    write_audit(action="site.update", user_id=g.user.id,
+                details={"site_id": str(sid), "name": site.name}, commit=False)
+    db.session.commit()
+    return jsonify({"id": str(site.id), "name": site.name, "color": site.color}), 200
+
+
+@bp.delete("/sites/<site_id>")
+@admin_required
+def delete_site(site_id):
+    """Supprime un emplacement (les postes associés deviennent « non assignés »)."""
+    sid = _parse_uuid(site_id)
+    if sid is None:
+        return jsonify({"error": "site_id invalide"}), 400
+    site = db.session.get(Site, sid)
+    if site is None:
+        return jsonify({"error": "emplacement introuvable"}), 404
+
+    name = site.name
+    db.session.query(Agent).filter_by(site_id=sid).update(
+        {"site_id": None}, synchronize_session=False
+    )
+    db.session.delete(site)
+    write_audit(action="site.delete", user_id=g.user.id,
+                details={"site_id": str(sid), "name": name}, commit=False)
+    db.session.commit()
+    return jsonify({"ok": True}), 200
+
+
+# --------------------------------------------------------------------------
+# GET /overview — KPI du parc (page d'accueil)
+# --------------------------------------------------------------------------
+@bp.get("/overview")
+@login_required
+def overview():
+    """Vue d'ensemble : santé du parc, problèmes par catégorie, répartition par site."""
+    from .releases import current_release_available, version_gt
+
+    threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
+    agents = db.session.query(Agent).all()
+    sites = _sites_map()
+    alert_map = _active_alert_types_map()
+
+    health_counts = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}
+    online = 0
+
+    def _blank_site(name, color):
+        return {"name": name, "color": color, "total": 0, "online": 0,
+                "health": {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}}
+
+    site_stats = {str(s.id): _blank_site(s.name, s.color) for s in sites.values()}
+    site_stats["none"] = _blank_site("Non assigné", None)
+
+    rel = current_release_available()
+    updates_available = 0
+
+    for agent in agents:
+        metric = _latest_metric(agent.id)
+        health, _reasons = agent_health(
+            agent, metric, alert_map.get(agent.id, set()), current_app.config
+        )
+        health_counts[health] += 1
+        is_on = _is_online(agent, threshold)
+        if is_on:
+            online += 1
+        if rel and version_gt(rel.version, agent.agent_version):
+            updates_available += 1
+
+        key = str(agent.site_id) if agent.site_id else "none"
+        bucket = site_stats.get(key)
+        if bucket is not None:
+            bucket["total"] += 1
+            if is_on:
+                bucket["online"] += 1
+            bucket["health"][health] += 1
+
+    total = len(agents)
+    offline = total - online
+
+    # Problèmes par catégorie : alertes actives groupées par type + hors-ligne.
+    prob_rows = (
+        db.session.query(AlertRule.type, db.func.count(Alert.id))
+        .join(Alert, Alert.rule_id == AlertRule.id)
+        .filter(Alert.resolved_at.is_(None))
+        .group_by(AlertRule.type)
+        .all()
+    )
+    problems = []
+    for atype, count in prob_rows:
+        if atype == "offline":
+            continue  # géré par la présence live ci-dessous
+        problems.append({
+            "type": atype,
+            "label": PROBLEM_LABELS.get(atype, atype),
+            "count": int(count or 0),
+        })
+    problems.append({"type": "offline", "label": PROBLEM_LABELS["offline"], "count": offline})
+    problems.sort(key=lambda p: p["count"], reverse=True)
+
+    active_alerts = (
+        db.session.query(Alert).filter(Alert.resolved_at.is_(None)).count()
+    )
+
+    # Liste des emplacements (incluant « non assigné » seulement s'il a des postes).
+    sites_out = []
+    for s in sorted(sites.values(), key=lambda x: x.name.lower()):
+        st = site_stats[str(s.id)]
+        sites_out.append({"id": str(s.id), **st})
+    if site_stats["none"]["total"]:
+        sites_out.append({"id": None, **site_stats["none"]})
+
+    healthy_pct = round((health_counts["healthy"] / total) * 100, 1) if total else None
+
+    return jsonify({
+        "total": total,
+        "online": online,
+        "offline": offline,
+        "healthy_pct": healthy_pct,
+        "health": health_counts,
+        "active_alerts": active_alerts,
+        "updates_available": updates_available,
+        "current_agent_version": rel.version if rel else None,
+        "problems": problems,
+        "sites": sites_out,
+    }), 200
 
 
 # --------------------------------------------------------------------------

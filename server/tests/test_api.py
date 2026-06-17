@@ -1207,3 +1207,101 @@ def test_enrollment_token_superadmin_only(app, client, admin_session):
     )
     adm = _new_session(app, "adm3@medicofi.fr", "adminpass1")
     assert adm.get("/api/v1/enrollment-token", headers={"Accept": "application/json"}).status_code == 403
+
+
+# ==========================================================================
+# Socle : emplacements (sites), nom convivial, santé, vue d'ensemble
+# ==========================================================================
+def test_sites_crud_and_assign(client, admin_session):
+    """Création/affectation/renommage/suppression d'emplacement + filtre ?site."""
+    a, _ = _enroll(client, "MACHINE-SITE-1")
+    r = admin_session.post("/api/v1/sites", json={"name": "Madagascar", "color": "#34e2b0"})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    sid = r.get_json()["id"]
+    # Nom en double (insensible à la casse) → 409.
+    assert admin_session.post("/api/v1/sites", json={"name": "madagascar"}).status_code == 409
+
+    assert admin_session.post(f"/api/v1/agents/{a}/site", json={"site_id": sid}).status_code == 200
+    sites = admin_session.get("/api/v1/sites").get_json()
+    mada = next(s for s in sites if s["id"] == sid)
+    assert mada["total"] == 1
+
+    ag = admin_session.get(f"/api/v1/agents/{a}").get_json()
+    assert ag["site_id"] == sid and ag["site_name"] == "Madagascar"
+
+    flt = admin_session.get(f"/api/v1/agents?site={sid}").get_json()
+    assert len(flt) == 1 and flt[0]["id"] == a
+    assert admin_session.get("/api/v1/agents?site=none").get_json() == []
+
+    assert admin_session.patch(f"/api/v1/sites/{sid}", json={"name": "Mada"}).status_code == 200
+    assert admin_session.delete(f"/api/v1/sites/{sid}").status_code == 200
+    # L'agent redevient non assigné après suppression du site.
+    assert admin_session.get(f"/api/v1/agents/{a}").get_json()["site_id"] is None
+
+
+def test_agent_rename(client, admin_session):
+    """Nom convivial : défini puis effacé (retour au hostname)."""
+    a, _ = _enroll(client, "MACHINE-NAME-1")
+    r = admin_session.post(f"/api/v1/agents/{a}/name", json={"name": "Accueil-PC1"})
+    assert r.status_code == 200 and r.get_json()["name"] == "Accueil-PC1"
+    ag = admin_session.get(f"/api/v1/agents/{a}").get_json()
+    assert ag["display_name"] == "Accueil-PC1" and ag["name"] == "Accueil-PC1"
+
+    admin_session.post(f"/api/v1/agents/{a}/name", json={"name": ""})
+    ag = admin_session.get(f"/api/v1/agents/{a}").get_json()
+    assert ag["display_name"] is None and ag["name"] == ag["hostname"]
+
+
+def test_bulk_site_assign(client, admin_session):
+    """Affectation groupée à un emplacement + désaffectation."""
+    a1, _ = _enroll(client, "M-BS-1")
+    a2, _ = _enroll(client, "M-BS-2")
+    sid = admin_session.post("/api/v1/sites", json={"name": "Tunisie"}).get_json()["id"]
+    r = admin_session.post("/api/v1/agents/bulk-site", json={"agent_ids": [a1, a2], "site_id": sid})
+    assert r.status_code == 200 and r.get_json()["count"] == 2
+    assert admin_session.post(
+        "/api/v1/agents/bulk-site", json={"agent_ids": [a1], "site_id": None}
+    ).status_code == 200
+
+
+def test_delete_agent(client, admin_session):
+    """Suppression d'un poste : 404 ensuite + absent de la liste."""
+    a, t = _enroll(client, "MACHINE-DEL")
+    client.post(f"/api/v1/agents/{a}/heartbeat", json={"metrics": {"cpu_pct": 5}}, headers=_auth(t))
+    assert admin_session.delete(f"/api/v1/agents/{a}").status_code == 200
+    assert admin_session.get(f"/api/v1/agents/{a}").status_code == 404
+    assert all(x["id"] != a for x in admin_session.get("/api/v1/agents").get_json())
+
+
+def test_overview_and_health(client, admin_session):
+    """Vue d'ensemble : un poste hors ligne = inconnu ; après heartbeat = sain."""
+    a, t = _enroll(client, "MACHINE-OV")
+    ov = admin_session.get("/api/v1/overview").get_json()
+    assert ov["total"] == 1 and ov["health"]["unknown"] == 1
+
+    client.post(
+        f"/api/v1/agents/{a}/heartbeat",
+        json={"metrics": {"cpu_pct": 5, "ram_used_pct": 30}}, headers=_auth(t),
+    )
+    ov = admin_session.get("/api/v1/overview").get_json()
+    assert ov["online"] == 1 and ov["health"]["healthy"] == 1 and ov["healthy_pct"] == 100.0
+    for key in ("problems", "sites", "active_alerts", "updates_available"):
+        assert key in ov
+
+    ag = admin_session.get("/api/v1/agents").get_json()[0]
+    assert ag["health"] == "healthy" and "name" in ag
+
+
+def test_socle_permissions(app, client, admin_session):
+    """Lecture pour tous, mutations réservées aux admins."""
+    a, _ = _enroll(client, "M-PERM")
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "vw3@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
+    )
+    vw = _new_session(app, "vw3@medicofi.fr", "viewerpass1")
+    assert vw.get("/api/v1/overview").status_code == 200
+    assert vw.get("/api/v1/sites").status_code == 200
+    assert vw.post("/api/v1/sites", json={"name": "X"}).status_code == 403
+    assert vw.post(f"/api/v1/agents/{a}/name", json={"name": "x"}).status_code == 403
+    assert vw.delete(f"/api/v1/agents/{a}").status_code == 403

@@ -81,10 +81,10 @@ def _clear_login_failures(ip: str) -> None:
 # --------------------------------------------------------------------------
 @bp.get("/")
 def index():
-    """Redirige vers la liste des agents (ou la page de connexion)."""
+    """Redirige vers la vue d'ensemble (ou la page de connexion)."""
     if current_user() is None:
         return redirect(url_for("web.login"))
-    return redirect(url_for("web.agents_page"))
+    return redirect(url_for("web.overview_page"))
 
 
 # --------------------------------------------------------------------------
@@ -225,6 +225,13 @@ def _redirect_after_login(next_url: str):
 # --------------------------------------------------------------------------
 # Pages protégées
 # --------------------------------------------------------------------------
+@bp.get("/overview")
+@login_required
+def overview_page():
+    """Vue d'ensemble : KPI de santé du parc + répartition par emplacement."""
+    return render_template("overview.html", user=g.user)
+
+
 @bp.get("/agents")
 @login_required
 def agents_page():

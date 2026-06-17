@@ -47,6 +47,22 @@ TZDateTime = DateTime(timezone=True)
 BigIntPK = BigInteger().with_variant(Integer(), "sqlite")
 
 
+class Site(db.Model):
+    """Emplacement / site regroupant des postes (table ``sites``).
+
+    Équivalent des « Organisations » d'un RMM : Madagascar, Tunisie, Direction…
+    Un agent appartient à au plus un site (``agent.site_id``).
+    """
+
+    __tablename__ = "sites"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    color: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+
 class Agent(db.Model):
     """Poste enrôlé dans le parc (table ``agents``)."""
 
@@ -55,6 +71,8 @@ class Agent(db.Model):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     machine_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
     hostname: Mapped[str | None] = mapped_column(Text)
+    # Nom convivial donné par l'admin (sinon on affiche le hostname).
+    display_name: Mapped[str | None] = mapped_column(Text)
     agent_version: Mapped[str | None] = mapped_column(Text)
     os_version: Mapped[str | None] = mapped_column(Text)
     enrolled_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
@@ -62,6 +80,10 @@ class Agent(db.Model):
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     tags: Mapped[list] = mapped_column(TextArrayType, default=list)
+    # Emplacement (site) du poste — null = non assigné.
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Relations (suppression en cascade côté ORM + côté SGBD).
     hardware = relationship(

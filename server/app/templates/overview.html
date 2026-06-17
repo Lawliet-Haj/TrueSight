@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Vue d'ensemble{% endblock %}
+
+{% block content %}
+<div id="ov-data" data-is-admin="{{ '1' if user.role in ('admin', 'superadmin') else '0' }}" class="hidden"></div>
+
+<div class="page-head">
+  <div>
+    <div class="label">Parc · pilotage</div>
+    <h1>Vue d'ensemble</h1>
+    <p class="sub">Santé du parc, problèmes et répartition par emplacement</p>
+  </div>
+  <div class="head-right"><span class="tag" id="ov-updated">actualisé à l'instant</span></div>
+</div>
+
+<!-- Santé globale -->
+<div class="panel" style="margin-bottom:14px">
+  <div class="phead">
+    <svg class="ico"><use href="#i-gauge"/></svg>
+    <h2>Santé du parc</h2>
+    <span class="tag" id="ov-healthy-pct">—</span>
+  </div>
+  <div class="pbody">
+    <div class="healthbar" id="ov-healthbar"></div>
+    <div class="health-legend" id="ov-legend"></div>
+  </div>
+</div>
+
+<!-- KPI -->
+<section class="kpis">
+  <div class="kpi accent">
+    <div class="lbl"><svg><use href="#i-grid"/></svg>Postes</div>
+    <div class="val" id="ov-total">0</div>
+    <div class="sub">supervisés</div>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><span class="d" style="background:var(--ok);box-shadow:0 0 8px var(--ok)"></span>En ligne</div>
+    <div class="val" id="ov-online">0</div>
+    <div class="sub" id="ov-online-sub">joignables</div>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><svg><use href="#i-bell"/></svg>Alertes actives</div>
+    <div class="val" id="ov-alerts">0</div>
+    <div class="sub">à traiter</div>
+  </div>
+  <div class="kpi">
+    <div class="lbl"><svg><use href="#i-download"/></svg>MAJ agent</div>
+    <div class="val" id="ov-updates">0</div>
+    <div class="sub" id="ov-updates-sub">disponibles</div>
+  </div>
+</section>
+
+<div class="ov-grid">
+  <!-- Emplacements -->
+  <div class="panel">
+    <div class="phead">
+      <svg class="ico"><use href="#i-pin"/></svg>
+      <h2>Emplacements</h2>
+      <span class="tag" id="ov-sites-count">—</span>
+    </div>
+    {% if user.role in ('admin', 'superadmin') %}
+    <div class="pbody">
+      <form id="site-create" class="deploy-form" autocomplete="off">
+        <div class="field grow">
+          <label for="ns-name">Nouvel emplacement</label>
+          <input type="text" id="ns-name" class="input" maxlength="60" placeholder="ex. Madagascar" required>
+        </div>
+        <div class="field">
+          <label for="ns-color">Couleur</label>
+          <input type="color" id="ns-color" class="input color-input" value="#34e2b0">
+        </div>
+        <button type="submit" class="btn go">Ajouter</button>
+        <span class="form-msg" id="ns-msg"></span>
+      </form>
+    </div>
+    {% endif %}
+    <div id="ov-sites" class="site-cards"><div class="empty-cell">Chargement…</div></div>
+  </div>
+
+  <!-- Problèmes d'intégrité -->
+  <div class="panel">
+    <div class="phead">
+      <svg class="ico"><use href="#i-alert"/></svg>
+      <h2>Problèmes d'intégrité</h2>
+    </div>
+    <div id="ov-problems" class="prob-list"><div class="empty-cell">Chargement…</div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/overview.js') }}"></script>
+{% endblock %}

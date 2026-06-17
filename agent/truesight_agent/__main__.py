@@ -101,25 +101,52 @@ def _run_remote_helper(argv: list[str]) -> int:
     # argv[2:] : on saute le nom du programme et la sous-commande 'remote-helper'.
     args = parser.parse_args(argv[2:])
 
-    # Logging console actif : le helper tourne dans la session utilisateur, ses
-    # logs vont dans le fichier tournant commun (et console si dispo).
-    runner.setup_logging(console=True)
+    # Le helper tourne dans la session UTILISATEUR (non élevée) : le dossier de
+    # données (C:\ProgramData\TrueSight) est restreint SYSTEM+Admins et il n'a pas
+    # de console (CREATE_NO_WINDOW) → on journalise dans un fichier accessible à
+    # l'utilisateur (%TEMP%) pour le diagnostic du bureau à distance en session 0.
+    import logging
+    import logging.handlers
+    import os
+    import tempfile
+
+    _root = logging.getLogger("truesight")
+    _root.setLevel(logging.INFO)
+    helper_log = os.path.join(tempfile.gettempdir(), "truesight-remote-helper.log")
+    if not _root.handlers:
+        try:
+            _fh = logging.handlers.RotatingFileHandler(
+                helper_log, maxBytes=1024 * 1024, backupCount=1, encoding="utf-8"
+            )
+            _fh.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"))
+            _root.addHandler(_fh)
+        except Exception:  # noqa: BLE001 - jamais bloquant.
+            pass
+
+    _hlog = logging.getLogger("truesight.helper")
+    _hlog.info("Helper démarré (kind=%s, frozen=%s, log=%s).", args.kind, cfg.is_frozen(), helper_log)
 
     # On respecte le réglage TLS de l'agent (verify_tls) si la config est lisible.
     verify_tls = True
     try:
         verify_tls = cfg.load_config().verify_tls
-    except (FileNotFoundError, ValueError):
-        pass
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        _hlog.info("Config non lisible (%s) : verify_tls=True par défaut.", exc)
 
-    if args.kind == "terminal":
-        from .terminal import session as terminal_session
-        return terminal_session.run(
-            args.token, args.ws_url, shell=args.shell, verify_tls=verify_tls
-        )
-
-    from .remote import session as remote_session
-    return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls)
+    try:
+        if args.kind == "terminal":
+            from .terminal import session as terminal_session
+            return terminal_session.run(
+                args.token, args.ws_url, shell=args.shell, verify_tls=verify_tls
+            )
+        from .remote import session as remote_session
+        from .remote import capture as remote_capture
+        _hlog.info("Capture disponible : %s.", remote_capture.is_available())
+        return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls)
+    except Exception as exc:  # noqa: BLE001 - on trace toute erreur fatale du helper.
+        _hlog.exception("Helper en échec : %s", exc)
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:

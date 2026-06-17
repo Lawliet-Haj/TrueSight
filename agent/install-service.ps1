@@ -64,7 +64,7 @@ if (-not (Test-Path $ConfigPath)) {
     exit 1
 }
 
-# --- 3. Crée le dossier de données et copie les fichiers -----------------------
+# --- 3. Crée le dossier de données et restreint les droits --------------------
 Write-Host "Création du dossier $DataDir..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
@@ -78,6 +78,20 @@ Write-Host "Restriction des droits d'accès au dossier de données..." -Foregrou
 $targetExe    = Join-Path $DataDir "truesight-agent.exe"
 $targetConfig = Join-Path $DataDir "config.ini"
 
+# --- 4. Arrête / supprime un service existant AVANT de copier ------------------
+# (sinon l'exe cible est verrouillé par le service en cours → la copie échoue).
+$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "Service existant détecté : arrêt et suppression..." -ForegroundColor Yellow
+    if ($existing.Status -ne "Stopped") {
+        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    }
+    # L'exécutable EXISTANT embarque la logique d'auto-désinstallation pywin32.
+    if (Test-Path $targetExe) { & $targetExe remove | Out-Null }
+    Start-Sleep -Seconds 2
+}
+
+# --- 5. Copie l'exécutable et la configuration --------------------------------
 Write-Host "Copie de l'exécutable..." -ForegroundColor Yellow
 Copy-Item -Path $ExePath -Destination $targetExe -Force
 
@@ -87,18 +101,6 @@ if (-not (Test-Path $targetConfig)) {
     Copy-Item -Path $ConfigPath -Destination $targetConfig -Force
 } else {
     Write-Host "config.ini déjà présent dans $DataDir : conservé." -ForegroundColor Yellow
-}
-
-# --- 4. Arrête / supprime un service existant (réinstallation propre) ----------
-$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "Service existant détecté : arrêt et suppression..." -ForegroundColor Yellow
-    if ($existing.Status -ne "Stopped") {
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    }
-    # L'exécutable embarque la logique d'auto-désinstallation pywin32.
-    & $targetExe remove | Out-Null
-    Start-Sleep -Seconds 2
 }
 
 # --- 5. Installe le service via l'exécutable (pywin32) -------------------------

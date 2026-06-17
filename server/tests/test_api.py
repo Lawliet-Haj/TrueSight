@@ -1193,3 +1193,17 @@ def test_install_token_permissions(app, client, admin_session):
     assert adm.post("/api/v1/install-tokens", json={}).status_code == 201
     assert vw.post("/api/v1/install-tokens", json={}).status_code == 403
     assert vw.get("/api/v1/agent-releases", headers={"Accept": "application/json"}).status_code == 403
+
+
+def test_enrollment_token_superadmin_only(app, client, admin_session):
+    """Le jeton d'enrôlement n'est lisible que par le super-administrateur."""
+    r = admin_session.get("/api/v1/enrollment-token")
+    assert r.status_code == 200
+    assert r.get_json()["token"] == TestConfig.ENROLLMENT_TOKEN
+
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "adm3@medicofi.fr", "password": "adminpass1", "role": "admin"},
+    )
+    adm = _new_session(app, "adm3@medicofi.fr", "adminpass1")
+    assert adm.get("/api/v1/enrollment-token", headers={"Accept": "application/json"}).status_code == 403

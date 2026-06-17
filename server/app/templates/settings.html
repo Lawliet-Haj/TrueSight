@@ -196,6 +196,17 @@
     </div>
 
     {% if user.role == 'superadmin' %}
+    <!-- Jeton d'enrôlement (superadmin) : à saisir dans l'assistant de l'installeur .exe -->
+    <div class="deploy-block" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+      <h3 class="block-title">Jeton d'enrôlement</h3>
+      <p class="sub">Secret partagé par tous les postes. À saisir dans l'assistant de l'installeur <code>.exe</code> (le lien d'installation ci-dessus l'injecte automatiquement, lui).</p>
+      <div class="copy-row">
+        <code id="enroll-token" class="oneliner">••••••••••••••••••••••••</code>
+        <button type="button" class="btn ghost" id="enroll-reveal">Révéler</button>
+        <button type="button" class="btn ghost" id="enroll-copy" title="Copier"><svg class="ico"><use href="#i-copy"/></svg></button>
+      </div>
+    </div>
+
     <!-- Versions de l'agent (superadmin) -->
     <div class="deploy-block" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
       <h3 class="block-title">Versions de l'agent</h3>

@@ -130,6 +130,52 @@
     loadLinks();
   });
 
+  // ---------------------------------------------------- Jeton d'enrôlement
+  var enrollToken = document.getElementById("enroll-token");
+  var enrollReveal = document.getElementById("enroll-reveal");
+  var enrollCopy = document.getElementById("enroll-copy");
+  var enrollValue = null;
+
+  async function fetchEnrollToken() {
+    if (enrollValue !== null) return enrollValue;
+    try {
+      var r = await fetch("/api/v1/enrollment-token", { headers: { Accept: "application/json" } });
+      if (r.status === 401) { window.location.href = "/login"; return null; }
+      if (!r.ok) return null;
+      var d = await jsonOf(r);
+      enrollValue = d.token || "";
+      return enrollValue;
+    } catch (_) { return null; }
+  }
+
+  if (enrollReveal) {
+    enrollReveal.addEventListener("click", async function () {
+      if (enrollToken.dataset.shown === "1") {
+        enrollToken.textContent = "••••••••••••••••••••••••";
+        enrollToken.dataset.shown = "";
+        enrollReveal.textContent = "Révéler";
+        return;
+      }
+      var t = await fetchEnrollToken();
+      if (t === null) return;
+      enrollToken.textContent = t || "(non défini)";
+      enrollToken.dataset.shown = "1";
+      enrollReveal.textContent = "Masquer";
+    });
+  }
+  if (enrollCopy) {
+    enrollCopy.addEventListener("click", async function () {
+      var t = await fetchEnrollToken();
+      if (!t) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t).then(function () {
+          enrollCopy.classList.add("ok-flash");
+          setTimeout(function () { enrollCopy.classList.remove("ok-flash"); }, 900);
+        });
+      }
+    });
+  }
+
   // ------------------------------------------------------------- Versions
   var relsBody = document.getElementById("rels-body");
   var relForm = document.getElementById("rel-form");

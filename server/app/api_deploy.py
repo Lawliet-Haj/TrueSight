@@ -292,6 +292,18 @@ def list_install_tokens():
     return jsonify([_token_payload(r, emails) for r in rows]), 200
 
 
+@bp.get("/enrollment-token")
+@superadmin_required
+def get_enrollment_token():
+    """Renvoie le jeton d'enrôlement partagé (superadmin) — saisie dans l'installeur .exe.
+
+    Réservé au super-administrateur (secret maître). L'accès est audité
+    (``enrollment.token.view``) car c'est une lecture sensible.
+    """
+    write_audit(action="enrollment.token.view", user_id=g.user.id, details={})
+    return jsonify({"token": current_app.config.get("ENROLLMENT_TOKEN", "")}), 200
+
+
 @bp.post("/install-tokens")
 @admin_required
 def create_install_token():

@@ -111,9 +111,14 @@ begin
       MsgBox('Veuillez indiquer l''URL du serveur.', mbError, MB_OK);
       Result := False;
     end
-    else if Trim(ServerPage.Values[1]) = '' then
+    { Le jeton n'est exigé que sur une machine VIERGE : si un config.ini existe
+      déjà (réinstallation / mise à jour), on peut laisser le jeton vide et
+      conserver la configuration en place. }
+    else if (Trim(ServerPage.Values[1]) = '') and
+            (not FileExists(ExpandConstant('{commonappdata}\TrueSight\config.ini'))) then
     begin
-      MsgBox('Veuillez indiquer le jeton d''enrôlement (Réglages > Déploiement sur le dashboard).', mbError, MB_OK);
+      MsgBox('Veuillez indiquer le jeton d''enrôlement (Réglages > Déploiement sur le dashboard),'
+        + #13#10 + 'ou laissez vide si l''agent est déjà configuré sur ce poste.', mbError, MB_OK);
       Result := False;
     end;
   end;

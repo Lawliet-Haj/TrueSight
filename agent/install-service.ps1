@@ -99,6 +99,13 @@ if ($existing) {
     Start-Sleep -Seconds 2
 }
 
+# --- 4bis. Arrête le COMPAGNON (sinon _internal\*.pyd verrouillés) -------------
+Write-Host "Arrêt du compagnon (sessions utilisateur)..." -ForegroundColor Yellow
+try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
+Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue |
+    Where-Object { $_.SessionId -ne 0 } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
 # --- 5. Déploie l'application (dossier onedir complet) + la configuration -------
 Write-Host "Déploiement de l'application dans $AppDir..." -ForegroundColor Yellow
 Get-ChildItem -Path $AppDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

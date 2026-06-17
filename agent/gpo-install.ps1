@@ -77,6 +77,11 @@ if ($svc -and $svc.Status -eq "Running" -and $needCopy) {
 }
 
 if ($needCopy) {
+    # Arrête le compagnon (sinon ses _internal\*.pyd verrouillent la copie).
+    try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
+    Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue |
+        Where-Object { $_.SessionId -ne 0 } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
     Log "Déploiement de l'application dans $AppDir…"
     Get-ChildItem -Path $AppDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item -Path (Join-Path $srcApp '*') -Destination $AppDir -Recurse -Force

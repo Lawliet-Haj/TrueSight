@@ -5,6 +5,11 @@
 # script ne fait QUE la configuration système : config.ini (ProgramData
 # restreint), service Windows SYSTEM + reprise sur échec, tâche compagnon, et
 # démarrage. Exécuté élevé (l'installeur exige les droits admin).
+#
+# Robustesse : tout est journalisé dans C:\ProgramData\TrueSight\postinstall.log ;
+# les opérations accessoires (icacls, .vbs, tâche planifiée) n'interrompent pas
+# l'installation ; en cas d'erreur, on tente malgré tout de démarrer le service
+# pour ne jamais laisser le poste hors-ligne.
 # ============================================================================
 param(
     [Parameter(Mandatory = $true)][string]$AppDir,
@@ -17,25 +22,32 @@ $ErrorActionPreference = "Stop"
 $ServiceName = "TrueSightAgent"
 $DataDir     = "C:\ProgramData\TrueSight"
 $exe         = Join-Path $AppDir "truesight-agent.exe"
+$logFile     = Join-Path $DataDir "postinstall.log"
 
-function Log($m) { Write-Host "[TrueSight postinstall] $m" }
+# Dossier de données d'abord (pour pouvoir journaliser).
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
-if (-not (Test-Path $exe)) {
-    Write-Error "truesight-agent.exe introuvable dans $AppDir."
-    exit 1
+function Log($m) {
+    $line = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") + "  " + $m
+    Write-Host "[TrueSight postinstall] $m"
+    try { Add-Content -Path $logFile -Value $line -ErrorAction SilentlyContinue } catch {}
 }
 
-# --- 1. Dossier de données restreint (SYSTEM + Administrateurs) ---------------
-New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-& icacls $DataDir /inheritance:r | Out-Null
-& icacls $DataDir /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+Log "=== postinstall démarré (AppDir=$AppDir, ServerUrl=$ServerUrl, jeton fourni=$([bool]$Token)) ==="
 
-# --- 2. config.ini ------------------------------------------------------------
-# Écrit depuis les paramètres si fournis (URL + jeton) ; sinon on CONSERVE un
-# config.ini existant (réinstallation / mise à jour sans re-saisie).
-$cfgPath = Join-Path $DataDir "config.ini"
-if ($ServerUrl -and $Token) {
-    $cfg = @"
+try {
+    if (-not (Test-Path $exe)) { throw "truesight-agent.exe introuvable dans $AppDir." }
+
+    # --- 1. Dossier de données restreint (SYSTEM + Administrateurs) — non bloquant.
+    try {
+        & icacls $DataDir /inheritance:r 2>&1 | Out-Null
+        & icacls $DataDir /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" 2>&1 | Out-Null
+    } catch { Log "AVERT : restriction icacls partielle ($($_.Exception.Message))." }
+
+    # --- 2. config.ini : écrit si URL+jeton fournis, sinon on conserve l'existant.
+    $cfgPath = Join-Path $DataDir "config.ini"
+    if ($ServerUrl -and $Token) {
+        $cfg = @"
 [server]
 url = $ServerUrl
 enrollment_token = $Token
@@ -46,72 +58,80 @@ heartbeat_interval = 30
 command_poll_interval = 8
 inventory_interval_hours = 12
 "@
-    Set-Content -Path $cfgPath -Value $cfg -Encoding UTF8
-    Log "config.ini écrit ($ServerUrl)."
-} elseif (-not (Test-Path $cfgPath)) {
-    Log "AVERTISSEMENT : aucune configuration fournie et aucun config.ini existant — l'agent ne s'enrôlera pas tant que $cfgPath n'est pas renseigné."
-} else {
-    Log "config.ini existant conservé."
-}
-
-# --- 3. Service : conserver si présent, sinon installer -----------------------
-# On NE supprime PAS un service existant : un delete + recreate rapproché peut
-# laisser le service « marqué pour suppression » et empêcher tout redémarrage.
-# Le binPath ne change pas (toujours sous Program Files, exe remplacé par Inno) →
-# un simple arrêt + reconfiguration suffit (idempotent).
-$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($existing) {
-    Log "Service déjà présent : arrêt + reconfiguration (sans suppression)."
-    if ($existing.Status -ne "Stopped") { Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue }
-    for ($i = 0; $i -lt 20; $i++) {
-        $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-        if (-not $s -or $s.Status -eq "Stopped") { break }
-        Start-Sleep -Milliseconds 500
+        Set-Content -Path $cfgPath -Value $cfg -Encoding UTF8
+        Log "config.ini écrit ($ServerUrl)."
+    } elseif (-not (Test-Path $cfgPath)) {
+        Log "AVERT : aucune configuration fournie et aucun config.ini existant."
+    } else {
+        Log "config.ini existant conservé."
     }
-} else {
-    Log "Installation du service."
-    & $exe --startup auto install
-    if ($LASTEXITCODE -ne 0) { Write-Error "Échec de l'installation du service (code $LASTEXITCODE)."; exit 1 }
-}
-# Reconfiguration idempotente : démarrage auto + compte LocalSystem + reprise sur échec.
-& sc.exe config $ServiceName start= auto obj= "LocalSystem" | Out-Null
-& sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
-# --- 4. Tâche compagnon (session utilisateur : terminal + bureau à distance) --
-$vbs = Join-Path $AppDir "companion.vbs"
-Set-Content -Path $vbs -Value ('CreateObject("WScript.Shell").Run """' + $exe + '"" companion", 0, False') -Encoding ASCII
-try {
-    $a = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbs + '"')
-    $t = New-ScheduledTaskTrigger -AtLogOn
-    $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew -Hidden
-    $p = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
-    Register-ScheduledTask -TaskName "TrueSight Companion" -Action $a -Trigger $t -Settings $s -Principal $p -Force | Out-Null
-    Log "Tâche compagnon installée."
-} catch {
-    Log "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))."
-}
+    # --- 3. Service : conserver si présent (arrêt + reconfiguration), sinon installer.
+    $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($existing) {
+        Log "Service présent (état $($existing.Status)) : arrêt + reconfiguration (sans suppression)."
+        if ($existing.Status -ne "Stopped") {
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+        }
+        for ($i = 0; $i -lt 20; $i++) {
+            $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if (-not $s -or $s.Status -eq "Stopped") { break }
+            Start-Sleep -Milliseconds 500
+        }
+    } else {
+        Log "Installation du service."
+        & $exe --startup auto install 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Échec de l'installation du service (code $LASTEXITCODE)." }
+    }
+    # Reconfiguration idempotente (native : non bloquant).
+    & sc.exe config $ServiceName start= auto obj= "LocalSystem" 2>&1 | Out-Null
+    & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 2>&1 | Out-Null
 
-# --- 5. Démarrage (avec ré-essais) --------------------------------------------
-# Juste après sc delete + réinstallation + sc config obj=, le SCM peut refuser le
-# 1er Start-Service (service pas encore prêt). On ré-essaie quelques fois.
-$started = $false
-for ($i = 1; $i -le 6; $i++) {
+    # --- 4. Tâche compagnon (session utilisateur) — non bloquant.
+    $vbs = Join-Path $AppDir "companion.vbs"
     try {
-        Start-Service -Name $ServiceName -ErrorAction Stop
-        $started = $true
-        break
-    } catch {
-        Log "Démarrage : tentative $i échouée ($($_.Exception.Message)) — nouvel essai dans 3 s."
-        Start-Sleep -Seconds 3
+        Set-Content -Path $vbs -Value ('CreateObject("WScript.Shell").Run """' + $exe + '"" companion", 0, False') -Encoding ASCII
+    } catch { Log "AVERT : écriture de companion.vbs impossible ($($_.Exception.Message))." }
+    try {
+        $a  = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbs + '"')
+        $t  = New-ScheduledTaskTrigger -AtLogOn
+        $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew -Hidden
+        $pr = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+        Register-ScheduledTask -TaskName "TrueSight Companion" -Action $a -Trigger $t -Settings $st -Principal $pr -Force | Out-Null
+        Log "Tâche compagnon installée."
+    } catch { Log "AVERT : tâche compagnon non installée ($($_.Exception.Message))." }
+
+    # --- 5. Démarrage du service (avec ré-essais : SCM parfois pas prêt).
+    $started = $false
+    for ($i = 1; $i -le 8; $i++) {
+        try {
+            Start-Service -Name $ServiceName -ErrorAction Stop
+            $started = $true
+            break
+        } catch {
+            Log "Démarrage : tentative $i échouée ($($_.Exception.Message)) — nouvel essai dans 3 s."
+            Start-Sleep -Seconds 3
+        }
+    }
+    Start-Sleep -Seconds 2
+    try { Start-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
+
+    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq "Running") {
+        Log "OK : service démarré. Le poste apparaîtra en ligne sous ~30 s."
+    } else {
+        Log "ÉCHEC : service non démarré (état : $(if ($svc) { $svc.Status } else { 'absent' }))."
     }
 }
-Start-Sleep -Seconds 2
-try { Start-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
-
-$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq "Running") {
-    Log "Service démarré. Le poste apparaîtra en ligne sous ~30 s."
-} else {
-    Log "AVERTISSEMENT : service non démarré (état : $(if ($svc) { $svc.Status } else { 'absent' }))."
+catch {
+    Log "ERREUR FATALE : $($_.Exception.Message)"
+    Log "Trace : $($_.ScriptStackTrace)"
+    # Filet de sécurité : on tente de (re)démarrer le service pour ne pas laisser
+    # le poste hors-ligne suite à une erreur d'une étape de configuration.
+    try { Start-Service -Name $ServiceName -ErrorAction SilentlyContinue } catch {}
+    exit 1
 }
+
+Log "=== postinstall terminé ==="
+exit 0

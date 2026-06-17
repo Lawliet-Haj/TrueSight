@@ -9,23 +9,34 @@ sur échec). Voir aussi `PERSISTENCE.md` (Mode B) et `install-service.ps1`.
 ```powershell
 cd agent
 py -m venv .venv ; .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt          # inclut pyinstaller, pywin32, pywinpty, mss, pillow…
-.\build.ps1                              # -> dist\truesight-agent.exe (~19 Mo, --onefile)
-.\dist\truesight-agent.exe --version     # doit afficher : TrueSight Agent <version>
+pip install -r requirements.txt              # inclut pyinstaller, pywin32, pywinpty, mss, pillow…
+.\build.ps1                                  # -> dist\truesight-agent\ (dossier onedir)
+.\dist\truesight-agent\truesight-agent.exe --version   # doit afficher : TrueSight Agent <version>
 ```
 
-> Point d'entrée du build : `run_agent.py` (import ABSOLU du paquet). **Ne pas**
-> pointer PyInstaller sur `truesight_agent\__main__.py` directement (imports
-> relatifs → « relative import with no known parent package »).
+> **`--onedir`** (et NON `--onefile`) : produit un **dossier** `dist\truesight-agent\`
+> (exe + `_internal\`). Pas d'extraction temporaire au lancement → fiable quand le
+> service SYSTEM relance le helper de bureau à distance dans la session utilisateur
+> (l'onefile échouait dans ce contexte → écran noir).
+>
+> Point d'entrée : `run_agent.py` (import ABSOLU). **Ne pas** pointer PyInstaller
+> sur `truesight_agent\__main__.py` directement (imports relatifs → erreur).
 
-**Build validé le 2026-06-16** sur Windows 11 (Python 3.12) : l'exe démarre, mode
-console (`--version`, `--enroll-only`) et mode service opérationnels.
+**Build validé le 2026-06-17** sur Windows 11 (Python 3.12) : exe console
+(`--version`/`--enroll-only`), mode service, et helper de bureau à distance OK.
+
+## 1bis. Structure d'installation (séparation app / données)
+- **Application** → `C:\Program Files\TrueSight\` (dossier onedir, droits hérités
+  = Utilisateurs en lecture+exécution → le service peut relancer le helper en
+  session utilisateur).
+- **Données** → `C:\ProgramData\TrueSight\` (config.ini, state.json, logs ;
+  **restreint SYSTEM+Administrateurs**, car state.json contient le token agent).
 
 ## 2. Préparer le partage de déploiement
 
 Sur un partage réseau en **lecture seule** pour « Ordinateurs du domaine » :
 ```
-\\SERVEUR\Partage\TrueSight\truesight-agent.exe
+\\SERVEUR\Partage\TrueSight\truesight-agent\   (= le dossier onedir dist\truesight-agent\)
 \\SERVEUR\Partage\TrueSight\config.ini
 ```
 `config.ini` (poussé une fois par poste) :
@@ -45,8 +56,10 @@ inventory_interval_hours = 12
 
 **A. Manuel / quelques postes** — sur le poste cible, PowerShell **admin** :
 ```powershell
-.\install-service.ps1 -ExePath .\dist\truesight-agent.exe -ConfigPath .\config.ini
+.\install-service.ps1 -ExePath .\dist\truesight-agent\truesight-agent.exe -ConfigPath .\config.ini
 ```
+(copie tout le dossier onedir dans `C:\Program Files\TrueSight`, installe le
+service LocalSystem, démarre.)
 
 **B. Parc entier (GPO / Intune)** — script de **démarrage machine** (exécuté SYSTEM) :
 ```
@@ -62,10 +75,12 @@ une version différente (mécanisme de MAJ simple), (re)démarre le service. Le
 - `C:\ProgramData\TrueSight\truesight-agent.log` pour le diagnostic.
 
 ## Points à valider / à venir
-- **Bureau à distance en session 0** : le service tourne en SYSTEM ; la capture du
-  bureau utilisateur passe par un *helper* relancé dans la session interactive
-  (`remote/launcher.py`, `CreateProcessAsUser`) — **à valider sur 1-2 postes** avant
-  généralisation (le terminal et les commandes, eux, tournent en SYSTEM sans souci).
+- **Bureau à distance en session 0** : le service (SYSTEM) relance un *helper* dans
+  la session interactive (`remote/launcher.py`, `CreateProcessAsUser`). Validé que
+  le helper se lance, capture et se connecte au relais ; la fiabilité du lancement
+  exige le build **onedir** + l'app dans **Program Files** (lecture/exécution pour
+  l'utilisateur) — c'est désormais le cas. (Terminal et commandes tournent en
+  SYSTEM sans helper.)
 - **PyTurboJPEG** : non embarqué (encodage Pillow). Pour un remote plus rapide,
   décommenter `PyTurboJPEG`/`numpy` dans `requirements.txt` et fournir la DLL
   native `libjpeg-turbo` au build (PyInstaller `--add-binary`).

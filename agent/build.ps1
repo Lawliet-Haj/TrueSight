@@ -90,10 +90,15 @@ Write-Host "Compilation de l'exécutable (cela peut prendre un moment)..." -Fore
 # casseraient (« relative import with no known parent package »).
 $entryPoint = Join-Path $scriptDir "run_agent.py"
 
+# --onedir (et NON --onefile) : produit un dossier dist\truesight-agent\ (exe +
+# _internal\). Pas d'extraction temporaire au lancement → fiable quand le service
+# SYSTEM relance le helper dans la session utilisateur via CreateProcessAsUser
+# (l'extraction onefile échouait dans ce contexte → bureau à distance écran noir).
 pyinstaller `
-    --onefile `
+    --onedir `
     --name "truesight-agent" `
     --console `
+    --noconfirm `
     --paths "$scriptDir" `
     @hiddenArgs `
     --collect-submodules "win32com" `
@@ -102,10 +107,12 @@ pyinstaller `
     --collect-submodules "truesight_agent" `
     "$entryPoint"
 
-# 5. Vérifie le résultat.
-$exePath = Join-Path $scriptDir "dist\truesight-agent.exe"
+# 5. Vérifie le résultat (onedir : dossier dist\truesight-agent\ + exe à l'intérieur).
+$appDir  = Join-Path $scriptDir "dist\truesight-agent"
+$exePath = Join-Path $appDir "truesight-agent.exe"
 if (Test-Path $exePath) {
-    Write-Host "=== Build réussi ===" -ForegroundColor Green
+    Write-Host "=== Build réussi (onedir) ===" -ForegroundColor Green
+    Write-Host "Dossier applicatif : $appDir" -ForegroundColor Green
     Write-Host "Exécutable : $exePath" -ForegroundColor Green
 } else {
     Write-Host "=== Build échoué : exécutable introuvable ===" -ForegroundColor Red

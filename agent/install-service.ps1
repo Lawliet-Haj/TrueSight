@@ -27,7 +27,8 @@ $ErrorActionPreference = "Stop"
 
 # --- Constantes ----------------------------------------------------------------
 $ServiceName = "TrueSightAgent"
-$DataDir     = "C:\ProgramData\TrueSight"
+$DataDir     = "C:\ProgramData\TrueSight"     # données (restreint SYSTEM+Admins)
+$AppDir      = "C:\Program Files\TrueSight"   # binaires (lecture+exécution pour tous)
 $scriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # --- 1. Vérifie les droits administrateur -------------------------------------
@@ -42,11 +43,12 @@ Write-Host "=== Installation de l'agent TrueSight ===" -ForegroundColor Cyan
 
 # --- 2. Résout les chemins source ---------------------------------------------
 if (-not $ExePath) {
-    $ExePath = Join-Path $scriptDir "dist\truesight-agent.exe"
+    # Build onedir : l'exe se trouve dans dist\truesight-agent\.
+    $ExePath = Join-Path $scriptDir "dist\truesight-agent\truesight-agent.exe"
 }
 if (-not (Test-Path $ExePath)) {
     Write-Host "Exécutable introuvable : $ExePath" -ForegroundColor Red
-    Write-Host "Lancer d'abord .\build.ps1 pour produire truesight-agent.exe." -ForegroundColor Yellow
+    Write-Host "Lancer d'abord .\build.ps1 pour produire dist\truesight-agent\." -ForegroundColor Yellow
     exit 1
 }
 
@@ -64,38 +66,50 @@ if (-not (Test-Path $ConfigPath)) {
     exit 1
 }
 
-# --- 3. Crée le dossier de données et restreint les droits --------------------
-Write-Host "Création du dossier $DataDir..." -ForegroundColor Yellow
+# --- 3. Dossiers : données (restreint) + application (Program Files) -----------
+Write-Host "Création des dossiers..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+New-Item -ItemType Directory -Force -Path $AppDir  | Out-Null
 
-# Restreint l'accès : SYSTEM + Administrateurs uniquement (le state.json contient
+# Données restreintes : SYSTEM + Administrateurs uniquement (le state.json contient
 # le token de l'agent ; en cas de repli DPAPI indisponible il serait en clair).
-# On retire l'héritage et le groupe Utilisateurs standard.
 Write-Host "Restriction des droits d'accès au dossier de données..." -ForegroundColor Yellow
 & icacls $DataDir /inheritance:r | Out-Null
 & icacls $DataDir /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+# $AppDir hérite des droits de « Program Files » (Utilisateurs : lecture+exécution).
+# On ne le restreint PAS : c'est indispensable pour que le service (SYSTEM) puisse
+# relancer le helper de bureau à distance dans la session utilisateur.
 
-$targetExe    = Join-Path $DataDir "truesight-agent.exe"
+$targetExe    = Join-Path $AppDir  "truesight-agent.exe"
 $targetConfig = Join-Path $DataDir "config.ini"
+$srcAppDir    = Split-Path -Parent $ExePath   # dossier onedir (dist\truesight-agent)
 
 # --- 4. Arrête / supprime un service existant AVANT de copier ------------------
-# (sinon l'exe cible est verrouillé par le service en cours → la copie échoue).
+# (sinon les fichiers de l'application sont verrouillés par le service en cours).
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "Service existant détecté : arrêt et suppression..." -ForegroundColor Yellow
     if ($existing.Status -ne "Stopped") {
         Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     }
-    # L'exécutable EXISTANT embarque la logique d'auto-désinstallation pywin32.
     if (Test-Path $targetExe) { & $targetExe remove | Out-Null }
+    # Suppression robuste par nom (couvre un ancien service dont l'exe était
+    # ailleurs, ex. migration depuis C:\ProgramData\TrueSight vers Program Files).
+    & sc.exe delete $ServiceName 2>$null | Out-Null
     Start-Sleep -Seconds 2
 }
 
-# --- 5. Copie l'exécutable et la configuration --------------------------------
-Write-Host "Copie de l'exécutable..." -ForegroundColor Yellow
-Copy-Item -Path $ExePath -Destination $targetExe -Force
+# --- 5. Déploie l'application (dossier onedir complet) + la configuration -------
+Write-Host "Déploiement de l'application dans $AppDir..." -ForegroundColor Yellow
+Get-ChildItem -Path $AppDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item -Path (Join-Path $srcAppDir '*') -Destination $AppDir -Recurse -Force
 
-# On n'écrase PAS un config.ini déjà présent (poussé par GPO), sauf s'il manque.
+if (-not (Test-Path $targetExe)) {
+    Write-Host "Exécutable introuvable après copie : $targetExe" -ForegroundColor Red
+    exit 1
+}
+
+# config.ini → dossier de données (restreint). On n'écrase PAS un existant (GPO).
 if (-not (Test-Path $targetConfig)) {
     Write-Host "Copie de la configuration..." -ForegroundColor Yellow
     Copy-Item -Path $ConfigPath -Destination $targetConfig -Force

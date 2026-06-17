@@ -84,9 +84,11 @@ foreach ($imp in $hiddenImports) {
 #    les hidden-imports + l'import de truesight_agent.service par le runner.
 Write-Host "Compilation de l'exécutable (cela peut prendre un moment)..." -ForegroundColor Yellow
 
-# Fichier d'amorçage : importe le paquet et délègue selon le contexte
-# (lancé par le SCM => service ; sinon => console).
-$entryPoint = Join-Path $scriptDir "truesight_agent\__main__.py"
+# Fichier d'amorçage : importe le paquet (import ABSOLU) et délègue selon le
+# contexte (SCM => service ; sinon => console). On NE pointe PAS directement sur
+# truesight_agent\__main__.py : exécuté en top-level, ses imports relatifs
+# casseraient (« relative import with no known parent package »).
+$entryPoint = Join-Path $scriptDir "run_agent.py"
 
 pyinstaller `
     --onefile `

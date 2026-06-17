@@ -107,7 +107,7 @@ pyinstaller `
     @hiddenArgs `
     --collect-submodules "win32com" `
     --collect-submodules "mss" `
-    --collect-submodules "winpty" `
+    --collect-all "winpty" `
     --collect-submodules "truesight_agent" `
     "$entryPoint"
 

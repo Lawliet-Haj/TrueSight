@@ -227,7 +227,16 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
 
     try:
         if is_session_zero():
-            _logger.info("Service en session 0 : lancement d'un helper (kind=%s) dans la session active.", kind)
+            # 1) Compagnon en session utilisateur (fiable pour terminal ET bureau).
+            from .. import companion
+            payload = {"token": token, "ws_url": ws_url, "kind": kind,
+                       "shell": shell, "verify_tls": verify_tls}
+            if companion.send_session_request(payload):
+                _logger.info("Service en session 0 : session %s confiée au compagnon utilisateur.", kind)
+                return True
+            # 2) Repli : helper CreateProcessAsUser (bureau à distance OK ; terminal
+            #    peu fiable). Utile si le compagnon n'est pas (encore) démarré.
+            _logger.info("Compagnon indisponible : repli sur le helper (kind=%s).", kind)
             return _launch_in_active_session(token, ws_url, kind, shell)
         _logger.info("Session utilisateur : exécution directe de la session (kind=%s).", kind)
         _run_session_inline(token, ws_url, verify_tls, kind, shell)

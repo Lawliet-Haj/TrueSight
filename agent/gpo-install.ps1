@@ -90,6 +90,24 @@ if (-not $svc) {
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 }
 
+# --- Tâche « compagnon » (session utilisateur : terminal + bureau à distance) ---
+# (Re)créée à chaque passage (idempotent). Wrapper VBS pour une fenêtre cachée.
+$vbs = Join-Path $AppDir "companion.vbs"
+$vbsContent = 'CreateObject("WScript.Shell").Run """' + $dstExe + '"" companion", 0, False'
+Set-Content -Path $vbs -Value $vbsContent -Encoding ASCII
+try {
+    $compAction   = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbs + '"')
+    $compTrigger  = New-ScheduledTaskTrigger -AtLogOn
+    $compSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew -Hidden
+    $compPrincipal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+    Register-ScheduledTask -TaskName "TrueSight Companion" -Action $compAction -Trigger $compTrigger `
+        -Settings $compSettings -Principal $compPrincipal -Force | Out-Null
+    Log "Tâche compagnon installée/à jour."
+} catch {
+    Log "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))."
+}
+
 # --- Démarrage -----------------------------------------------------------------
 Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2

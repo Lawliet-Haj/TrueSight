@@ -70,7 +70,11 @@ $hiddenImports = @(
     "win32process",
     "win32security",
     "win32con",
-    "win32api"
+    "win32api",
+    # --- Compagnon de session utilisateur : IPC named pipe (service <-> compagnon) ---
+    "win32pipe",
+    "win32file",
+    "winerror"
 )
 
 $hiddenArgs = @()

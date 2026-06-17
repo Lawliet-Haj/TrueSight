@@ -32,6 +32,21 @@ pip install -r requirements.txt              # inclut pyinstaller, pywin32, pywi
 - **Données** → `C:\ProgramData\TrueSight\` (config.ini, state.json, logs ;
   **restreint SYSTEM+Administrateurs**, car state.json contient le token agent).
 
+## 1ter. Architecture « service + compagnon »
+- **Service SYSTEM** (`TrueSightAgent`) = unique agent enrôlé : supervision +
+  commandes/scripts/actions rapides (en SYSTEM, admin total).
+- **Compagnon** (tâche planifiée `TrueSight Companion`, au logon, session de chaque
+  utilisateur, droits limités) = exécute les sessions **interactives** (terminal +
+  bureau à distance) DANS la session de l'utilisateur, où ConPTY et la capture sont
+  fiables. `install-service.ps1` / `gpo-install.ps1` créent cette tâche (lancée
+  cachée via `companion.vbs` → `truesight-agent.exe companion`).
+- Le service pilote le compagnon par un **named pipe** local (`\\.\pipe\TrueSightRemoteSession`) :
+  il lui pousse `{token, ws_url, kind, shell, verify_tls}`. Le compagnon ne s'enrôle
+  pas et n'interroge pas le serveur → un seul jeton, aucun conflit. Si aucun
+  compagnon n'écoute (personne de connecté), le service se rabat sur l'ancien
+  helper `CreateProcessAsUser` (bureau à distance OK).
+- Log compagnon : `%LOCALAPPDATA%\TrueSight\companion.log`.
+
 ## 2. Préparer le partage de déploiement
 
 Sur un partage réseau en **lecture seule** pour « Ordinateurs du domaine » :

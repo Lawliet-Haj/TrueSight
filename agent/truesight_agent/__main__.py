@@ -153,7 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     """Point d'entrée principal (console, service ou helper selon le contexte)."""
     argv = argv if argv is not None else sys.argv
 
-    # Sous-commande helper bureau à distance (lancée par le service).
+    # Compagnon de session utilisateur (terminal interactif + bureau à distance).
+    # Lancé par une tâche planifiée au logon ; écoute le service via un named pipe.
+    if len(argv) >= 2 and argv[1].lower() == "companion":
+        from . import companion
+        return companion.run_companion()
+
+    # Sous-commande helper bureau à distance (lancée par le service — repli).
     if len(argv) >= 2 and argv[1].lower() == "remote-helper":
         return _run_remote_helper(argv)
 

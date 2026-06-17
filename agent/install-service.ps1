@@ -138,6 +138,32 @@ Write-Host "Configuration du compte de service (LocalSystem)..." -ForegroundColo
 Write-Host "Configuration de la reprise sur échec..." -ForegroundColor Yellow
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
+# --- 7bis. Tâche « compagnon » en session utilisateur -------------------------
+# Le service (SYSTEM) ne peut pas lancer de terminal interactif fiable en session 0.
+# Un compagnon tourne donc dans la session de CHAQUE utilisateur (au logon) et
+# exécute les sessions interactives (terminal + bureau à distance) ; le service
+# le pilote via un named pipe local. Fenêtre cachée via un wrapper VBS (l'exe est
+# une appli console).
+Write-Host "Installation de la tâche compagnon (session utilisateur)..." -ForegroundColor Yellow
+$vbs = Join-Path $AppDir "companion.vbs"
+$vbsContent = 'CreateObject("WScript.Shell").Run """' + $targetExe + '"" companion", 0, False'
+Set-Content -Path $vbs -Value $vbsContent -Encoding ASCII
+
+try {
+    $compAction   = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbs + '"')
+    $compTrigger  = New-ScheduledTaskTrigger -AtLogOn
+    $compSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew -Hidden
+    # Groupe « Utilisateurs » (S-1-5-32-545) : s'exécute pour tout utilisateur au
+    # logon, DANS sa session, en droits limités.
+    $compPrincipal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+    Register-ScheduledTask -TaskName "TrueSight Companion" -Action $compAction -Trigger $compTrigger `
+        -Settings $compSettings -Principal $compPrincipal -Force | Out-Null
+    Write-Host "Tâche compagnon installée (démarre au prochain logon)." -ForegroundColor Green
+} catch {
+    Write-Host "AVERTISSEMENT : tâche compagnon non installée ($($_.Exception.Message))." -ForegroundColor Yellow
+}
+
 # --- 8. Démarre le service -----------------------------------------------------
 Write-Host "Démarrage du service..." -ForegroundColor Yellow
 Start-Service -Name $ServiceName

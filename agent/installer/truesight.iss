@@ -127,13 +127,18 @@ end;
 procedure StopExistingAgent();
 var
   rc: Integer;
+  ps: String;
 begin
-  { Libère les fichiers verrouillés par une installation précédente avant la copie. }
-  Exec('sc.exe', 'stop TrueSightAgent', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Sleep(2000);
-  Exec('schtasks.exe', '/End /TN "TrueSight Companion"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Exec('taskkill.exe', '/F /IM truesight-agent.exe', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Sleep(1000);
+  { Libère les fichiers de l'onedir AVANT la copie : arrête le service + le
+    compagnon + TOUS les process truesight-agent (helpers en session utilisateur
+    compris, qui survivent à l'arrêt du service et verrouillent _internal\*.pyd),
+    puis ATTEND qu'il n'en reste aucun (sinon « DeleteFile: file in use »). }
+  ps := 'Stop-Service TrueSightAgent -Force -ErrorAction SilentlyContinue;'
+      + ' try { Stop-ScheduledTask -TaskName ''TrueSight Companion'' -ErrorAction SilentlyContinue } catch {};'
+      + ' Get-Process truesight-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;'
+      + ' for ($i=0; $i -lt 40; $i++) { if (-not (Get-Process truesight-agent -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 500 };'
+      + ' Start-Sleep -Seconds 2';
+  Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -Command "' + ps + '"', '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

@@ -89,11 +89,15 @@ try {
             Start-Sleep -Milliseconds 500
         }
     }
-    # Arret du compagnon (sinon _internal\*.pyd verrouilles).
+    # Arret du compagnon + de TOUS les helpers (ils verrouillent _internal\*.pyd
+    # et survivent a l'arret du service) ; on attend leur disparition effective.
     try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
-    Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue |
-        Where-Object { $_.SessionId -ne 0 } | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
+    Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 40; $i++) {
+        if (-not (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Start-Sleep -Seconds 2
 
     # --- 6. Deploiement de l'application + configuration -----------------------
     Info "Deploiement de l'application dans $AppDir..."

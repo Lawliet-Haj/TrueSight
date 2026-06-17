@@ -54,17 +54,27 @@ inventory_interval_hours = 12
     Log "config.ini existant conservé."
 }
 
-# --- 3. (Ré)installation du service (LocalSystem) -----------------------------
+# --- 3. Service : conserver si présent, sinon installer -----------------------
+# On NE supprime PAS un service existant : un delete + recreate rapproché peut
+# laisser le service « marqué pour suppression » et empêcher tout redémarrage.
+# Le binPath ne change pas (toujours sous Program Files, exe remplacé par Inno) →
+# un simple arrêt + reconfiguration suffit (idempotent).
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
+    Log "Service déjà présent : arrêt + reconfiguration (sans suppression)."
     if ($existing.Status -ne "Stopped") { Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue }
-    & $exe remove | Out-Null
-    & sc.exe delete $ServiceName 2>$null | Out-Null
-    Start-Sleep -Seconds 2
+    for ($i = 0; $i -lt 20; $i++) {
+        $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if (-not $s -or $s.Status -eq "Stopped") { break }
+        Start-Sleep -Milliseconds 500
+    }
+} else {
+    Log "Installation du service."
+    & $exe --startup auto install
+    if ($LASTEXITCODE -ne 0) { Write-Error "Échec de l'installation du service (code $LASTEXITCODE)."; exit 1 }
 }
-& $exe --startup auto install
-if ($LASTEXITCODE -ne 0) { Write-Error "Échec de l'installation du service (code $LASTEXITCODE)."; exit 1 }
-& sc.exe config $ServiceName obj= "LocalSystem" | Out-Null
+# Reconfiguration idempotente : démarrage auto + compte LocalSystem + reprise sur échec.
+& sc.exe config $ServiceName start= auto obj= "LocalSystem" | Out-Null
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
 # --- 4. Tâche compagnon (session utilisateur : terminal + bureau à distance) --

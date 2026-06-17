@@ -75,14 +75,19 @@ try {
     $targetExe    = Join-Path $AppDir  "truesight-agent.exe"
     $targetConfig = Join-Path $DataDir "config.ini"
 
-    # --- 5. Arret/suppression d'un service existant AVANT copie ----------------
+    # --- 5. Arret du service existant AVANT copie (sans suppression) -----------
+    # On NE supprime PAS le service : un delete + recreate rapproche peut le
+    # laisser « marque pour suppression » et empecher tout redemarrage. Un arret
+    # suffit pour liberer les fichiers (le binPath sous Program Files est inchange).
     $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($existing) {
-        Info "Service existant : arret et suppression..."
-        if ($existing.Status -ne "Stopped") { Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $targetExe) { & $targetExe remove | Out-Null }
-        & sc.exe delete $ServiceName 2>$null | Out-Null
-        Start-Sleep -Seconds 2
+    if ($existing -and $existing.Status -ne "Stopped") {
+        Info "Arret du service existant..."
+        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+        for ($i = 0; $i -lt 20; $i++) {
+            $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if (-not $s -or $s.Status -eq "Stopped") { break }
+            Start-Sleep -Milliseconds 500
+        }
     }
     # Arret du compagnon (sinon _internal\*.pyd verrouilles).
     try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
@@ -103,11 +108,15 @@ try {
         Info "config.ini deja present : conserve."
     }
 
-    # --- 7. Installation du service (LocalSystem) ------------------------------
-    Info "Installation du service $ServiceName..."
-    & $targetExe --startup auto install
-    if ($LASTEXITCODE -ne 0) { throw "Echec de l'installation du service (code $LASTEXITCODE)." }
-    & sc.exe config $ServiceName obj= "LocalSystem" | Out-Null
+    # --- 7. Service : conserver si present, sinon installer --------------------
+    if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        Info "Installation du service $ServiceName..."
+        & $targetExe --startup auto install
+        if ($LASTEXITCODE -ne 0) { throw "Echec de l'installation du service (code $LASTEXITCODE)." }
+    } else {
+        Info "Service deja present : conserve (reconfiguration)."
+    }
+    & sc.exe config $ServiceName start= auto obj= "LocalSystem" | Out-Null
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
     # --- 8. Tache compagnon (session utilisateur) ------------------------------

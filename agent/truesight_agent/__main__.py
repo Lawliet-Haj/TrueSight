@@ -30,6 +30,9 @@ from . import __version__, config as cfg, runner
 
 # Sous-commandes interprétées comme du contrôle de service (déléguées à pywin32).
 _SERVICE_COMMANDS = {"install", "update", "remove", "start", "stop", "restart", "debug"}
+# Options pywin32 qui PRÉCÈDENT la commande (ex. « --startup auto install ») : leur
+# présence signale aussi une invocation de service.
+_SERVICE_OPTION_FLAGS = {"--startup", "--username", "--password", "--interactive", "--perfmonini", "--perfmondll", "--wait"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,7 +64,13 @@ def _looks_like_service_invocation(argv: list[str]) -> bool:
     # Lancé par le gestionnaire de services Windows : aucun argument utilisateur.
     if cfg.is_frozen() and len(argv) <= 1:
         return True
-    if len(argv) >= 2 and argv[1].lower() in _SERVICE_COMMANDS:
+    # pywin32 accepte des options AVANT la commande (« --startup auto install ») :
+    # on détecte donc une commande de service OU une option de service n'importe
+    # où dans les arguments, pas seulement en position 1.
+    lowered = [a.lower() for a in argv[1:]]
+    if any(tok in _SERVICE_COMMANDS for tok in lowered):
+        return True
+    if any(tok in _SERVICE_OPTION_FLAGS for tok in lowered):
         return True
     return False
 

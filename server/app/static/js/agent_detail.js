@@ -66,15 +66,30 @@
     }
   }
 
+  var HEALTH_BADGE = {
+    healthy: ["Sain", "ok"], warning: ["Attention", "warn"],
+    critical: ["Défectueux", "danger"], unknown: ["Hors ligne", "off"],
+  };
+
   function renderHeader(d) {
-    document.getElementById("title-hostname").textContent = d.hostname || d.id;
+    document.getElementById("title-hostname").textContent = d.name || d.hostname || d.id;
+    // Sous-titre : nom d'hôte (si renommé) + emplacement.
+    var label = document.querySelector(".page-head .label");
+    if (label) {
+      var bits = ["Fiche poste"];
+      if (d.display_name && d.hostname && d.display_name !== d.hostname) bits.push(d.hostname);
+      if (d.site_name) bits.push(d.site_name);
+      label.textContent = bits.join("  ·  ");
+    }
     var badge = document.getElementById("status-badge");
-    if (d.status === "online") {
-      badge.textContent = "En ligne";
-      badge.className = "badge ok";
-    } else {
+    if (d.status !== "online") {
       badge.textContent = "Hors ligne";
       badge.className = "badge off";
+    } else {
+      var h = HEALTH_BADGE[d.health] || HEALTH_BADGE.healthy;
+      badge.textContent = h[0];
+      badge.className = "badge " + h[1];
+      if (d.health_reasons && d.health_reasons.length) badge.title = d.health_reasons.join(", ");
     }
     document.getElementById("last-seen").textContent = "Dernière activité : " + fmtDate(d.last_seen_at);
   }
@@ -92,6 +107,23 @@
     var html = "";
     html += kv("Système", d.os_version || "—");
     html += kv("Version agent", d.agent_version || "—");
+    html += kv("Emplacement", d.site_name || "Non assigné");
+    var hlabel = (HEALTH_BADGE[d.health] || ["—"])[0];
+    if (d.health_reasons && d.health_reasons.length && d.health !== "healthy") {
+      hlabel += " · " + d.health_reasons.join(", ");
+    }
+    html += kv("Santé", hlabel);
+    var s = d.security;
+    if (s) {
+      var av = s.defender_enabled === true ? "Defender actif"
+        : (s.defender_enabled === false ? "Defender désactivé" : "—");
+      if (s.defender_enabled === true && s.defender_realtime === false) av += " (temps réel off)";
+      html += kv("Antivirus", av);
+      if (s.pending_updates != null) {
+        html += kv("MAJ Windows en attente",
+          s.pending_updates + (s.pending_critical ? " (dont " + s.pending_critical + " critiques)" : ""));
+      }
+    }
     if (hw) {
       html += kv("Fabricant", hw.manufacturer || "—");
       html += kv("Modèle", hw.model || "—");

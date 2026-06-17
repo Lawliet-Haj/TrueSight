@@ -389,6 +389,10 @@
   }
 
   function setupSitesUI() {
+    // Le bouton CSV reprend les filtres courants de l'URL (site/santé/sécurité).
+    var exp = document.getElementById("export-csv");
+    if (exp) exp.href = "/api/v1/agents/export.csv" + window.location.search;
+
     var filterSel = document.getElementById("site-filter");
     if (filterSel) {
       filterSel.addEventListener("change", function () {

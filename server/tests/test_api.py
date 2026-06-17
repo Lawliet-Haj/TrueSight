@@ -1363,3 +1363,15 @@ def test_security_collection_and_health(client, admin_session):
 
     assert len(admin_session.get("/api/v1/agents?security=updates").get_json()) == 1
     assert len(admin_session.get("/api/v1/agents?security=defender").get_json()) == 1
+
+
+def test_export_agents_csv(client, admin_session):
+    """Export CSV du parc : en-tête + ligne du poste, type text/csv."""
+    _enroll(client, "MACHINE-CSV")
+    r = admin_session.get("/api/v1/agents/export.csv")
+    assert r.status_code == 200
+    assert r.mimetype == "text/csv"
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+    body = r.get_data(as_text=True)
+    assert "Nom;Hote;Emplacement" in body
+    assert "PC-TEST-01" in body

@@ -5,6 +5,7 @@ La création de commandes et le journal d'audit sont réservés aux administrate
 (``admin_required``).
 """
 import base64
+import csv
 import io
 import re
 import uuid
@@ -232,6 +233,86 @@ def list_agents():
             }
         )
     return jsonify(out), 200
+
+
+# --------------------------------------------------------------------------
+# GET /agents/export.csv — export du parc (honore ?site / ?health / ?security)
+# --------------------------------------------------------------------------
+_HEALTH_FR = {"healthy": "Sain", "warning": "Attention", "critical": "Défectueux", "unknown": "Inconnu"}
+
+
+@bp.get("/agents/export.csv")
+@login_required
+def export_agents_csv():
+    """Export CSV du parc (séparateur ';', UTF-8 BOM pour Excel), filtres repris de la liste."""
+    threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
+    site_filter = (request.args.get("site") or "").strip()
+    health_filter = (request.args.get("health") or "").strip()
+    security_filter = (request.args.get("security") or "").strip()
+
+    agents = db.session.query(Agent).order_by(Agent.hostname.asc()).all()
+    sites = _sites_map()
+    alert_map = _active_alert_types_map()
+    sec_map = _security_map()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([
+        "Nom", "Hote", "Emplacement", "Etat", "Sante", "Raisons", "Systeme",
+        "CPU %", "RAM %", "MAJ en attente", "Antivirus", "Etiquettes", "Derniere activite",
+    ])
+
+    for agent in agents:
+        if site_filter:
+            if site_filter == "none" and agent.site_id is not None:
+                continue
+            if site_filter != "none" and str(agent.site_id) != site_filter:
+                continue
+        sec = sec_map.get(agent.id)
+        if security_filter == "updates":
+            wu = (sec.windows_update if sec else None) or {}
+            if not (isinstance(wu.get("pending_count"), int) and wu["pending_count"] > 0):
+                continue
+        elif security_filter == "defender":
+            df = (sec.defender if sec else None) or {}
+            if df.get("enabled") is not False:
+                continue
+        metric = _latest_metric(agent.id)
+        health, reasons = agent_health(
+            agent, metric, alert_map.get(agent.id, set()), current_app.config, _sec_dict(sec)
+        )
+        if health_filter and health != health_filter:
+            continue
+        site = sites.get(agent.site_id)
+        wu = (sec.windows_update if sec else None) or {}
+        df = (sec.defender if sec else None) or {}
+        av = "—"
+        if df.get("enabled") is True:
+            av = "OK"
+        elif df.get("enabled") is False:
+            av = "Désactivé"
+        writer.writerow([
+            _agent_display_name(agent),
+            agent.hostname or "",
+            site.name if site else "",
+            "En ligne" if _is_online(agent, threshold) else "Hors ligne",
+            _HEALTH_FR.get(health, health),
+            ", ".join(reasons),
+            agent.os_version or "",
+            f"{_num(metric.cpu_pct):.0f}" if metric and metric.cpu_pct is not None else "",
+            f"{_num(metric.ram_used_pct):.0f}" if metric and metric.ram_used_pct is not None else "",
+            wu.get("pending_count") if isinstance(wu.get("pending_count"), int) else "",
+            av,
+            ", ".join(agent.tags or []),
+            _iso_utc(agent.last_seen_at) or "",
+        ])
+
+    body = "﻿" + buf.getvalue()  # BOM : Excel ouvre l'UTF-8 correctement.
+    return current_app.response_class(
+        body,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=truesight-parc.csv"},
+    )
 
 
 # --------------------------------------------------------------------------

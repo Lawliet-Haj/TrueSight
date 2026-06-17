@@ -129,11 +129,18 @@ var
   rc: Integer;
   ps: String;
 begin
-  { Libère les fichiers de l'onedir AVANT la copie : arrête le service + le
-    compagnon + TOUS les process truesight-agent (helpers en session utilisateur
-    compris, qui survivent à l'arrêt du service et verrouillent _internal\*.pyd),
-    puis ATTEND qu'il n'en reste aucun (sinon « DeleteFile: file in use »). }
-  ps := 'Stop-Service TrueSightAgent -Force -ErrorAction SilentlyContinue;'
+  { Libère les fichiers de l'onedir AVANT la copie. Étapes (ordre important) :
+    1. DÉSACTIVE le service (start= disabled) : sinon l'action de reprise sur échec
+       (sc failure … restart) le RELANCE en plein milieu de l'install quand on tue
+       ses process → un nouveau process verrouille _internal\*.pyd → rollback.
+    2. Arrête le service et ATTEND l'arrêt effectif.
+    3. Arrête la tâche compagnon + tue les helpers résiduels (session utilisateur)
+       qui survivent à l'arrêt du service et verrouillent les .pyd.
+    4. ATTEND qu'il n'en reste aucun (handles libérés).
+    Le postinstall repasse ensuite le service en start= auto + reprise sur échec. }
+  ps := 'sc.exe config TrueSightAgent start= disabled | Out-Null;'
+      + ' Stop-Service TrueSightAgent -Force -ErrorAction SilentlyContinue;'
+      + ' for ($i=0; $i -lt 40; $i++) { $s=Get-Service TrueSightAgent -ErrorAction SilentlyContinue; if (-not $s -or $s.Status -eq ''Stopped'') { break }; Start-Sleep -Milliseconds 500 };'
       + ' try { Stop-ScheduledTask -TaskName ''TrueSight Companion'' -ErrorAction SilentlyContinue } catch {};'
       + ' Get-Process truesight-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;'
       + ' for ($i=0; $i -lt 40; $i++) { if (-not (Get-Process truesight-agent -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 500 };'

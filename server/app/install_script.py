@@ -80,10 +80,14 @@ try {
     # laisser « marque pour suppression » et empecher tout redemarrage. Un arret
     # suffit pour liberer les fichiers (le binPath sous Program Files est inchange).
     $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($existing -and $existing.Status -ne "Stopped") {
-        Info "Arret du service existant..."
+    if ($existing) {
+        # DESACTIVE le service avant de l'arreter : sinon la reprise sur echec
+        # (sc failure ... restart) le relance pendant l'install et reverrouille
+        # les fichiers. Le service est repasse en start= auto a l'etape 7.
+        Info "Arret du service existant (desactivation temporaire)..."
+        & sc.exe config $ServiceName start= disabled 2>&1 | Out-Null
         Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        for ($i = 0; $i -lt 20; $i++) {
+        for ($i = 0; $i -lt 40; $i++) {
             $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
             if (-not $s -or $s.Status -eq "Stopped") { break }
             Start-Sleep -Milliseconds 500

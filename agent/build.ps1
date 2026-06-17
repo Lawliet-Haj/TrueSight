@@ -1,8 +1,10 @@
 # ============================================================================
 # TrueSight - Build de l'agent Windows en exécutable .exe (PyInstaller)
 # ----------------------------------------------------------------------------
-# Produit "truesight-agent.exe" (mode --onefile) à partir du paquet truesight_agent.
-# L'exécutable embarque le service Windows ET le mode console.
+# Produit le dossier onedir dist\truesight-agent\ (exe + _internal\) PUIS un
+# paquet de déploiement dist\truesight-agent-<version>.zip (avec version.txt +
+# empreinte SHA-256) à téléverser dans le dashboard (auto-update + lien d'install).
+# L'exécutable embarque le service Windows, le compagnon ET le mode console.
 #
 # Prérequis :
 #   - Python 3.12 (Windows)
@@ -74,13 +76,36 @@ $hiddenImports = @(
     # --- Compagnon de session utilisateur : IPC named pipe (service <-> compagnon) ---
     "win32pipe",
     "win32file",
-    "winerror"
+    "winerror",
+    # --- Encodage JPEG accéléré (optionnel) : PyTurboJPEG + numpy ---
+    "turbojpeg",
+    "numpy"
 )
 
 $hiddenArgs = @()
 foreach ($imp in $hiddenImports) {
     $hiddenArgs += "--hidden-import"
     $hiddenArgs += $imp
+}
+
+# 3bis. DLL native libjpeg-turbo (turbojpeg.dll) — OPTIONNELLE.
+#   Si présente sur le poste de build, on l'embarque (--add-binary) : l'agent
+#   l'utilisera en priorité (encodage ~5-10x plus rapide que Pillow). Sinon le
+#   build reste valide et l'agent se rabat automatiquement sur Pillow.
+#   Localisation : variable TURBOJPEG_DLL, sinon installation standard.
+$turbojpegArgs = @()
+$turbojpegDll = $env:TURBOJPEG_DLL
+if (-not $turbojpegDll -or -not (Test-Path $turbojpegDll)) {
+    foreach ($cand in @("C:\libjpeg-turbo64\bin\turbojpeg.dll", "C:\libjpeg-turbo\bin\turbojpeg.dll")) {
+        if (Test-Path $cand) { $turbojpegDll = $cand; break }
+    }
+}
+if ($turbojpegDll -and (Test-Path $turbojpegDll)) {
+    Write-Host "libjpeg-turbo detecte : $turbojpegDll (embarque)" -ForegroundColor Green
+    $turbojpegArgs += "--add-binary"
+    $turbojpegArgs += "$turbojpegDll;."
+} else {
+    Write-Host "turbojpeg.dll introuvable : encodage Pillow (repli). Definir TURBOJPEG_DLL pour l'accelerer." -ForegroundColor Yellow
 }
 
 # 4. Lance PyInstaller en mode --onefile.
@@ -105,6 +130,7 @@ pyinstaller `
     --noconfirm `
     --paths "$scriptDir" `
     @hiddenArgs `
+    @turbojpegArgs `
     --collect-submodules "win32com" `
     --collect-submodules "mss" `
     --collect-all "winpty" `
@@ -114,11 +140,32 @@ pyinstaller `
 # 5. Vérifie le résultat (onedir : dossier dist\truesight-agent\ + exe à l'intérieur).
 $appDir  = Join-Path $scriptDir "dist\truesight-agent"
 $exePath = Join-Path $appDir "truesight-agent.exe"
-if (Test-Path $exePath) {
-    Write-Host "=== Build réussi (onedir) ===" -ForegroundColor Green
-    Write-Host "Dossier applicatif : $appDir" -ForegroundColor Green
-    Write-Host "Exécutable : $exePath" -ForegroundColor Green
-} else {
+if (-not (Test-Path $exePath)) {
     Write-Host "=== Build échoué : exécutable introuvable ===" -ForegroundColor Red
     exit 1
 }
+Write-Host "=== Build réussi (onedir) ===" -ForegroundColor Green
+Write-Host "Dossier applicatif : $appDir" -ForegroundColor Green
+Write-Host "Exécutable : $exePath" -ForegroundColor Green
+
+# 6. Empaquetage : version.txt + zip versionné + empreinte SHA-256.
+#    Le zip (contenant le dossier truesight-agent\) se téléverse tel quel dans le
+#    dashboard (Réglages > Déploiement) → sert l'auto-update et le lien d'install.
+Write-Host "Empaquetage du paquet de déploiement..." -ForegroundColor Yellow
+$initFile = Join-Path $scriptDir "truesight_agent\__init__.py"
+$verMatch = Select-String -Path $initFile -Pattern '__version__\s*=\s*"([^"]+)"'
+$version = if ($verMatch) { $verMatch.Matches[0].Groups[1].Value } else { "0.0.0" }
+# version.txt à la racine du dossier onedir : lu par le serveur au téléversement.
+Set-Content -Path (Join-Path $appDir "version.txt") -Value $version -Encoding ASCII -NoNewline
+
+$zipPath = Join-Path $scriptDir ("dist\truesight-agent-$version.zip")
+if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+Compress-Archive -Path $appDir -DestinationPath $zipPath -CompressionLevel Optimal
+$sha = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+$sizeMb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+
+Write-Host "=== Paquet prêt ===" -ForegroundColor Green
+Write-Host "Version  : $version" -ForegroundColor Green
+Write-Host "Paquet   : $zipPath ($sizeMb Mo)" -ForegroundColor Green
+Write-Host "SHA-256  : $sha" -ForegroundColor Green
+Write-Host "→ Téléverser ce .zip dans le dashboard : Réglages > Déploiement & mises à jour." -ForegroundColor Cyan

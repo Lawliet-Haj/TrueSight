@@ -243,6 +243,55 @@ class Alert(db.Model):
     notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class AgentRelease(db.Model):
+    """Paquet d'agent publié (table ``agent_releases``).
+
+    Le binaire (dossier onedir PyInstaller zippé) est stocké sur le disque
+    (volume ``AGENT_RELEASE_DIR``) ; cette table n'en conserve que les
+    métadonnées. La release marquée ``is_current`` est celle servie pour
+    l'auto-update (heartbeat) ET le lien d'installation.
+    """
+
+    __tablename__ = "agent_releases"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    version: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    published_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=True
+    )
+    published_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+
+class InstallToken(db.Model):
+    """Lien d'installation à usage différé (table ``install_tokens``).
+
+    Un admin génère un jeton (stocké hashé) ; le poste cible l'échange contre le
+    paquet de l'agent + un ``config.ini`` (URL serveur + enrollment_token). Le
+    jeton est révocable et expirable ; le ``enrollment_token`` n'apparaît jamais
+    dans l'URL copiée par l'admin (il n'est servi qu'au script d'installation
+    via HTTPS, contre le jeton d'installation).
+    """
+
+    __tablename__ = "install_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    label: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+
 class RemoteSession(db.Model):
     """Session de bureau à distance (table ``remote_sessions``, cf. REMOTE.md §6).
 

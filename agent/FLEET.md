@@ -89,15 +89,57 @@ une version différente (mécanisme de MAJ simple), (re)démarre le service. Le
 - le poste apparaît **en ligne** dans le dashboard sous ~30 s ;
 - `C:\ProgramData\TrueSight\truesight-agent.log` pour le diagnostic.
 
+## 5. Déploiement « zéro fichier » par le dashboard (lien d'installation)
+
+Alternative au partage réseau : depuis le dashboard, **Réglages > Déploiement &
+mises à jour > Générer un lien** (admin / superadmin). On obtient une commande à
+lancer dans un **PowerShell administrateur** sur le poste cible :
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr -useb https://srv778935.hstgr.cloud/install.ps1?t=<jeton> | iex"
+```
+
+Le script télécharge le paquet courant + un `config.ini` (URL serveur +
+`enrollment_token`, servi par HTTPS contre le jeton — il n'apparaît jamais dans
+l'URL copiée), installe le service SYSTEM + la tâche compagnon et démarre. Le lien
+est **expirable** et **révocable** (Réglages), et chaque installation est auditée
+(`install.config`).
+
+## 6. Publier un paquet & auto-update
+
+1. `build.ps1` produit `dist\truesight-agent-<version>.zip` (avec `version.txt` +
+   SHA-256 affiché).
+2. **Réglages > Déploiement & mises à jour > Téléverser** (superadmin) : déposer
+   ce .zip ; il devient la **version courante** (servie au lien d'installation
+   ET à l'auto-update).
+3. Les agents enrôlés détectent la nouvelle version au heartbeat (champ
+   `agent_update`), téléchargent le paquet (Bearer agent), vérifient le SHA-256,
+   puis basculent via un script détaché qui **sauvegarde** l'app, déploie la
+   nouvelle, redémarre le service — et **restaure** automatiquement (rollback) si
+   le service ne repart pas. Log : `C:\ProgramData\TrueSight\truesight-update.log`.
+
+> Geler le parc : `AGENT_AUTO_UPDATE_ENABLED=false` (env serveur) → plus aucune
+> annonce de mise à jour. La version courante est stockée sur le volume Docker
+> `agent_releases` (`/var/lib/truesight/releases`).
+>
+> Pour monter de version : éditer `truesight_agent/__init__.py` (`__version__`)
+> AVANT `build.ps1` — c'est la version comparée pour décider de la bascule (et
+> écrite dans `version.txt`).
+
+## 7. Encodage accéléré (PyTurboJPEG, optionnel)
+
+`requirements.txt` inclut `PyTurboJPEG` + `numpy`. Si la DLL native
+`turbojpeg.dll` (libjpeg-turbo) est présente sur le poste de **build** (installer
+libjpeg-turbo, ou définir `TURBOJPEG_DLL`), `build.ps1` l'embarque (`--add-binary`)
+et l'agent l'utilise en priorité (encodage ~5-10× plus rapide). Sinon, repli
+automatique sur Pillow — le build reste valide. Au runtime, l'agent localise la
+DLL embarquée (`_internal\turbojpeg.dll`) sans configuration.
+
 ## Points à valider / à venir
 - **Bureau à distance en session 0** : le service (SYSTEM) relance un *helper* dans
-  la session interactive (`remote/launcher.py`, `CreateProcessAsUser`). Validé que
-  le helper se lance, capture et se connecte au relais ; la fiabilité du lancement
-  exige le build **onedir** + l'app dans **Program Files** (lecture/exécution pour
-  l'utilisateur) — c'est désormais le cas. (Terminal et commandes tournent en
-  SYSTEM sans helper.)
-- **PyTurboJPEG** : non embarqué (encodage Pillow). Pour un remote plus rapide,
-  décommenter `PyTurboJPEG`/`numpy` dans `requirements.txt` et fournir la DLL
-  native `libjpeg-turbo` au build (PyInstaller `--add-binary`).
-- **Auto-update intégré** : prévu (l'agent vérifierait/téléchargerait une nouvelle
-  version depuis le serveur). En attendant, la MAJ passe par le partage GPO (§3.B).
+  la session interactive (`remote/launcher.py`, `CreateProcessAsUser`) ou pilote le
+  compagnon. Validé. (Terminal et commandes tournent en SYSTEM sans helper.)
+- **Auto-update** : validé côté serveur (publication, version courante, annonce,
+  téléchargement Bearer — couvert par les tests). La bascule + rollback (script
+  détaché SYSTEM) sont à valider sur le poste pilote à la première montée de
+  version réelle.

@@ -44,6 +44,9 @@ _logger = logging.getLogger("truesight.runner")
 _BOOTSTRAP_RETRY_SECONDS = 30
 # Délai mini entre deux tentatives de réenrôlement automatique (anti-boucle).
 _REENROLL_COOLDOWN_SECONDS = 60
+# Délai mini avant de réessayer la même version d'auto-update (anti-boucle si un
+# téléchargement échoue ou si l'empreinte ne correspond pas).
+_UPDATE_RETRY_COOLDOWN_SECONDS = 600
 
 
 def setup_logging(console: bool = False) -> None:
@@ -105,6 +108,10 @@ class AgentRunner:
         self._remote_lock = threading.Lock()
         self._remote_active_session_id: str | None = None
         self._remote_last_started = 0.0
+        # Auto-update : une seule bascule à la fois ; cooldown par version tentée.
+        self._update_lock = threading.Lock()
+        self._update_in_progress = False
+        self._update_attempts: dict[str, float] = {}
 
     # -- Cycle de vie ---------------------------------------------------------
     def stop(self) -> None:
@@ -227,6 +234,46 @@ class AgentRunner:
                 if self._remote_active_session_id == session_id:
                     self._remote_active_session_id = None
 
+    # -- Auto-update ----------------------------------------------------------
+    def _maybe_apply_update(self, update_info) -> None:
+        """Déclenche l'auto-update si le serveur annonce une version plus récente.
+
+        Le téléchargement + la bascule tournent dans un thread démon (non bloquant
+        pour le heartbeat). Une seule bascule à la fois ; on ne ré-essaie pas la
+        même version avant ``_UPDATE_RETRY_COOLDOWN_SECONDS``. Si la bascule
+        démarre, le service sera arrêté/redémarré par le script détaché.
+        """
+        if not update_info or not isinstance(update_info, dict):
+            return
+        from . import updater
+
+        version = update_info.get("version")
+        if not version or not updater.can_self_update() or not updater.is_newer(version):
+            return
+
+        with self._update_lock:
+            if self._update_in_progress:
+                return
+            now = time.monotonic()
+            if now - self._update_attempts.get(version, 0.0) < _UPDATE_RETRY_COOLDOWN_SECONDS:
+                return
+            self._update_attempts[version] = now
+            self._update_in_progress = True
+
+        def _worker() -> None:
+            try:
+                started = updater.apply_update(self.client, update_info)
+            except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+                _logger.error("Auto-update échouée : %s", exc)
+                started = False
+            if not started:
+                # Libère le verrou pour autoriser une nouvelle tentative (cooldown).
+                with self._update_lock:
+                    self._update_in_progress = False
+
+        thread = threading.Thread(target=_worker, name="truesight-update", daemon=True)
+        thread.start()
+
     def _schedule_remote_dedup_reset(self, session_id: str) -> None:
         """Oublie ``session_id`` du dédoublonnage après le TTL (thread minuteur)."""
         def _reset() -> None:
@@ -260,6 +307,8 @@ class AgentRunner:
                         self.config.apply_server_config(server_config)
                     # Signalisation bureau à distance (champ remote_session).
                     self._maybe_start_remote_session(result.data.get("remote_session"))
+                    # Signalisation auto-update (champ agent_update).
+                    self._maybe_apply_update(result.data.get("agent_update"))
                 elif not result.ok:
                     _logger.warning("Heartbeat en échec : %s", result.error)
             except AuthError:

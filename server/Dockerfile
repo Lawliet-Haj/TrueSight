@@ -38,5 +38,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # provoqueraient une course au seed. Pour ~100 agents (~3 req/s), 1 worker + 8
 # threads est largement suffisant. Ne pas augmenter --workers sans déplacer le
 # bootstrap/thread de fond vers un verrou inter-processus (cf. SPEC §7).
+# --timeout 300 : marge pour le téléversement d'un paquet d'agent (~50-120 Mo)
+# depuis le dashboard (Réglages > Déploiement). Le worker gthread reste réactif.
 CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "1", "--threads", "8", \
-     "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]
+     "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]

@@ -106,6 +106,21 @@ class Config:
     # --- Activation du thread de fond -----------------------------------
     ENABLE_BACKGROUND_TASKS = _get_bool("ENABLE_BACKGROUND_TASKS", True)
 
+    # --- Déploiement & mises à jour de l'agent --------------------------
+    # Répertoire (sur volume Docker) où sont stockés les paquets de l'agent
+    # (dossier onedir zippé + manifeste). Servi pour l'auto-update ET pour le
+    # lien d'installation. Doit être persistant (volume), restreint au conteneur.
+    AGENT_RELEASE_DIR = os.environ.get("AGENT_RELEASE_DIR", "/var/lib/truesight/releases")
+    # Auto-update : si False, le heartbeat n'annonce jamais de nouvelle version
+    # (utile pour geler le parc pendant une investigation).
+    AGENT_AUTO_UPDATE_ENABLED = _get_bool("AGENT_AUTO_UPDATE_ENABLED", True)
+    # Durée de validité par défaut d'un lien d'installation (jours).
+    INSTALL_TOKEN_TTL_DAYS = _get_int("INSTALL_TOKEN_TTL_DAYS", 7)
+    # Taille maxi d'un téléversement (Mo) — borne MAX_CONTENT_LENGTH. Le paquet
+    # agent (onedir PyInstaller zippé) pèse ~50-120 Mo ; on prévoit large.
+    MAX_UPLOAD_MB = _get_int("MAX_UPLOAD_MB", 512)
+    MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
+
 
 class TestConfig(Config):
     """Configuration dédiée aux tests (SQLite en mémoire, pas de thread)."""
@@ -121,3 +136,5 @@ class TestConfig(Config):
     ENABLE_BACKGROUND_TASKS = False
     N8N_WEBHOOK_URL = ""
     TRUST_PROXY = False
+    # Répertoire de paquets surchargé par les tests (tmp_path) au besoin.
+    AGENT_RELEASE_DIR = os.environ.get("AGENT_RELEASE_DIR", "")

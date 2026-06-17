@@ -148,11 +148,97 @@
   </div>
 </div>
 {% endif %}
+
+{% if user.role in ('admin', 'superadmin') %}
+<!-- Déploiement & mises à jour de l'agent (admin + superadmin) -->
+<div class="panel" style="margin-top:14px">
+  <div class="phead">
+    <svg class="ico"><use href="#i-download"/></svg>
+    <h2>Déploiement &amp; mises à jour</h2>
+    <span class="tag" id="deploy-current">—</span>
+  </div>
+  <div class="pbody">
+
+    <!-- Lien d'installation -->
+    <div class="deploy-block">
+      <h3 class="block-title">Installer l'agent sur un poste</h3>
+      <p class="sub">Génère un lien à usage différé. Sur le poste cible, ouvrir un <b>PowerShell administrateur</b> et coller la commande affichée — l'agent se télécharge, s'enrôle et démarre tout seul.</p>
+      <form id="link-form" class="deploy-form" autocomplete="off">
+        <div class="field grow">
+          <label for="link-label">Étiquette (optionnel)</label>
+          <input type="text" id="link-label" class="input" placeholder="ex. Déploiement compta 2026" maxlength="80">
+        </div>
+        <div class="field">
+          <label for="link-ttl">Validité (jours · 0 = sans limite)</label>
+          <input type="number" id="link-ttl" class="input" value="7" min="0" max="365">
+        </div>
+        <button type="submit" class="btn go">Générer un lien</button>
+        <span class="form-msg" id="link-msg"></span>
+      </form>
+
+      <div id="link-result" class="link-result hidden">
+        <label class="field-label">Commande d'installation (PowerShell administrateur)</label>
+        <div class="copy-row">
+          <code id="link-oneliner" class="oneliner"></code>
+          <button type="button" class="btn ghost" id="link-copy" title="Copier"><svg class="ico"><use href="#i-copy"/></svg></button>
+        </div>
+        <p class="sub" id="link-expire"></p>
+      </div>
+
+      <div class="scroll-y sticky-head" style="max-height:none;border-top:1px solid var(--line);margin-top:12px">
+        <table>
+          <thead>
+            <tr><th>Lien</th><th>Créé</th><th>Expire</th><th class="num">Usages</th><th>État</th><th class="num">Actions</th></tr>
+          </thead>
+          <tbody id="links-body"><tr><td colspan="6" class="empty-cell">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if user.role == 'superadmin' %}
+    <!-- Versions de l'agent (superadmin) -->
+    <div class="deploy-block" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+      <h3 class="block-title">Versions de l'agent</h3>
+      <p class="sub">Téléverser le paquet produit par <code>build.ps1</code> (<code>dist\truesight-agent-&lt;version&gt;.zip</code>). La version <b>courante</b> est servie aux postes pour l'auto-update et le lien d'installation.</p>
+      <form id="rel-form" class="deploy-form" autocomplete="off" enctype="multipart/form-data">
+        <div class="field grow">
+          <label for="rel-file">Paquet (.zip)</label>
+          <input type="file" id="rel-file" class="input" accept=".zip,application/zip" required>
+        </div>
+        <div class="field grow">
+          <label for="rel-notes">Notes (optionnel)</label>
+          <input type="text" id="rel-notes" class="input" placeholder="ex. correctif terminal" maxlength="200">
+        </div>
+        <label class="chk"><input type="checkbox" id="rel-current" checked> Définir comme courante</label>
+        <button type="submit" class="btn go" id="rel-submit">Téléverser</button>
+        <span class="form-msg" id="rel-msg"></span>
+      </form>
+      <div id="rel-progress" class="rel-progress hidden">
+        <progress id="rel-bar" max="100" value="0"></progress><span id="rel-pct" class="mono"></span>
+      </div>
+
+      <div class="scroll-y sticky-head" style="max-height:none;border-top:1px solid var(--line);margin-top:12px">
+        <table>
+          <thead>
+            <tr><th>Version</th><th>Taille</th><th>Publié</th><th>Par</th><th>État</th><th class="num">Actions</th></tr>
+          </thead>
+          <tbody id="rels-body"><tr><td colspan="6" class="empty-cell">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% if user.role == 'superadmin' %}
 <script src="{{ url_for('static', filename='js/users.js') }}"></script>
+{% endif %}
+{% if user.role in ('admin', 'superadmin') %}
+<script src="{{ url_for('static', filename='js/deployment.js') }}"></script>
 {% endif %}
 {% endblock %}

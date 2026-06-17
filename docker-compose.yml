@@ -53,6 +53,12 @@ services:
     env_file:
       # Toutes les variables de configuration (voir .env.example)
       - .env
+    environment:
+      # Stockage des paquets d'agent (auto-update + lien d'installation).
+      AGENT_RELEASE_DIR: "/var/lib/truesight/releases"
+    volumes:
+      # Paquets de l'agent publiés (zip onedir) — persistants entre recréations.
+      - agent_releases:/var/lib/truesight/releases
     expose:
       # Port interne uniquement : seul nginx y accède (pas publié sur l'hôte)
       - "8000"
@@ -114,6 +120,7 @@ services:
 volumes:
   pgdata:          # Données PostgreSQL persistantes
   certbot-www:     # Webroot partagé pour le challenge ACME (certbot)
+  agent_releases:  # Paquets de l'agent publiés (auto-update + lien d'installation)
 
 # -----------------------------------------------------------------------------
 # Réseau interne dédié

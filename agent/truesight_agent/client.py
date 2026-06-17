@@ -13,6 +13,7 @@ Conforme aux payloads du SPEC section 2.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import threading
 import time
@@ -378,6 +379,39 @@ class ApiClient:
         Utilisé uniquement si le serveur n'a pas fourni de ``ws_url`` complet.
         """
         return f"{self.ws_base()}/ws/remote/agent?token={token}"
+
+    # -- Téléchargement de fichier (auto-update) ------------------------------
+    def download_file(self, url: str, dest_path: str, chunk_size: int = 256 * 1024) -> ApiResult:
+        """Télécharge un fichier (streaming) vers ``dest_path``. URL ABSOLUE.
+
+        Réutilise la session authentifiée (Bearer + verify_tls). Écrit dans un
+        fichier ``.part`` puis le renomme atomiquement. Ne retente pas (le runner
+        relancera au prochain cycle si besoin) ; lève ``AuthError`` sur 401/403.
+        """
+        tmp_path = dest_path + ".part"
+        try:
+            with self._session.get(
+                url, stream=True, timeout=(10, 300), verify=self.verify_tls
+            ) as resp:
+                if resp.status_code in _AUTH_ERROR_STATUS:
+                    raise AuthError(f"téléchargement refusé (HTTP {resp.status_code})")
+                if resp.status_code >= 400:
+                    return ApiResult(False, status_code=resp.status_code,
+                                     error=f"HTTP {resp.status_code}")
+                os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+                with open(tmp_path, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            fh.write(chunk)
+                os.replace(tmp_path, dest_path)
+                return ApiResult(True, status_code=resp.status_code)
+        except requests.exceptions.RequestException as exc:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return ApiResult(False, error=f"erreur réseau : {exc}")
 
     def close(self) -> None:
         """Ferme la session HTTP (libère les connexions)."""

@@ -21,11 +21,12 @@ websocket-client>=1.7,<2.0
 # PTY ConPTY pour lancer un vrai shell PowerShell/cmd dont l'E/S transite par
 # le même relais WebSocket (façon SSH-dans-le-navigateur).
 pywinpty>=2.0,<3.0
-# Encodage JPEG accéléré (libjpeg-turbo) — OPTIONNEL : si présent, utilisé en
-# priorité ; tire numpy. Décommenter pour de meilleures performances/CPU.
-# Nécessite la lib native libjpeg-turbo installée sur le poste.
-# PyTurboJPEG>=1.7
-# numpy>=1.26  # requis par PyTurboJPEG (chemin TurboJPEG.encode).
+# Encodage JPEG accéléré (libjpeg-turbo) : utilisé en priorité s'il trouve la DLL
+# native ``turbojpeg.dll`` ; sinon repli automatique sur Pillow (cf. capture.py).
+# Le build (build.ps1) embarque la DLL via --add-binary si elle est présente sur
+# le poste de build (C:\libjpeg-turbo64\bin ou variable TURBOJPEG_DLL).
+PyTurboJPEG>=1.7
+numpy>=1.26  # requis par PyTurboJPEG (chemin TurboJPEG.encode).
 # ----------------------------------------------------------------------------
 # Outil de build (développement uniquement) : production de l'exécutable .exe.
 pyinstaller>=6.3

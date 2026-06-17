@@ -11,6 +11,7 @@ from threading import Lock
 import pyotp
 from flask import (
     Blueprint,
+    current_app,
     flash,
     g,
     redirect,
@@ -280,3 +281,26 @@ def inventory_page():
 def settings_page():
     """Réglages de l'utilisateur courant (mot de passe, MFA)."""
     return render_template("settings.html", user=g.user)
+
+
+# --------------------------------------------------------------------------
+# Script d'installation en ligne (bootstrap PowerShell, gardé par jeton)
+# --------------------------------------------------------------------------
+@bp.get("/install.ps1")
+def install_script():
+    """Sert le script d'installation de l'agent pour un jeton d'installation.
+
+    Public (pas de session) mais inopérant sans jeton valide : ``?t=<jeton>``
+    issu du dashboard. Un jeton invalide/expiré renvoie un script qui affiche un
+    message clair (plutôt qu'une erreur HTTP qui ferait échouer ``iwr | iex``).
+    """
+    from .api_deploy import _resolve_install_token
+    from .install_script import render_install_script, render_invalid_script
+
+    token = (request.args.get("t") or "").strip()
+    it = _resolve_install_token(token) if token else None
+    if it is None:
+        body = render_invalid_script()
+    else:
+        body = render_install_script(request.host_url.rstrip("/"), token)
+    return current_app.response_class(body, mimetype="text/plain; charset=utf-8")

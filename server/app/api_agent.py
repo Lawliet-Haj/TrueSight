@@ -263,6 +263,8 @@ def heartbeat(agent_id):
     }
     # Signalisation bureau à distance : présent si une session est en attente.
     remote_session = _remote_session_for_agent(agent, "/ws/remote/agent")
+    # Signalisation auto-update : présent si une release plus récente est publiée.
+    agent_update = _agent_update_for(agent)
     return (
         jsonify(
             {
@@ -270,10 +272,35 @@ def heartbeat(agent_id):
                 "pending_commands": pending_count,
                 "config": config,
                 "remote_session": remote_session,
+                "agent_update": agent_update,
             }
         ),
         200,
     )
+
+
+def _agent_update_for(agent: Agent) -> dict | None:
+    """Renvoie le manifeste de mise à jour pour un agent, ou None.
+
+    Présent uniquement si l'auto-update est activé ET qu'une release courante,
+    strictement plus récente que la version rapportée par l'agent, existe avec
+    son fichier disponible sur le disque. L'agent télécharge ensuite ``url``
+    (endpoint ``/agents/<id>/package``, même Bearer).
+    """
+    if not current_app.config.get("AGENT_AUTO_UPDATE_ENABLED", True):
+        return None
+    from .releases import current_release_available, version_gt
+
+    rel = current_release_available()
+    if rel is None or not version_gt(rel.version, agent.agent_version):
+        return None
+    base = request.host_url.rstrip("/")
+    return {
+        "version": rel.version,
+        "url": f"{base}/api/v1/agents/{agent.id}/package",
+        "sha256": rel.sha256,
+        "size": rel.size,
+    }
 
 
 def _safe_int(value):

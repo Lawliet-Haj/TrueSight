@@ -991,3 +991,205 @@ def test_bulk_requires_admin(client):
         json={"agent_ids": ["x"], "kind": "quick", "action": "lock"},
         headers={"Accept": "application/json"},
     ).status_code == 401
+
+
+# ==========================================================================
+# Déploiement & mises à jour : releases, auto-update, liens d'installation
+# ==========================================================================
+import io  # noqa: E402
+import zipfile  # noqa: E402
+
+
+def _make_agent_zip(version="1.1.0"):
+    """Construit un faux paquet onedir en mémoire (version.txt + exe factice)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("truesight-agent/version.txt", version)
+        zf.writestr("truesight-agent/truesight-agent.exe", b"MZ-fake-exe")
+        zf.writestr("truesight-agent/_internal/base_library.zip", b"x")
+    buf.seek(0)
+    return buf
+
+
+def _new_session(app, email, password):
+    """Ouvre une session fraîche pour un compte donné (client dédié)."""
+    c = app.test_client()
+    r = c.post("/login", data={"email": email, "password": password})
+    assert r.status_code in (302, 303), r.get_data(as_text=True)
+    return c
+
+
+def _publish_release(admin_session, version="1.1.0", make_current=True):
+    return admin_session.post(
+        "/api/v1/agent-releases",
+        data={
+            "file": (_make_agent_zip(version), f"truesight-agent-{version}.zip"),
+            "make_current": "true" if make_current else "false",
+            "notes": "test",
+        },
+        content_type="multipart/form-data",
+    )
+
+
+def test_version_compare():
+    """Comparaison de versions : logique d'annonce d'auto-update."""
+    from app.releases import parse_version, version_gt
+
+    assert parse_version("1.2.3") == (1, 2, 3)
+    assert parse_version("v1.2.3") == (1, 2, 3)
+    assert parse_version("nope") is None
+    assert version_gt("1.1.0", "1.0.9") is True
+    assert version_gt("1.0.0", "1.0.0") is False
+    assert version_gt("1.0.0", None) is True       # agent inconnu → MAJ
+    assert version_gt("bad", "1.0.0") is False      # release douteuse → pas de MAJ
+
+
+def test_publish_release_and_current(app, admin_session, tmp_path):
+    """Le superadmin publie un paquet ; il devient la version courante."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    r = _publish_release(admin_session, "1.1.0")
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert r.get_json()["version"] == "1.1.0" and r.get_json()["is_current"] is True
+
+    rows = admin_session.get("/api/v1/agent-releases").get_json()
+    assert len(rows) == 1 and rows[0]["is_current"] is True
+    # Le fichier a bien été écrit sur le disque.
+    assert (tmp_path / "truesight-agent-1.1.0.zip").is_file()
+
+
+def test_publish_requires_superadmin(app, client, admin_session, tmp_path):
+    """Un admin (non superadmin) ne peut PAS publier de paquet (403) mais peut lister."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "adm@medicofi.fr", "password": "adminpass1", "role": "admin"},
+    )
+    adm = _new_session(app, "adm@medicofi.fr", "adminpass1")
+    assert adm.get("/api/v1/agent-releases").status_code == 200  # lecture OK (admin)
+    r = adm.post(
+        "/api/v1/agent-releases",
+        data={"file": (_make_agent_zip(), "x.zip")},
+        content_type="multipart/form-data",
+    )
+    assert r.status_code == 403
+
+
+def test_heartbeat_advertises_update(app, client, admin_session, tmp_path):
+    """Le heartbeat annonce agent_update pour un agent plus ancien, pas pour un à jour."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+
+    agent_id, token = _enroll(client, "MACHINE-UPD")  # agent_version 1.0.0
+    r = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+        headers=_auth(token),
+    )
+    upd = r.get_json()["agent_update"]
+    assert upd and upd["version"] == "1.1.0"
+    assert upd["url"].endswith(f"/api/v1/agents/{agent_id}/package")
+    assert len(upd["sha256"]) == 64
+
+    # Agent déjà à jour → pas d'annonce.
+    r2 = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.1.0"},
+        headers=_auth(token),
+    )
+    assert r2.get_json()["agent_update"] is None
+
+
+def test_auto_update_can_be_disabled(app, client, admin_session, tmp_path):
+    """AGENT_AUTO_UPDATE_ENABLED=False gèle le parc (jamais d'annonce)."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    app.config["AGENT_AUTO_UPDATE_ENABLED"] = False
+    _publish_release(admin_session, "1.1.0")
+    agent_id, token = _enroll(client, "MACHINE-NOUPD")
+    r = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+        headers=_auth(token),
+    )
+    assert r.get_json()["agent_update"] is None
+
+
+def test_agent_package_download(app, client, admin_session, tmp_path):
+    """L'agent télécharge le paquet courant avec son Bearer."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+    agent_id, token = _enroll(client, "MACHINE-PKG")
+    r = client.get(f"/api/v1/agents/{agent_id}/package", headers=_auth(token))
+    assert r.status_code == 200
+    assert r.mimetype == "application/zip"
+    assert len(r.get_data()) > 0
+    # Sans Bearer : refusé.
+    assert client.get(f"/api/v1/agents/{agent_id}/package").status_code == 401
+
+
+def test_install_token_and_bootstrap(app, client, admin_session, tmp_path):
+    """Génération d'un lien d'installation + script bootstrap + config gardée par jeton."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+
+    r = admin_session.post("/api/v1/install-tokens", json={"label": "compta", "ttl_days": 7})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    data = r.get_json()
+    token = data["token"]
+    assert "iwr" in data["one_liner"] and token in data["one_liner"]
+
+    # Le script bootstrap embarque le jeton et le service.
+    ps = client.get(f"/install.ps1?t={token}")
+    assert ps.status_code == 200
+    body = ps.get_data(as_text=True)
+    assert token in body and "TrueSightAgent" in body
+
+    # Le config.ini sert l'URL serveur + l'enrollment_token.
+    cfg = client.get(f"/api/v1/install/{token}/config")
+    assert cfg.status_code == 200
+    cfg_text = cfg.get_data(as_text=True)
+    assert "enrollment_token = test-enrollment-token" in cfg_text
+    assert "[server]" in cfg_text and "verify_tls = true" in cfg_text
+
+    # Le paquet est servi contre le jeton d'installation.
+    pkg = client.get(f"/api/v1/install/{token}/package")
+    assert pkg.status_code == 200 and pkg.mimetype == "application/zip"
+
+    # Le compteur d'usage a été incrémenté par la récupération de config.
+    tokens = admin_session.get("/api/v1/install-tokens").get_json()
+    assert tokens[0]["use_count"] >= 1
+
+
+def test_install_token_invalid_and_revoke(app, client, admin_session, tmp_path):
+    """Jeton invalide → script d'erreur clair / 403 ; révocation effective."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    # Jeton bidon : script renvoyé (200) mais inactif, et endpoints gardés en 403.
+    bad = client.get("/install.ps1?t=nope")
+    assert bad.status_code == 200 and "invalide" in bad.get_data(as_text=True)
+    assert client.get("/api/v1/install/nope/config").status_code == 403
+
+    r = admin_session.post("/api/v1/install-tokens", json={})
+    token = r.get_json()["token"]
+    tid = r.get_json()["id"]
+    assert client.get(f"/api/v1/install/{token}/config").status_code == 200
+
+    assert admin_session.delete(f"/api/v1/install-tokens/{tid}").status_code == 200
+    assert client.get(f"/api/v1/install/{token}/config").status_code == 403
+    assert "invalide" in client.get(f"/install.ps1?t={token}").get_data(as_text=True)
+
+
+def test_install_token_permissions(app, client, admin_session):
+    """Création de lien : admin OK, viewer refusé (403)."""
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "adm2@medicofi.fr", "password": "adminpass1", "role": "admin"},
+    )
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "vw2@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
+    )
+    adm = _new_session(app, "adm2@medicofi.fr", "adminpass1")
+    vw = _new_session(app, "vw2@medicofi.fr", "viewerpass1")
+
+    assert adm.post("/api/v1/install-tokens", json={}).status_code == 201
+    assert vw.post("/api/v1/install-tokens", json={}).status_code == 403
+    assert vw.get("/api/v1/agent-releases", headers={"Accept": "application/json"}).status_code == 403

@@ -25,7 +25,9 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import struct
+import sys
 import time
 from typing import Iterator
 
@@ -60,15 +62,45 @@ except Exception as _exc:  # noqa: BLE001 - on remonte l'absence proprement.
     _MSS_AVAILABLE = False
     _logger.warning("mss indisponible (%s) : la capture d'écran est inopérante.", _exc)
 
+def _locate_turbojpeg_dll() -> str | None:
+    """Localise ``turbojpeg.dll`` (libjpeg-turbo) pour un build figé ou un poste.
+
+    Ordre : variable ``TURBOJPEG_DLL`` → dossier du bundle PyInstaller
+    (``sys._MEIPASS``) → dossier de l'exe (+ ``_internal``) → installation système
+    standard. Renvoie None si introuvable (PyTurboJPEG tentera sa détection auto,
+    puis on se rabat sur Pillow).
+    """
+    candidates: list[str] = []
+    env = os.environ.get("TURBOJPEG_DLL")
+    if env:
+        candidates.append(env)
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        candidates.append(os.path.join(mei, "turbojpeg.dll"))
+    try:
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(exe_dir, "turbojpeg.dll"))
+        candidates.append(os.path.join(exe_dir, "_internal", "turbojpeg.dll"))
+    except Exception:  # noqa: BLE001
+        pass
+    candidates.append(r"C:\libjpeg-turbo64\bin\turbojpeg.dll")
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 try:
     from turbojpeg import TurboJPEG, TJPF_BGRX  # type: ignore
-    _TURBOJPEG = TurboJPEG()
+    _dll = _locate_turbojpeg_dll()
+    _TURBOJPEG = TurboJPEG(_dll) if _dll else TurboJPEG()
     _TURBOJPEG_AVAILABLE = True
-    _logger.info("Encodage JPEG via PyTurboJPEG (libjpeg-turbo).")
-except Exception:  # noqa: BLE001 - PyTurboJPEG optionnel.
+    _logger.info("Encodage JPEG via PyTurboJPEG (libjpeg-turbo, dll=%s).", _dll or "auto")
+except Exception as _exc:  # noqa: BLE001 - PyTurboJPEG optionnel.
     _TURBOJPEG = None  # type: ignore
     TJPF_BGRX = None  # type: ignore
     _TURBOJPEG_AVAILABLE = False
+    _logger.info("PyTurboJPEG indisponible (%s) : encodage Pillow.", _exc)
 
 try:
     from PIL import Image  # type: ignore

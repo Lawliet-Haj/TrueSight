@@ -66,6 +66,10 @@
               aria-selected="false" aria-controls="panel-activity" data-tab="activity" tabindex="-1">
         <svg><use href="#i-clock"/></svg>Activité
       </button>
+      <button class="tab" id="tab-accounts" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-accounts" data-tab="accounts" tabindex="-1">
+        <svg><use href="#i-lock"/></svg>Comptes
+      </button>
       {% if ai_enabled %}
       <button class="tab" id="tab-copilot" role="tab" type="button"
               aria-selected="false" aria-controls="panel-copilot" data-tab="copilot" tabindex="-1">
@@ -247,6 +251,47 @@
 
         <div class="act-feed" id="act-feed">
           <div class="dl-loading">Ouvrez l'onglet pour charger l'activité…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onglet : Comptes utilisateurs locaux (créer / supprimer) -->
+    <div class="tabpanel hidden" id="panel-accounts" role="tabpanel" aria-labelledby="tab-accounts">
+      <div class="acct-win">
+        <div class="console-row" style="margin-bottom:12px">
+          <button class="btn go" id="acct-load" type="button"><svg><use href="#i-refresh"/></svg>Charger les comptes</button>
+          <button class="btn" id="acct-new-toggle" type="button"><svg><use href="#i-download"/></svg>Créer un compte</button>
+          <span id="acct-status" class="cmd-status"></span>
+        </div>
+
+        <div class="acct-create hidden" id="acct-create">
+          <div class="acct-create-row">
+            <input type="text" id="acct-username" class="input" placeholder="Nom d'utilisateur" maxlength="20" autocomplete="off">
+            <input type="text" id="acct-fullname" class="input" placeholder="Nom complet (optionnel)" autocomplete="off">
+            <input type="password" id="acct-password" class="input" placeholder="Mot de passe" autocomplete="new-password">
+            <label class="acct-chk"><input type="checkbox" id="acct-admin"> Administrateur</label>
+            <button class="btn go" id="acct-create-run" type="button">Créer</button>
+          </div>
+          <div class="acct-hint text-faint">Le compte est créé sur le poste (New-LocalUser). Utilisez un mot de passe
+            temporaire : il transite vers le poste pour la création.</div>
+          <pre id="acct-create-out" class="cmd-output hidden"></pre>
+        </div>
+
+        <div class="scroll-y sticky-head" style="max-height:none">
+          <table>
+            <thead>
+              <tr>
+                <th>Compte</th>
+                <th>État</th>
+                <th>Rôle</th>
+                <th>Description</th>
+                <th class="num">Action</th>
+              </tr>
+            </thead>
+            <tbody id="acct-body">
+              <tr><td colspan="5" class="empty-cell">Cliquez sur « Charger les comptes ».</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

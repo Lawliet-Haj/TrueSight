@@ -1516,3 +1516,96 @@ def test_software_requires_admin(client, app, admin_session):
         json={"source": "catalog", "key": "chrome"},
     ).status_code == 403
     assert vw.get("/api/v1/software/catalog").status_code == 403
+
+
+# ==========================================================================
+# Comptes utilisateurs locaux : list / create / delete
+# ==========================================================================
+def _fetch_command_text(client, agent_id, token):
+    """L'agent récupère sa commande en attente et renvoie son command_text."""
+    cmds = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token)).get_json()["commands"]
+    assert len(cmds) == 1, cmds
+    return cmds[0]["command_text"]
+
+
+def test_accounts_list(client, admin_session):
+    """Lister les comptes : crée une commande PowerShell Get-LocalUser."""
+    aid, token = _enroll(client, "MACHINE-ACCT-LIST")
+    r = admin_session.post(f"/api/v1/agents/{aid}/accounts/list", json={})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    text = _fetch_command_text(client, aid, token)
+    assert "Get-LocalUser" in text and "ConvertTo-Json" in text
+
+
+def test_accounts_create_and_audit_excludes_password(client, admin_session):
+    """Créer un compte admin : commande New-LocalUser + ajout au groupe ;
+    le mot de passe figure dans la commande mais JAMAIS dans l'audit."""
+    aid, token = _enroll(client, "MACHINE-ACCT-CREATE")
+    secret = "Sup3rSecretX!"
+    r = admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/create",
+        json={"username": "techuser", "password": secret, "full_name": "Technicien", "administrator": True},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    text = _fetch_command_text(client, aid, token)
+    assert "New-LocalUser" in text and "techuser" in text
+    assert secret in text  # nécessaire à l'exécution sur le poste
+    assert "Add-LocalGroupMember" in text  # rôle administrateur
+
+    audit = admin_session.get("/api/v1/audit?limit=50").get_json()
+    entry = next((a for a in audit if a["action"] == "account.create"), None)
+    assert entry is not None
+    assert entry["details"]["username"] == "techuser"
+    assert entry["details"]["administrator"] is True
+    assert "password" not in entry["details"]
+    assert secret not in str(entry["details"])  # le secret n'est jamais journalisé
+
+
+def test_accounts_create_validation(client, admin_session):
+    """Nom d'utilisateur invalide (injection) et mot de passe trop court → 400."""
+    aid, _ = _enroll(client, "MACHINE-ACCT-VALID")
+    assert admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/create",
+        json={"username": "bad'; rm", "password": "abcd"},
+    ).status_code == 400
+    assert admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/create",
+        json={"username": "okuser", "password": "x"},
+    ).status_code == 400
+
+
+def test_accounts_create_quote_escaping(client, admin_session):
+    """Une apostrophe dans le mot de passe est doublée (littéral PowerShell sûr)."""
+    aid, token = _enroll(client, "MACHINE-ACCT-QUOTE")
+    r = admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/create",
+        json={"username": "user1", "password": "Secret'1!"},
+    )
+    assert r.status_code == 201
+    text = _fetch_command_text(client, aid, token)
+    assert "Secret''1!" in text  # quote doublée → pas d'évasion possible
+
+
+def test_accounts_delete(client, admin_session):
+    """Supprimer un compte (+ profil) ; nom invalide → 400."""
+    aid, token = _enroll(client, "MACHINE-ACCT-DEL")
+    r = admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/delete",
+        json={"username": "olduser", "remove_profile": True},
+    )
+    assert r.status_code == 201
+    text = _fetch_command_text(client, aid, token)
+    assert "Remove-LocalUser" in text and "olduser" in text
+    assert "Win32_UserProfile" in text  # suppression du profil demandée
+    assert admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/delete",
+        json={"username": "bad name!"},
+    ).status_code == 400
+
+
+def test_accounts_require_admin(client):
+    """Sans session, les endpoints comptes sont refusés (401)."""
+    aid, _ = _enroll(client, "MACHINE-ACCT-ACL")
+    assert client.post(
+        f"/api/v1/agents/{aid}/accounts/list", json={}, headers={"Accept": "application/json"}
+    ).status_code == 401

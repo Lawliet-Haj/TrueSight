@@ -966,6 +966,113 @@
     else activate("remote");
   }
 
+  // --- Comptes utilisateurs locaux (admin) ---
+  function setupAccounts() {
+    var loadBtn = document.getElementById("acct-load");
+    if (!loadBtn) return;
+    var statusEl = document.getElementById("acct-status");
+    var body = document.getElementById("acct-body");
+    var createBox = document.getElementById("acct-create");
+    var createOut = document.getElementById("acct-create-out");
+
+    // POST vers un endpoint comptes dédié, puis sonde la commande jusqu'au résultat.
+    function run(suffix, payload, sEl, oEl) {
+      return fetch("/api/v1/agents/" + AGENT_ID + "/accounts/" + suffix, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload || {}),
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          return new Promise(function (resolve) { pollCommand(d.command_id, sEl || null, oEl || null, resolve); });
+        });
+      });
+    }
+
+    function render(users) {
+      if (!users.length) { body.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucun compte.</td></tr>'; return; }
+      body.innerHTML = users.map(function (u) {
+        var en = u.enabled
+          ? '<span class="pill ok">activé</span>'
+          : '<span class="pill off">désactivé</span>';
+        var role = u.admin ? '<span class="pill admin">admin</span>' : '<span class="text-faint">standard</span>';
+        return "<tr>" +
+          '<td class="mono">' + esc(u.name || "—") + "</td>" +
+          "<td>" + en + "</td>" +
+          "<td>" + role + "</td>" +
+          '<td class="text-dim">' + esc(u.description || "—") + "</td>" +
+          '<td class="num"><button class="btn xs danger acct-del" data-name="' + esc(u.name || "") + '">Supprimer</button></td>' +
+          "</tr>";
+      }).join("");
+      Array.prototype.forEach.call(body.querySelectorAll(".acct-del"), function (b) {
+        b.addEventListener("click", function () { delUser(b.getAttribute("data-name")); });
+      });
+    }
+
+    function load() {
+      statusEl.textContent = "Chargement des comptes…";
+      loadBtn.disabled = true;
+      body.innerHTML = '<tr><td colspan="5" class="empty-cell">Récupération…</td></tr>';
+      run("list", {}, null, null).then(function (data) {
+        loadBtn.disabled = false;
+        var r = (data && data.result) || {};
+        if (!data || data.status !== "done") {
+          statusEl.textContent = "Échec : " + cmdStatusLabel(data ? data.status : "?");
+          body.innerHTML = '<tr><td colspan="5" class="empty-cell err-cell">' + esc((r.stderr || "Pas de résultat").split("\n")[0]) + "</td></tr>";
+          return;
+        }
+        var users;
+        try { users = JSON.parse(r.stdout || "[]"); } catch (e) {
+          body.innerHTML = '<tr><td colspan="5" class="empty-cell err-cell">Réponse illisible.</td></tr>';
+          return;
+        }
+        if (!Array.isArray(users)) users = [users];
+        statusEl.textContent = users.length + " compte(s)";
+        render(users);
+      }).catch(function (e) {
+        loadBtn.disabled = false;
+        statusEl.textContent = "Erreur : " + e.message;
+      });
+    }
+
+    function delUser(name) {
+      if (!name) return;
+      if (!window.confirm("Supprimer le compte « " + name + " » sur ce poste ?")) return;
+      var removeProfile = window.confirm(
+        "Supprimer AUSSI les fichiers du profil (C:\\Users\\" + name + ") ?\n\n" +
+        "OK = supprimer les données du profil · Annuler = conserver les données.");
+      statusEl.textContent = "Suppression de " + name + "…";
+      run("delete", { username: name, remove_profile: removeProfile }, statusEl, null)
+        .then(function () { load(); })
+        .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+    }
+
+    loadBtn.addEventListener("click", load);
+    document.getElementById("acct-new-toggle").addEventListener("click", function () {
+      createBox.classList.toggle("hidden");
+      if (!createBox.classList.contains("hidden")) document.getElementById("acct-username").focus();
+    });
+
+    document.getElementById("acct-create-run").addEventListener("click", function () {
+      var username = document.getElementById("acct-username").value.trim();
+      var fullname = document.getElementById("acct-fullname").value.trim();
+      var password = document.getElementById("acct-password").value;
+      var admin = document.getElementById("acct-admin").checked;
+      if (!username) { statusEl.textContent = "Nom d'utilisateur requis."; return; }
+      if (!password) { statusEl.textContent = "Mot de passe requis."; return; }
+      if (admin && !window.confirm("Créer « " + username + " » comme ADMINISTRATEUR du poste ?")) return;
+      statusEl.textContent = "Création du compte…";
+      createOut.classList.add("hidden");
+      run("create", { username: username, full_name: fullname, password: password, administrator: admin }, statusEl, createOut)
+        .then(function (data) {
+          document.getElementById("acct-password").value = "";
+          if (data && data.status === "done") statusEl.textContent = "Compte créé.";
+          load();
+        })
+        .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+    });
+  }
+
   // --- Initialisation ---
   loadDetail();
   loadMetrics();
@@ -976,6 +1083,7 @@
     setupScriptLibrary();
     setupProcesses();
     setupActivity();
+    setupAccounts();
     setupTags();
     setupFocus();
     setupTabs();

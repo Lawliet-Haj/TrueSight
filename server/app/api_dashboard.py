@@ -1485,6 +1485,101 @@ def _software_bulk(resolver, audit_action, default_source):
 
 
 # --------------------------------------------------------------------------
+# Comptes utilisateurs locaux Windows (admin) — list / create / delete
+#
+# Mêmes garanties que le déploiement logiciel : on matérialise une commande
+# PowerShell construite de façon sûre (cf. account_ops) via le pipeline Command.
+# Le mot de passe de création N'EST JAMAIS journalisé dans l'audit.
+# --------------------------------------------------------------------------
+def _account_agent_or_error(agent_id):
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return None, (jsonify({"error": "agent_id invalide"}), 400)
+    if db.session.get(Agent, aid) is None:
+        return None, (jsonify({"error": "agent introuvable"}), 404)
+    return aid, None
+
+
+def _queue_account_command(aid, shell, command_text, timeout, audit_action, audit_details):
+    cmd = Command(
+        agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
+        status="pending", timeout_seconds=timeout, created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()
+    details = {"command_id": str(cmd.id)}
+    details.update(audit_details or {})
+    write_audit(action=audit_action, user_id=g.user.id, target_agent=aid, details=details, commit=False)
+    db.session.commit()
+    return cmd.id
+
+
+@bp.post("/agents/<agent_id>/accounts/list")
+@admin_required
+def accounts_list(agent_id):
+    """Liste les comptes locaux du poste (queue une commande, renvoie command_id)."""
+    aid, err = _account_agent_or_error(agent_id)
+    if err:
+        return err
+    from . import account_ops
+
+    shell, text, timeout = account_ops.build_list()
+    cmd_id = _queue_account_command(aid, shell, text, timeout, "account.list", {})
+    return jsonify({"command_id": str(cmd_id)}), 201
+
+
+@bp.post("/agents/<agent_id>/accounts/create")
+@admin_required
+def accounts_create(agent_id):
+    """Crée un compte local. Body : ``{username, password, full_name?, administrator?}``."""
+    aid, err = _account_agent_or_error(agent_id)
+    if err:
+        return err
+    from . import account_ops
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    full_name = account_ops.clean_text(data.get("full_name"))
+    administrator = bool(data.get("administrator"))
+    if not account_ops.valid_username(username):
+        return jsonify({"error": "nom d'utilisateur invalide (lettres, chiffres, . _ - ; 20 max)"}), 400
+    if not isinstance(password, str) or len(password) < 4:
+        return jsonify({"error": "mot de passe requis (4 caractères minimum)"}), 400
+
+    shell, text, timeout = account_ops.build_create(username, password, full_name, administrator)
+    # AUDIT : on journalise le nom et le rôle, JAMAIS le mot de passe.
+    cmd_id = _queue_account_command(
+        aid, shell, text, timeout, "account.create",
+        {"username": username, "administrator": administrator, "full_name": full_name},
+    )
+    return jsonify({"command_id": str(cmd_id)}), 201
+
+
+@bp.post("/agents/<agent_id>/accounts/delete")
+@admin_required
+def accounts_delete(agent_id):
+    """Supprime un compte local. Body : ``{username, remove_profile?}``."""
+    aid, err = _account_agent_or_error(agent_id)
+    if err:
+        return err
+    from . import account_ops
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    remove_profile = bool(data.get("remove_profile"))
+    if not account_ops.valid_username(username):
+        return jsonify({"error": "nom d'utilisateur invalide"}), 400
+
+    shell, text, timeout = account_ops.build_delete(username, remove_profile)
+    cmd_id = _queue_account_command(
+        aid, shell, text, timeout, "account.delete",
+        {"username": username, "remove_profile": remove_profile},
+    )
+    return jsonify({"command_id": str(cmd_id)}), 201
+
+
+# --------------------------------------------------------------------------
 # GET /alerts?status=active|all — liste des alertes du parc
 # --------------------------------------------------------------------------
 @bp.get("/alerts")

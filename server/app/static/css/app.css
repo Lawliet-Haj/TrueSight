@@ -652,6 +652,21 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 .btn.xs.danger svg{width:13px;height:13px}
 
 /* ---------------------------------------------------------------------------
+   Comptes utilisateurs locaux (fiche poste)
+   --------------------------------------------------------------------------- */
+.acct-create{padding:13px 15px;margin-bottom:10px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r-lg);animation:rise .25s ease}
+.acct-create-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.acct-create-row .input{flex:1;min-width:150px}
+.acct-chk{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);white-space:nowrap;cursor:pointer}
+.acct-chk input{width:15px;height:15px;accent-color:var(--signal)}
+.acct-hint{font-size:11.5px;line-height:1.5;margin:9px 0 0}
+.acct-create .cmd-output{margin-top:10px}
+.pill{display:inline-block;font-size:11px;font-weight:600;border-radius:6px;padding:2px 8px;letter-spacing:.01em}
+.pill.ok{color:var(--ok);background:rgba(52,226,176,.12)}
+.pill.off{color:var(--faint);background:var(--bg-3)}
+.pill.admin{color:var(--warn);background:rgba(245,184,61,.12)}
+
+/* ---------------------------------------------------------------------------
    Copilote IA (fiche poste)
    --------------------------------------------------------------------------- */
 .copilot{display:flex;flex-direction:column;height:100%;min-height:420px}

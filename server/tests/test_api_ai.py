@@ -295,14 +295,15 @@ def test_ai_confirm_reuses_existing_endpoint(app, client, admin_session, monkeyp
 # --------------------------------------------------------------------------
 def test_ai_loop_is_bounded(app, client, admin_session, monkeypatch):
     agent_id, _ = _enroll(client, "MACHINE-AI-LOOP")
-    # Le modèle réclame toujours un outil → on doit s'arrêter à AI_MAX_TOOL_ITERS.
+    # Le modèle réclame toujours un outil → on s'arrête à AI_MAX_TOOL_ITERS, puis on
+    # force UN appel final sans outils (réponse de repli garantie).
     fake = _scripted(_result(tool_calls=[_tc("get_agent_detail", {})]))
     _enable_ai(app, monkeypatch, fake)
 
     r = admin_session.post("/api/v1/ai/chat", json={"message": "boucle ?", "agent_id": agent_id})
     assert r.status_code == 200
-    assert fake.state["n"] == app.config["AI_MAX_TOOL_ITERS"]
-    assert "finaliser" in r.get_json()["reply"].lower()
+    assert fake.state["n"] == app.config["AI_MAX_TOOL_ITERS"] + 1  # + l'appel final forcé
+    assert len(r.get_json()["reply"]) > 0  # une réponse est toujours renvoyée
 
 
 def test_ai_client_error_is_graceful(app, admin_session, monkeypatch):

@@ -137,7 +137,7 @@ class Config:
     # Bornes du Copilote (maîtrise coût / latence sous le --timeout 300 de gunicorn).
     # NB : pour un modèle « raisonnement » (GPT-5/o-series), les tokens de
     # raisonnement s'imputent sur ce budget — prévoir large (>= 4000).
-    AI_MAX_TOOL_ITERS = _get_int("AI_MAX_TOOL_ITERS", 5)
+    AI_MAX_TOOL_ITERS = _get_int("AI_MAX_TOOL_ITERS", 8)
     AI_MAX_TOKENS = _get_int("AI_MAX_TOKENS", 4000)
 
 

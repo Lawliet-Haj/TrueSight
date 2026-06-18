@@ -95,8 +95,18 @@ def run_chat_turn(message, agent_id=None, history=None):
                     "content": json.dumps(tool_result, ensure_ascii=False)[:_TOOL_RESULT_MAX],
                 })
         else:
-            reply = ("Je n'ai pas pu finaliser l'analyse en un nombre raisonnable d'étapes. "
-                     "Reformulez ou précisez votre demande.")
+            # Budget d'itérations épuisé : on force une réponse FINALE *sans outils*
+            # (un modèle « raisonnement » collecte parfois beaucoup avant de conclure ;
+            # sans cela il s'arrêterait sur une non-réponse).
+            _FALLBACK = ("Je n'ai pas pu finaliser l'analyse de ce poste en un nombre "
+                         "raisonnable d'étapes. Reformulez ou précisez votre demande.")
+            try:
+                final = client.create_chat(messages, None)
+                _accumulate(usage_total, final.usage)
+                reply = final.text or _FALLBACK
+            except client.AIClientError as exc:
+                _logger.warning("Copilote : réponse finale en échec : %s", exc)
+                reply = _FALLBACK
     except client.AIConfigError:
         return {
             "reply": "Le Copilote IA n'est pas configuré (clé API absente).",

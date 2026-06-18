@@ -4,18 +4,24 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <div class="label">Parc · logiciels</div>
+    <div class="label">Logiciels · par poste</div>
     <h1>Inventaire logiciel</h1>
-    <p class="sub">Logiciels installés agrégés sur l'ensemble du parc — recherche via la barre du haut</p>
+    <p class="sub">Choisissez un poste pour voir ses logiciels installés{% if is_admin %} et les désinstaller{% endif %}</p>
   </div>
   <button id="refresh" class="btn"><svg><use href="#i-refresh"/></svg>Rafraîchir</button>
 </div>
+
+<div id="inv-data" data-is-admin="{{ '1' if is_admin else '0' }}" class="hidden"></div>
 
 <div class="panel">
   <div class="phead">
     <svg class="ico"><use href="#i-box"/></svg>
     <h2>Logiciels installés</h2>
-    <span class="tag" id="inventory-count">—</span>
+    <select id="inv-agent" class="input" style="margin-left:14px;max-width:340px">
+      <option value="">Choisir un poste…</option>
+    </select>
+    <a id="inv-open" class="btn xs hidden" style="margin-left:10px"><svg><use href="#i-screen"/></svg>Ouvrir la fiche</a>
+    <span class="tag" id="inventory-count" style="margin-left:auto">—</span>
   </div>
   <div class="scroll-y sticky-head" style="max-height:none">
     <table>
@@ -24,11 +30,12 @@
           <th>Logiciel</th>
           <th>Version</th>
           <th>Éditeur</th>
-          <th class="num">Postes</th>
+          <th>Installé le</th>
+          {% if is_admin %}<th class="num">Action</th>{% endif %}
         </tr>
       </thead>
       <tbody id="inventory-body">
-        <tr><td colspan="4" class="empty-cell">Chargement…</td></tr>
+        <tr><td colspan="{{ 5 if is_admin else 4 }}" class="empty-cell">Choisissez un poste ci-dessus.</td></tr>
       </tbody>
     </table>
   </div>

@@ -282,8 +282,12 @@ def alerts_page():
 @bp.get("/inventory")
 @login_required
 def inventory_page():
-    """Inventaire logiciel agrégé du parc (rafraîchi via l'API JSON)."""
-    return render_template("inventory.html", user=g.user)
+    """Inventaire logiciel par poste (sélection d'un poste → ses logiciels)."""
+    return render_template(
+        "inventory.html",
+        user=g.user,
+        is_admin=(g.user.role in ("admin", "superadmin")),
+    )
 
 
 @bp.get("/settings")

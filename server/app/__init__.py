@@ -49,12 +49,16 @@ def create_app(config_object: type | None = None) -> Flask:
     from .api_dashboard import bp as api_dashboard_bp
     from .api_deploy import bp as api_deploy_bp
     from .api_users import bp as api_users_bp
+    # api_ai importe le paquet ``ai`` qui réutilise des helpers d'``api_dashboard`` :
+    # l'import vient APRÈS pour que ce module soit déjà chargé.
+    from .api_ai import bp as api_ai_bp
     from .web import bp as web_bp
 
     app.register_blueprint(api_agent_bp)
     app.register_blueprint(api_dashboard_bp)
     app.register_blueprint(api_deploy_bp)
     app.register_blueprint(api_users_bp)
+    app.register_blueprint(api_ai_bp)
     app.register_blueprint(web_bp)
 
     # --- Healthcheck simple (utile derrière nginx / Docker) ---

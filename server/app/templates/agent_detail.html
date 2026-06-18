@@ -27,6 +27,7 @@
   <div id="page-data"
        data-agent-id="{{ agent_id }}"
        data-is-admin="{{ '1' if is_admin else '0' }}"
+       data-ai-enabled="{{ '1' if ai_enabled else '0' }}"
        class="hidden"></div>
 
   {% if is_admin %}
@@ -65,6 +66,12 @@
               aria-selected="false" aria-controls="panel-activity" data-tab="activity" tabindex="-1">
         <svg><use href="#i-clock"/></svg>Activité
       </button>
+      {% if ai_enabled %}
+      <button class="tab" id="tab-copilot" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-copilot" data-tab="copilot" tabindex="-1">
+        <svg><use href="#i-message"/></svg>Copilote
+      </button>
+      {% endif %}
       <span class="tablist-spacer"></span>
       <button class="tab-tool" id="workzone-focus" type="button" title="Agrandir — remplir la fenêtre (Échap pour réduire)">
         <svg><use href="#i-expand"/></svg>
@@ -243,6 +250,28 @@
         </div>
       </div>
     </div>
+
+    {% if ai_enabled %}
+    <!-- Onglet : Copilote IA (diagnostic + propositions d'action à confirmer) -->
+    <div class="tabpanel hidden" id="panel-copilot" role="tabpanel" aria-labelledby="tab-copilot">
+      <div class="copilot" id="copilot">
+        <div class="cop-feed" id="cop-feed">
+          <div class="cop-intro">
+            <svg><use href="#i-message"/></svg>
+            <div class="t">Copilote de dépannage</div>
+            <div class="s">Posez une question sur ce poste — ex. « Pourquoi est-il en alerte ? »,
+              « Le disque est-il bientôt plein ? ». Le Copilote analyse la télémétrie et peut
+              proposer une action à confirmer.</div>
+          </div>
+        </div>
+        <div class="cop-bar">
+          <input type="text" id="cop-input" class="input" autocomplete="off"
+                 placeholder="Posez votre question sur ce poste…">
+          <button class="btn go" id="cop-send" type="button"><svg><use href="#i-play"/></svg>Envoyer</button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </section>
   {% endif %}
 
@@ -349,6 +378,7 @@
 {% if is_admin %}
 <script src="{{ url_for('static', filename='js/remote.js') }}"></script>
 <script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
+{% if ai_enabled %}<script src="{{ url_for('static', filename='js/ai_copilot.js') }}"></script>{% endif %}
 {% endif %}
 {% endif %}
 {% endblock %}

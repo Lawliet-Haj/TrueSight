@@ -121,6 +121,19 @@ class Config:
     MAX_UPLOAD_MB = _get_int("MAX_UPLOAD_MB", 512)
     MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 
+    # --- Copilote IA (API compatible OpenAI / Chat Completions) ---------
+    # Clé API. VIDE => le Copilote est désactivé (aucun appel sortant, onglet masqué).
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+    # URL de base d'une API compatible OpenAI. Par défaut l'API OpenAI publique.
+    # Pointer vers un Ollama local (http://hote:11434/v1) bascule le Copilote en
+    # 100 % auto-hébergé sans aucun autre changement de code.
+    OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    # Modèle utilisé (doit supporter le « function calling »). À régler selon la clé.
+    OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o").strip()
+    # Bornes du Copilote (maîtrise coût / latence sous le --timeout 300 de gunicorn).
+    AI_MAX_TOOL_ITERS = _get_int("AI_MAX_TOOL_ITERS", 5)
+    AI_MAX_TOKENS = _get_int("AI_MAX_TOKENS", 3000)
+
 
 class TestConfig(Config):
     """Configuration dédiée aux tests (SQLite en mémoire, pas de thread)."""
@@ -136,5 +149,8 @@ class TestConfig(Config):
     ENABLE_BACKGROUND_TASKS = False
     N8N_WEBHOOK_URL = ""
     TRUST_PROXY = False
+    # Copilote IA désactivé par défaut en test (déterminisme : ignore un
+    # OPENAI_API_KEY éventuellement présent dans l'environnement de la CI).
+    OPENAI_API_KEY = ""
     # Répertoire de paquets surchargé par les tests (tmp_path) au besoin.
     AGENT_RELEASE_DIR = os.environ.get("AGENT_RELEASE_DIR", "")

@@ -252,12 +252,15 @@ def agent_detail_page(agent_id):
     if agent is None:
         return render_template("agent_detail.html", user=g.user, agent_id=None, not_found=True), 404
 
+    is_admin = g.user.role in ("admin", "superadmin")
     return render_template(
         "agent_detail.html",
         user=g.user,
         agent_id=str(agent.id),
         agent_hostname=agent.hostname or str(agent.id),
-        is_admin=(g.user.role in ("admin", "superadmin")),
+        is_admin=is_admin,
+        # Copilote IA : visible seulement pour un admin ET si une clé est configurée.
+        ai_enabled=is_admin and bool((current_app.config.get("OPENAI_API_KEY") or "").strip()),
         not_found=False,
     )
 

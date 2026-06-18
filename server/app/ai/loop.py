@@ -105,7 +105,7 @@ def run_chat_turn(message, agent_id=None, history=None):
     except client.AIClientError as exc:
         _logger.warning("Copilote : appel IA en échec : %s", exc)
         return {
-            "reply": "Le service IA est momentanément indisponible. Réessayez dans un instant.",
+            "reply": f"Le service IA a renvoyé une erreur. Détail : {exc}",
             "proposals": proposals_out, "history": history, "usage": usage_total,
             "tool_calls": tool_call_names, "error": True,
         }

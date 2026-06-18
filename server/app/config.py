@@ -130,9 +130,15 @@ class Config:
     OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
     # Modèle utilisé (doit supporter le « function calling »). À régler selon la clé.
     OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o").strip()
+    # Nom du paramètre de limite de tokens. Les modèles récents OpenAI (GPT-5 /
+    # o-series) exigent « max_completion_tokens » et refusent « max_tokens » (400).
+    # Pour un serveur compatible OpenAI ancien / Ollama, poser « max_tokens ».
+    OPENAI_MAX_TOKENS_PARAM = os.environ.get("OPENAI_MAX_TOKENS_PARAM", "max_completion_tokens").strip()
     # Bornes du Copilote (maîtrise coût / latence sous le --timeout 300 de gunicorn).
+    # NB : pour un modèle « raisonnement » (GPT-5/o-series), les tokens de
+    # raisonnement s'imputent sur ce budget — prévoir large (>= 4000).
     AI_MAX_TOOL_ITERS = _get_int("AI_MAX_TOOL_ITERS", 5)
-    AI_MAX_TOKENS = _get_int("AI_MAX_TOKENS", 3000)
+    AI_MAX_TOKENS = _get_int("AI_MAX_TOKENS", 4000)
 
 
 class TestConfig(Config):

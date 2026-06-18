@@ -72,10 +72,15 @@ def create_chat(messages, tools=None, *, max_tokens=None, tool_choice="auto") ->
         raise AIConfigError("OPENAI_API_KEY non configurée")
 
     base = (cfg.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    # Les modèles récents OpenAI (GPT-5 / o-series) REFUSENT `max_tokens` (400) et
+    # exigent `max_completion_tokens`. C'est donc le défaut. Pour un serveur
+    # compatible OpenAI plus ancien / Ollama qui n'accepterait que `max_tokens`,
+    # poser OPENAI_MAX_TOKENS_PARAM=max_tokens.
+    token_param = (cfg.get("OPENAI_MAX_TOKENS_PARAM") or "max_completion_tokens").strip()
     body = {
         "model": cfg.get("OPENAI_MODEL") or "gpt-4o",
         "messages": messages,
-        "max_tokens": int(max_tokens or cfg.get("AI_MAX_TOKENS") or 3000),
+        token_param: int(max_tokens or cfg.get("AI_MAX_TOKENS") or 3000),
     }
     if tools:
         body["tools"] = tools
@@ -91,7 +96,9 @@ def create_chat(messages, tools=None, *, max_tokens=None, tool_choice="auto") ->
     if resp.status_code >= 400:
         snippet = (resp.text or "")[:300]
         _logger.warning("API IA a renvoyé %s : %s", resp.status_code, snippet)
-        raise AIClientError(f"API IA erreur {resp.status_code}")
+        # On remonte un extrait du corps : utile au diagnostic (mauvais modèle,
+        # paramètre non supporté…). Endpoint réservé aux admins.
+        raise AIClientError(f"HTTP {resp.status_code} — {snippet[:200]}")
 
     try:
         data = resp.json()

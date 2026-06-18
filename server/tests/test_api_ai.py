@@ -314,4 +314,6 @@ def test_ai_client_error_is_graceful(app, admin_session, monkeypatch):
     assert r.status_code == 200  # jamais un 500
     data = r.get_json()
     assert data["error"] is True
-    assert "indisponible" in data["reply"].lower()
+    assert "erreur" in data["reply"].lower()
+    # Le détail technique est remonté (endpoint réservé aux admins) pour le diagnostic.
+    assert "réseau coupé" in data["reply"]

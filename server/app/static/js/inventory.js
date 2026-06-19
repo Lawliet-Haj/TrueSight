@@ -110,8 +110,11 @@
           if (!d) return;
           if (["done", "error", "timeout"].indexOf(d.status) !== -1) {
             clearInterval(timer);
-            var ok = d.status === "done" && d.result && d.result.exit_code === 0;
-            btn.textContent = ok ? "désinstallé" : "échec";
+            var code = d.result ? d.result.exit_code : null;
+            // 3010 / 1641 = succès, redémarrage requis/initié (codes MSI usuels).
+            var reboot = code === 3010 || code === 1641;
+            var ok = code === 0 || reboot;
+            btn.textContent = ok ? (reboot ? "désinstallé (redémarrage requis)" : "désinstallé") : "échec";
             if (ok) setTimeout(function () { selectAgent(currentAgent); }, 900);
           }
         })

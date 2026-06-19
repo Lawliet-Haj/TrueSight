@@ -1500,10 +1500,11 @@ def _account_agent_or_error(agent_id):
     return aid, None
 
 
-def _queue_account_command(aid, shell, command_text, timeout, audit_action, audit_details):
+def _queue_account_command(aid, shell, command_text, timeout, audit_action, audit_details, redact=False):
     cmd = Command(
         agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
         status="pending", timeout_seconds=timeout, created_at=utcnow(),
+        redact_after_run=redact,
     )
     db.session.add(cmd)
     db.session.flush()
@@ -1549,9 +1550,12 @@ def accounts_create(agent_id):
 
     shell, text, timeout = account_ops.build_create(username, password, full_name, administrator)
     # AUDIT : on journalise le nom et le rôle, JAMAIS le mot de passe.
+    # redact=True : le command_text (qui contient le mot de passe) est purgé en base
+    # une fois la commande exécutée (cf. post_result).
     cmd_id = _queue_account_command(
         aid, shell, text, timeout, "account.create",
         {"username": username, "administrator": administrator, "full_name": full_name},
+        redact=True,
     )
     return jsonify({"command_id": str(cmd_id)}), 201
 

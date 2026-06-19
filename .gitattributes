@@ -1,0 +1,17 @@
+# Normalise les fins de ligne en LF dans le dépôt (et dans la copie de travail),
+# pour éviter les avertissements CRLF sous Windows.
+* text=auto eol=lf
+
+# Fichiers binaires : ne jamais convertir.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.exe  binary
+*.dll  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary

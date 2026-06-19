@@ -485,6 +485,12 @@ def post_result(command_id):
         cmd.status = "done"
     cmd.completed_at = now
 
+    # Purge des secrets : pour une commande marquée sensible (création de compte
+    # avec mot de passe), on efface le command_text une fois exécutée — il n'est
+    # plus nécessaire et ne doit pas persister en base.
+    if getattr(cmd, "redact_after_run", False):
+        cmd.command_text = "[secret purgé après exécution]"
+
     db.session.commit()
     return jsonify({"ok": True}), 200
 

@@ -217,6 +217,9 @@ class Command(db.Model):
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
     dispatched_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     completed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    # Purge du ``command_text`` une fois la commande exécutée (commandes sensibles :
+    # création de compte avec mot de passe). Posé par l'endpoint, appliqué dans post_result.
+    redact_after_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     agent = relationship("Agent", back_populates="commands")
     result = relationship(

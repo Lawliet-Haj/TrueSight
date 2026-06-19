@@ -29,6 +29,8 @@ def ensure_schema():
         # Emplacement pré-affecté sur un lien d'installation (si la table existait
         # déjà d'un déploiement antérieur sans cette colonne).
         "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS site_id uuid",
+        # Purge du command_text après exécution (commandes sensibles).
+        "ALTER TABLE commands ADD COLUMN IF NOT EXISTS redact_after_run boolean NOT NULL DEFAULT false",
     ]
     for stmt in statements:
         try:

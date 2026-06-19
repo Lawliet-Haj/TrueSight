@@ -80,6 +80,11 @@ class Config:
     # --- Intégration n8n (alertes) --------------------------------------
     N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "").strip()
 
+    # --- Affichage IHM ---------------------------------------------------
+    # Étiquette d'emplacement du relais affichée dans la barre du haut (cosmétique).
+    # Vide => le bloc « relais … » est masqué (pas de donnée factice affichée).
+    RELAY_REGION = os.environ.get("RELAY_REGION", "").strip()
+
     # --- Pilotage central de l'agent (renvoyé au heartbeat, cf. SPEC §2.2) ---
     # La présence n'a pas besoin d'être instantanée : 30 s suffit (décision projet).
     AGENT_HEARTBEAT_INTERVAL = _get_int("AGENT_HEARTBEAT_INTERVAL", 30)

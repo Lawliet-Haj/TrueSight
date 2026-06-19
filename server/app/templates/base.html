@@ -72,7 +72,7 @@
         <kbd>/</kbd>
       </label>
       <div class="right">
-        <div class="region"><span class="g"></span>relais&nbsp;<b>OVH·GRA</b></div>
+        {% if relay_region %}<div class="region"><span class="g"></span>relais&nbsp;<b>{{ relay_region }}</b></div>{% endif %}
         <button type="button" id="theme-toggle" class="icon-btn" title="Thème clair / sombre"><svg><use href="#i-moon"/></svg></button>
         <div class="user-block">
           <div class="user-meta">
@@ -103,7 +103,7 @@
     <footer class="statusbar">
       <div class="s"><span class="g"></span><b>Relais connecté</b></div>
       <div class="s" id="sb-agents">agents&nbsp;<b>—</b>&nbsp;reportent</div>
-      <div class="s">heartbeat&nbsp;<b>45 s</b></div>
+      <div class="s">heartbeat&nbsp;<b>{{ heartbeat_interval }} s</b></div>
       <div class="s" id="sb-queue">file commandes&nbsp;<b>0</b></div>
       <div class="end">TrueSight v1.0 · supervision parc Medicofi / Tire-Lait Express</div>
     </footer>

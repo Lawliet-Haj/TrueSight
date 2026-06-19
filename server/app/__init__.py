@@ -73,6 +73,14 @@ def create_app(config_object: type | None = None) -> Flask:
     # --- En-têtes de sécurité HTTP (défense en profondeur) ---
     _register_security_headers(app)
 
+    # --- Valeurs globales injectées dans les templates (barre d'état) ---
+    @app.context_processor
+    def _ui_globals():
+        return {
+            "heartbeat_interval": app.config.get("AGENT_HEARTBEAT_INTERVAL", 30),
+            "relay_region": (app.config.get("RELAY_REGION") or "").strip(),
+        }
+
     # --- Initialisation base + seed ---
     with app.app_context():
         from . import migrations, seed

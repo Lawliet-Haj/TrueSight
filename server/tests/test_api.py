@@ -1609,3 +1609,29 @@ def test_accounts_require_admin(client):
     assert client.post(
         f"/api/v1/agents/{aid}/accounts/list", json={}, headers={"Accept": "application/json"}
     ).status_code == 401
+
+
+def test_accounts_create_password_scrubbed_after_run(client, admin_session):
+    """Le mot de passe (présent dans la commande pour l'exécution) est purgé du
+    command_text une fois la commande exécutée par l'agent."""
+    aid, token = _enroll(client, "MACHINE-ACCT-SCRUB")
+    secret = "Sup3rSecretZ!"
+    cid = admin_session.post(
+        f"/api/v1/agents/{aid}/accounts/create",
+        json={"username": "tmpz", "password": secret},
+    ).get_json()["command_id"]
+
+    # L'agent récupère la commande : le mot de passe y est (nécessaire à l'exécution).
+    assert secret in _fetch_command_text(client, aid, token)
+
+    # L'agent remonte le résultat → purge du command_text.
+    res = client.post(
+        f"/api/v1/commands/{cid}/result",
+        json={"exit_code": 0, "stdout": "Compte cree: tmpz", "stderr": "", "duration_seconds": 1.0},
+        headers=_auth(token),
+    )
+    assert res.status_code == 200
+
+    after = admin_session.get(f"/api/v1/commands/{cid}").get_json()
+    assert secret not in (after.get("command_text") or "")
+    assert "purg" in (after.get("command_text") or "").lower()

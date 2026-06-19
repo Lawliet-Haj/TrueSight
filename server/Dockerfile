@@ -21,8 +21,13 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY . /app
 
 # Utilisateur non-root pour limiter la surface d'attaque.
+# On crée AUSSI le dossier des releases et on l'attribue à l'utilisateur applicatif :
+# un volume nommé monté à cet emplacement hérite de cette appartenance LORS DE SA
+# CRÉATION. Sans cela, Docker crée le point de montage en root → écriture impossible
+# pour l'uid 10001 (« Permission denied » au téléversement d'un paquet d'agent).
 RUN useradd --create-home --uid 10001 truesight \
-    && chown -R truesight:truesight /app
+    && mkdir -p /var/lib/truesight/releases \
+    && chown -R truesight:truesight /app /var/lib/truesight
 USER truesight
 
 EXPOSE 8000

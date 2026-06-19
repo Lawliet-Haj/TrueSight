@@ -99,6 +99,11 @@
 
         <div class="rscreen" id="remote-screen">
           <canvas id="pv-remote-canvas" width="1280" height="800" tabindex="0"></canvas>
+          <!-- Surcouche curseur : ni mss ni DXGI ne dessinent le curseur dans
+               l'image ; l'agent envoie sa position et on l'affiche ici. -->
+          <div class="rcursor hidden" id="remote-cursor" aria-hidden="true">
+            <svg viewBox="0 0 16 22" width="16" height="22"><path d="M1 1L1 18l4-4 2.6 5.6 2.7-1.2L7.7 12.2 13 12z" fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          </div>
           <div class="placeholder" id="remote-placeholder">
             <svg><use href="#i-screen"/></svg>
             <div class="t">Aucune session active</div>
@@ -121,6 +126,14 @@
             <option value="sharp">Net</option>
           </select>
           <button class="btn" id="remote-control" type="button" disabled><svg><use href="#i-hand"/></svg>Prendre le contrôle</button>
+          <button class="btn mini" id="remote-lockinput" type="button" disabled
+                  title="Verrouiller le clavier/souris du poste : la saisie locale de l'utilisateur est bloquée pendant que vous gardez la main."><svg><use href="#i-lock"/></svg>Verrou saisie</button>
+          <button class="btn mini" id="remote-sas" type="button" disabled
+                  title="Envoyer Ctrl+Alt+Suppr au poste (utile à l'écran de connexion / gestionnaire des tâches)."><svg><use href="#i-keyboard"/></svg>Ctrl+Alt+Suppr</button>
+          <button class="btn mini" id="remote-privacy" type="button" disabled
+                  title="Écran de confidentialité : le poste affiche du noir pour les personnes présentes, mais vous voyez l'écran réel."><svg><use href="#i-moon"/></svg>Écran noir</button>
+          <button class="btn mini" id="remote-lockexit" type="button" disabled
+                  title="Verrouiller la session Windows du poste à la fin de la prise de main."><svg><use href="#i-power"/></svg>Lock à la sortie</button>
           <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
           <button class="btn" id="remote-shot" type="button" disabled title="Enregistrer une capture (PNG)"><svg><use href="#i-camera"/></svg>Capturer</button>
           <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>

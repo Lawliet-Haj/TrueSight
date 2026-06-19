@@ -36,6 +36,12 @@
   var elMonitors = document.getElementById("remote-monitors");
   var elError = document.getElementById("remote-error");
   var elMode = document.getElementById("remote-mode");
+  // Surcouche curseur + boutons de contrôle exclusif (lot navigation).
+  var elCursor = document.getElementById("remote-cursor");
+  var elLockInput = document.getElementById("remote-lockinput");
+  var elSas = document.getElementById("remote-sas");
+  var elPrivacy = document.getElementById("remote-privacy");
+  var elLockExit = document.getElementById("remote-lockexit");
   if (!elStart || !elCanvas) return;
 
   var ctx = elCanvas.getContext("2d", { alpha: false });
@@ -66,6 +72,11 @@
   var adaptiveOn = false;
   var autoApplied = null;
   var lastRtt = null;
+
+  // --- Contrôle exclusif (toggles ; l'agent confirme via lock_state/privacy_state) ---
+  var lockInputOn = false;
+  var privacyOn = false;
+  var lockExitOn = false;
 
   // ---------------------------------------------------------------------------
   // Utilitaires UI
@@ -102,6 +113,7 @@
       elFull.disabled = false;
       elControl.disabled = false;
       if (elShot) elShot.disabled = false;
+      setExclusiveButtons(true);
     } else {
       elStart.classList.remove("hidden");
       elStart.disabled = false;
@@ -111,6 +123,12 @@
       elControl.disabled = true;
       if (elShot) elShot.disabled = true;
       setControlling(false);
+      // Réinitialise les bascules de contrôle exclusif (l'agent les relâche aussi).
+      setExclusiveButtons(false);
+      lockInputOn = false; privacyOn = false; lockExitOn = false;
+      setToggle(elLockInput, false);
+      setToggle(elPrivacy, false);
+      setToggle(elLockExit, false);
     }
   }
 
@@ -126,6 +144,48 @@
       elControl.classList.remove("go");
       elControl.innerHTML = '<svg><use href="#i-hand"/></svg>Prendre le contrôle';
     }
+  }
+
+  // État visuel d'un bouton-bascule (vert « actif » = classe .go).
+  function setToggle(btn, on) {
+    if (!btn) return;
+    if (on) btn.classList.add("go"); else btn.classList.remove("go");
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  // Active/désactive les boutons de contrôle exclusif (session ouverte requise).
+  function setExclusiveButtons(enabled) {
+    [elLockInput, elSas, elPrivacy, elLockExit].forEach(function (b) {
+      if (b) b.disabled = !enabled;
+    });
+  }
+
+  // Place la surcouche curseur (coords normalisées 0..1 au moniteur courant).
+  // Même calcul object-fit:contain que normCoords (image centrée dans le canvas).
+  function updateCursor(nx, ny, visible) {
+    if (!elCursor) return;
+    if (!visible || nx == null || ny == null || !elScreen.classList.contains("has-stream")) {
+      elCursor.classList.add("hidden");
+      return;
+    }
+    var rs = elScreen.getBoundingClientRect();
+    var rc = elCanvas.getBoundingClientRect();
+    if (!rc.width || !rc.height) { elCursor.classList.add("hidden"); return; }
+    var dispW = rc.width, dispH = rc.height;
+    var ratioImg = canvasW / canvasH;
+    var ratioBox = dispW / dispH;
+    var drawW, drawH, offX, offY;
+    if (ratioBox > ratioImg) {
+      drawH = dispH; drawW = dispH * ratioImg;
+      offX = (dispW - drawW) / 2; offY = 0;
+    } else {
+      drawW = dispW; drawH = dispW / ratioImg;
+      offX = 0; offY = (dispH - drawH) / 2;
+    }
+    var px = (rc.left - rs.left) + offX + Math.max(0, Math.min(1, nx)) * drawW;
+    var py = (rc.top - rs.top) + offY + Math.max(0, Math.min(1, ny)) * drawH;
+    elCursor.style.transform = "translate(" + px + "px," + py + "px)";
+    elCursor.classList.remove("hidden");
   }
 
   // ---------------------------------------------------------------------------
@@ -316,6 +376,19 @@
       renderMonitorButtons(msg.list);
     } else if (msg.t === "user" && elUser) {
       elUser.textContent = msg.name || "—";
+    } else if (msg.t === "cursor") {
+      updateCursor(msg.x, msg.y, msg.v);
+    } else if (msg.t === "lock_state") {
+      // Confirmation agent : la saisie locale est (dé)verrouillée.
+      lockInputOn = !!msg.on;
+      setToggle(elLockInput, lockInputOn);
+    } else if (msg.t === "privacy_state") {
+      // Confirmation agent : voile noir (in)actif ; ok=false si non supporté.
+      privacyOn = !!msg.on;
+      setToggle(elPrivacy, privacyOn);
+      if (!msg.ok && window.TS && TS.toast) {
+        TS.toast("Écran de confidentialité indisponible sur ce poste (Windows 10 2004+ requis).", "error");
+      }
     }
   }
 
@@ -526,6 +599,7 @@
     if (elFps) elFps.textContent = "0";
     if (elLatency) elLatency.textContent = "—";
     elScreen.classList.remove("has-stream");
+    if (elCursor) elCursor.classList.add("hidden");
     // Efface le canvas.
     try { ctx.fillStyle = "#05080a"; ctx.fillRect(0, 0, elCanvas.width, elCanvas.height); } catch (e) { /* ignore */ }
     if (document.fullscreenElement) {
@@ -574,6 +648,30 @@
     } catch (e) { /* ignore */ }
   }
   if (elShot) elShot.addEventListener("click", function () { if (!elShot.disabled) takeScreenshot(); });
+
+  // --- Contrôle exclusif (verrou saisie / SAS / confidentialité / lock sortie) ---
+  if (elLockInput) elLockInput.addEventListener("click", function () {
+    if (elLockInput.disabled) return;
+    lockInputOn = !lockInputOn;
+    setToggle(elLockInput, lockInputOn);    // optimiste ; l'agent confirme via lock_state
+    sendInput({ t: "lock_input", on: lockInputOn });
+  });
+  if (elSas) elSas.addEventListener("click", function () {
+    if (elSas.disabled) return;
+    sendInput({ t: "send_sas" });
+  });
+  if (elPrivacy) elPrivacy.addEventListener("click", function () {
+    if (elPrivacy.disabled) return;
+    privacyOn = !privacyOn;
+    setToggle(elPrivacy, privacyOn);        // l'agent confirme/infirme via privacy_state
+    sendInput({ t: "privacy", on: privacyOn });
+  });
+  if (elLockExit) elLockExit.addEventListener("click", function () {
+    if (elLockExit.disabled) return;
+    lockExitOn = !lockExitOn;
+    setToggle(elLockExit, lockExitOn);
+    sendInput({ t: "lock_on_disconnect", on: lockExitOn });
+  });
 
   // Ferme proprement la session si l'onglet est quitté.
   window.addEventListener("beforeunload", function () {

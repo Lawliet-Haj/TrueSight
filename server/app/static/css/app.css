@@ -338,6 +338,11 @@ textarea.input{
 .rscreen.has-stream .placeholder{display:none}
 .rfoot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line);background:var(--bg-2);flex-wrap:wrap}
 .rfoot .btn{flex:1}
+/* Boutons compacts (contrôle exclusif) : ne s'étirent pas, gardent leur taille. */
+.rfoot .btn.mini{flex:0 0 auto}
+/* Surcouche curseur : position du curseur distant (mss/DXGI ne le dessinent pas). */
+.rscreen .rcursor{position:absolute;left:0;top:0;z-index:3;pointer-events:none;will-change:transform;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.6))}
+.rscreen .rcursor svg{display:block}
 .remote-monitors{display:flex;gap:6px;align-items:center;padding:0 14px 11px;flex-wrap:wrap}
 .remote-monitors .field-label{margin-right:2px}
 .remote-error{margin:0 14px 12px;font-size:12px;color:#ffd2d4;background:rgba(255,93,99,.08);border:1px solid rgba(255,93,99,.3);border-radius:var(--r);padding:9px 12px;display:none}

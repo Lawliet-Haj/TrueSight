@@ -68,6 +68,12 @@ class RemoteSession:
         # Sérialise les envois (le thread capture et d'éventuels acks ne se chevauchent pas).
         self._send_lock = threading.Lock()
         self._started_at = 0.0
+        # Thread « curseur » : remonte la position du curseur au viewer (surcouche).
+        self._cursor_thread: threading.Thread | None = None
+        # Contrôle exclusif (piloté par le viewer) :
+        self._input_locked = False            # saisie physique locale bloquée (BlockInput)
+        self._lock_on_disconnect = False      # verrouiller le poste en fin de session
+        self._privacy = None                  # PrivacyScreen (voile noir local) ou None
 
     # -- Cycle de vie ---------------------------------------------------------
     def stop(self) -> None:
@@ -318,6 +324,89 @@ class RemoteSession:
         except Exception as exc:  # noqa: BLE001
             _logger.debug("Envoi de l'utilisateur impossible : %s", exc)
 
+    # -- Boucle « curseur » (thread) ------------------------------------------
+    def _cursor_loop(self) -> None:
+        """Remonte la position du curseur distant au viewer (~25x/s).
+
+        Ni mss ni DXGI ne dessinent le curseur : le viewer l'affiche en surcouche
+        à partir de cette position, normalisée au moniteur courant. N'émet que sur
+        changement (un bureau immobile ne génère donc presque aucun trafic).
+        """
+        if not self._injector.available:
+            return
+        # En mode non-assisté, lire le curseur du bureau d'entrée (login compris) :
+        # une seule attache suffit (la session se termine si le bureau bascule).
+        if self._desktop_follow:
+            try:
+                from . import desktop as desk
+                desk.attach_thread_to_input_desktop()
+            except Exception:  # noqa: BLE001
+                pass
+        interval = 1.0 / 25.0
+        last_sent = None
+        geo = None
+        geo_idx = -1
+        geo_at = 0.0
+        try:
+            while not self._should_stop():
+                loop_start = time.monotonic()
+                idx = self._capturer.monitor_index
+                # Géométrie du moniteur courant : rafraîchie au changement / ~1 s.
+                if geo is None or idx != geo_idx or (loop_start - geo_at) > 1.0:
+                    geo = self._capturer.current_monitor_geometry()
+                    geo_idx = idx
+                    geo_at = loop_start
+                state = inject_mod.get_cursor_state()
+                if state and geo:
+                    sx, sy, showing = state
+                    mw = max(1, int(geo.get("width", 1)))
+                    mh = max(1, int(geo.get("height", 1)))
+                    nx = (sx - int(geo.get("left", 0))) / mw
+                    ny = (sy - int(geo.get("top", 0))) / mh
+                    inside = 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0
+                    payload = (round(nx, 4), round(ny, 4), bool(showing and inside))
+                    if payload != last_sent:
+                        last_sent = payload
+                        self._send_text({"t": "cursor", "x": payload[0],
+                                         "y": payload[1], "v": payload[2]})
+                elapsed = time.monotonic() - loop_start
+                remaining = interval - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("Boucle curseur interrompue : %s", exc)
+
+    # -- Contrôle exclusif (verrou saisie / confidentialité) ------------------
+    def _set_input_lock(self, on: bool) -> None:
+        """Bloque/débloque la saisie physique locale (BlockInput)."""
+        if self._desktop_follow:
+            self._ensure_inject_desktop()
+        if inject_mod.block_input(on):
+            self._input_locked = on
+            _logger.info("Saisie locale %s.", "verrouillée" if on else "déverrouillée")
+        else:
+            _logger.info("Verrouillage de la saisie locale indisponible.")
+        self._send_text({"t": "lock_state", "on": self._input_locked})
+
+    def _set_privacy(self, on: bool) -> None:
+        """Active/retire le voile noir local (écran de confidentialité)."""
+        try:
+            from . import privacy as privacy_mod
+        except Exception as exc:  # noqa: BLE001
+            _logger.info("Module confidentialité indisponible : %s", exc)
+            self._send_text({"t": "privacy_state", "on": False, "ok": False})
+            return
+        if on:
+            if self._privacy is None:
+                self._privacy = privacy_mod.PrivacyScreen()
+            ok = self._privacy.start()
+            _logger.info("Écran de confidentialité %s.", "activé" if ok else "indisponible")
+            self._send_text({"t": "privacy_state", "on": bool(ok), "ok": bool(ok)})
+        else:
+            if self._privacy is not None:
+                self._privacy.stop()
+            self._send_text({"t": "privacy_state", "on": False, "ok": True})
+
     # -- Boucle de réception des entrées (principal) --------------------------
     def _recv_loop(self) -> None:
         """Reçoit les messages texte JSON (viewer → agent) et les applique."""
@@ -376,6 +465,22 @@ class RemoteSession:
             # L'injection doit suivre le moniteur courant (échelle des coordonnées).
             self._injector.set_monitor(self._capturer.current_monitor_geometry())
             return
+        # Contrôle exclusif (piloté par le viewer).
+        if msg_type == "lock_input":
+            self._set_input_lock(bool(data.get("on")))
+            return
+        if msg_type == "send_sas":
+            if self._desktop_follow:
+                self._ensure_inject_desktop()
+            inject_mod.send_sas()
+            return
+        if msg_type == "lock_on_disconnect":
+            self._lock_on_disconnect = bool(data.get("on"))
+            _logger.info("Verrouillage à la déconnexion : %s.", self._lock_on_disconnect)
+            return
+        if msg_type == "privacy":
+            self._set_privacy(bool(data.get("on")))
+            return
         # Sinon : entrée souris/clavier effective.
         if self._desktop_follow:
             self._ensure_inject_desktop()
@@ -420,25 +525,54 @@ class RemoteSession:
         )
         self._send_thread.start()
 
+        # Thread « curseur » : position du curseur distant → surcouche viewer.
+        self._cursor_thread = threading.Thread(
+            target=self._cursor_loop, name="truesight-remote-cursor", daemon=True
+        )
+        self._cursor_thread.start()
+
         try:
             self._recv_loop()
         finally:
             self._teardown()
 
     def _teardown(self) -> None:
-        """Ferme proprement : stoppe la capture, ferme la WebSocket, joint le thread."""
+        """Ferme proprement : libère le contrôle exclusif, ferme la WebSocket, joint les threads."""
         self._stop.set()
+
+        # Libère tout contrôle exclusif éventuellement posé pendant la session,
+        # AVANT de fermer (sinon le poste resterait clavier/souris bloqués).
+        if self._input_locked:
+            try:
+                inject_mod.block_input(False)
+            except Exception:  # noqa: BLE001
+                pass
+            self._input_locked = False
+        if self._privacy is not None:
+            try:
+                self._privacy.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._privacy = None
+        # Verrouillage du poste à la déconnexion (option viewer).
+        if self._lock_on_disconnect:
+            try:
+                inject_mod.lock_workstation()
+            except Exception:  # noqa: BLE001
+                pass
+
         ws = self._ws
         if ws is not None:
             try:
                 ws.close()
             except Exception:  # noqa: BLE001
                 pass
-        if self._send_thread is not None:
-            try:
-                self._send_thread.join(timeout=5)
-            except RuntimeError:
-                pass
+        for thread in (self._send_thread, self._cursor_thread):
+            if thread is not None:
+                try:
+                    thread.join(timeout=5)
+                except RuntimeError:
+                    pass
         _logger.info("Session de bureau à distance terminée.")
 
 

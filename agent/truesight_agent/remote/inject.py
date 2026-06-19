@@ -295,6 +295,92 @@ class InputInjector:
             _send_input(inp)
 
 
+# -- Curseur (surcouche côté viewer) -----------------------------------------
+# Ni mss (GDI) ni DXGI ne dessinent le curseur dans l'image : on remonte sa
+# position au viewer pour qu'il l'affiche en surcouche.
+CURSOR_SHOWING = 0x00000001
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+class _CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", _POINT),
+    ]
+
+
+def get_cursor_state() -> tuple[int, int, bool] | None:
+    """Position écran (pixels physiques) du curseur + visibilité, ou None.
+
+    ``(x, y, showing)`` : ``showing`` faux quand le curseur est masqué (ex. saisie
+    plein écran). Le viewer convertit ensuite en coordonnées normalisées au
+    moniteur courant pour dessiner la surcouche.
+    """
+    if not _WIN_AVAILABLE or _user32 is None:
+        return None
+    try:
+        ci = _CURSORINFO()
+        ci.cbSize = ctypes.sizeof(_CURSORINFO)
+        if not _user32.GetCursorInfo(ctypes.byref(ci)):
+            return None
+        return int(ci.ptScreenPos.x), int(ci.ptScreenPos.y), bool(ci.flags & CURSOR_SHOWING)
+    except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+        _logger.debug("GetCursorInfo a échoué : %s", exc)
+        return None
+
+
+# -- Contrôle exclusif : verrou de saisie locale / SAS / verrouillage poste --
+def block_input(block: bool) -> bool:
+    """Bloque (True) / débloque (False) la saisie PHYSIQUE locale.
+
+    La saisie INJECTÉE (SendInput) continue de passer : l'admin garde la main
+    tandis que l'utilisateur local ne peut plus interférer. Limites Windows :
+    Ctrl+Alt+Suppr déverrouille toujours, et ça n'agit pas sur le bureau sécurisé.
+    À appeler depuis un thread attaché au bureau d'entrée actif.
+    """
+    if not _WIN_AVAILABLE or _user32 is None:
+        return False
+    try:
+        return bool(_user32.BlockInput(bool(block)))
+    except Exception as exc:  # noqa: BLE001
+        _logger.info("BlockInput(%s) impossible : %s", block, exc)
+        return False
+
+
+def send_sas() -> bool:
+    """Émet Ctrl+Alt+Suppr (Secure Attention Sequence) via ``sas.dll``.
+
+    Fonctionne quand l'appelant est SYSTEM (helper non-assisté). En session
+    utilisateur, requiert la stratégie ``SoftwareSASGeneration`` ; échec toléré.
+    """
+    if not _WIN_AVAILABLE:
+        return False
+    try:
+        sas = ctypes.WinDLL("sas.dll")
+        sas.SendSAS.argtypes = [wintypes.BOOL]
+        sas.SendSAS(False)  # False : appel par un service/SYSTEM.
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _logger.info("SendSAS (Ctrl+Alt+Suppr) impossible : %s", exc)
+        return False
+
+
+def lock_workstation() -> bool:
+    """Verrouille la session Windows du poste (écran de verrouillage)."""
+    if not _WIN_AVAILABLE or _user32 is None:
+        return False
+    try:
+        return bool(_user32.LockWorkStation())
+    except Exception as exc:  # noqa: BLE001
+        _logger.info("LockWorkStation impossible : %s", exc)
+        return False
+
+
 def apply_input_message(injector: "InputInjector", message: dict) -> None:
     """Applique un message d'entrée JSON (CONTRAT REMOTE) via l'injecteur.
 

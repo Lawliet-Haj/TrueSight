@@ -373,6 +373,8 @@ def create_install_token():
             "site_name": site_name,
             "install_url": install_url,
             "one_liner": one_liner,
+            # Installeur double-cliquable (.cmd) servi par ce lien.
+            "installer_cmd_url": f"{base}/install/{token}/installer.cmd",
             "expires_at": _iso(expires_at),
         }),
         201,
@@ -476,3 +478,48 @@ def install_config(token):
     )
     db.session.commit()
     return current_app.response_class(config_text, mimetype="text/plain; charset=utf-8")
+
+
+def _installer_cmd_text(install_url: str) -> str:
+    """Génère un .cmd Windows double-cliquable : s'auto-élève (UAC) puis lance le
+    bootstrap d'installation. ASCII pur + CRLF (console Windows)."""
+    lines = [
+        "@echo off",
+        "setlocal",
+        "REM === Installateur de l'agent TrueSight ===",
+        "REM Double-cliquez ce fichier (ou clic droit > Executer en tant qu'administrateur).",
+        "net session >nul 2>&1",
+        "if %errorlevel% NEQ 0 (",
+        "  echo Demande d'elevation des privileges (UAC)...",
+        "  powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"",
+        "  exit /b",
+        ")",
+        "echo.",
+        "echo Installation de l'agent TrueSight en cours...",
+        "echo.",
+        ("powershell -NoProfile -ExecutionPolicy Bypass -Command "
+         "\"try { iwr -useb '" + install_url + "' | iex } "
+         "catch { Write-Host ('ECHEC: ' + $_.Exception.Message) -ForegroundColor Red }\""),
+        "echo.",
+        "echo Termine. Vous pouvez fermer cette fenetre.",
+        "pause",
+        "endlocal",
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+@bp.get("/install/<token>/installer.cmd")
+def install_cmd(token):
+    """Installeur Windows double-cliquable (.cmd) gardé par le jeton d'installation.
+
+    Contient le lien bootstrap (avec le jeton) ; à l'exécution, le .cmd s'auto-élève
+    puis télécharge le paquet + ``config.ini`` et installe le service.
+    """
+    it = _resolve_install_token(token)
+    if it is None:
+        return jsonify({"error": "lien invalide ou expiré"}), 403
+    base = request.host_url.rstrip("/")
+    body = _installer_cmd_text(f"{base}/install.ps1?t={token}")
+    resp = current_app.response_class(body, mimetype="application/octet-stream")
+    resp.headers["Content-Disposition"] = 'attachment; filename="TrueSight-Installer.cmd"'
+    return resp

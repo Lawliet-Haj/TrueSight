@@ -1635,3 +1635,24 @@ def test_accounts_create_password_scrubbed_after_run(client, admin_session):
     after = admin_session.get(f"/api/v1/commands/{cid}").get_json()
     assert secret not in (after.get("command_text") or "")
     assert "purg" in (after.get("command_text") or "").lower()
+
+
+def test_install_cmd_download(client, admin_session):
+    """Un lien d'installation expose un installeur .cmd double-cliquable (auto-élévation)."""
+    r = admin_session.post("/api/v1/install-tokens", json={"label": "test-cmd"})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    body = r.get_json()
+    token = body["token"]
+    assert body.get("installer_cmd_url", "").endswith("/install/" + token + "/installer.cmd")
+
+    # Téléchargement (sans session, gardé par le jeton).
+    dl = client.get(f"/api/v1/install/{token}/installer.cmd")
+    assert dl.status_code == 200
+    cd = dl.headers.get("Content-Disposition", "")
+    assert "attachment" in cd and "TrueSight-Installer.cmd" in cd
+    text = dl.get_data(as_text=True)
+    assert ("/install.ps1?t=" + token) in text  # bootstrap avec le jeton
+    assert "RunAs" in text                       # auto-élévation UAC
+
+    # Jeton inexistant → 403.
+    assert client.get("/api/v1/install/inexistant/installer.cmd").status_code == 403

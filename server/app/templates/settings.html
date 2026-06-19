@@ -162,7 +162,10 @@
     <!-- Lien d'installation -->
     <div class="deploy-block">
       <h3 class="block-title">Installer l'agent sur un poste</h3>
-      <p class="sub">Génère un lien à usage différé. Sur le poste cible, ouvrir un <b>PowerShell administrateur</b> et coller la commande affichée — l'agent se télécharge, s'enrôle et démarre tout seul.</p>
+      <p class="sub">Génère un lien à usage différé. Sur le poste cible, deux options au choix :
+        <b>(1)</b> télécharger l'<b>installateur .cmd</b> et le double-cliquer (auto-élévation UAC), ou
+        <b>(2)</b> coller la commande dans un <b>PowerShell administrateur</b>. Dans les deux cas, l'agent
+        se télécharge, s'enrôle et démarre tout seul.</p>
       <form id="link-form" class="deploy-form" autocomplete="off">
         <div class="field grow">
           <label for="link-label">Étiquette (optionnel)</label>
@@ -181,7 +184,12 @@
       </form>
 
       <div id="link-result" class="link-result hidden">
-        <label class="field-label">Commande d'installation (PowerShell administrateur)</label>
+        <label class="field-label">Option 1 — Installateur double-cliquable</label>
+        <div class="copy-row" style="margin-bottom:12px">
+          <a id="link-download" class="btn go" download href="#"><svg class="ico"><use href="#i-download"/></svg>Télécharger l'installateur (.cmd)</a>
+          <span class="sub" style="align-self:center;margin:0">À copier sur le poste, puis double-cliquer (UAC).</span>
+        </div>
+        <label class="field-label">Option 2 — Commande PowerShell (administrateur)</label>
         <div class="copy-row">
           <code id="link-oneliner" class="oneliner"></code>
           <button type="button" class="btn ghost" id="link-copy" title="Copier"><svg class="ico"><use href="#i-copy"/></svg></button>

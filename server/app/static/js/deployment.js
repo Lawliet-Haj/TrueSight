@@ -108,6 +108,11 @@
         var d = await jsonOf(r);
         if (!r.ok) { setMsg(m, d.error || "Échec.", false); return; }
         linkOneliner.textContent = d.one_liner || "";
+        var dl = document.getElementById("link-download");
+        if (dl) {
+          if (d.installer_cmd_url) { dl.href = d.installer_cmd_url; dl.classList.remove("hidden"); }
+          else { dl.classList.add("hidden"); }
+        }
         var siteTxt = d.site_name ? (" Les postes installés rejoindront « " + d.site_name + " ».") : "";
         document.getElementById("link-expire").textContent =
           (d.expires_at ? ("Ce lien expire le " + fmtDate(d.expires_at) + ".")

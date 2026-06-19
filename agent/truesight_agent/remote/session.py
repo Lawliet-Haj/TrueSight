@@ -51,10 +51,15 @@ _MAX_SESSION_SECONDS = 60 * 60  # 1 h
 class RemoteSession:
     """Pilote une session de bureau à distance jusqu'à sa fermeture."""
 
-    def __init__(self, token: str, ws_url: str, verify_tls: bool = True) -> None:
+    def __init__(self, token: str, ws_url: str, verify_tls: bool = True,
+                 desktop_follow: bool = False) -> None:
         self.token = token
         self.ws_url = ws_url
         self.verify_tls = verify_tls
+        # Mode NON-ASSISTÉ : la capture ET l'injection suivent le bureau d'entrée
+        # actif (Default ↔ Winlogon). Activé par le helper SYSTEM (--unattended).
+        self._desktop_follow = desktop_follow
+        self._inject_desk: str | None = None  # dernier bureau attaché côté injection
         self._stop = threading.Event()
         self._ws = None
         self._send_thread: threading.Thread | None = None
@@ -126,6 +131,48 @@ class RemoteSession:
             # Si la capture s'arrête, on termine toute la session.
             self._stop.set()
 
+    def _send_loop_unattended(self) -> None:
+        """Capture NON-ASSISTÉE : suit le bureau d'entrée actif (Default ↔ Winlogon).
+
+        Ce thread (SYSTEM) s'attache au bureau d'entrée, capture via mss, et
+        RE-crée la capture à chaque bascule de bureau (connexion, UAC, verrouillage)
+        — un objet ``mss`` est lié au bureau du thread au moment de sa création.
+        """
+        from . import desktop as desk
+        _logger.info("Flux de capture NON-ASSISTÉ démarré (suivi du bureau d'entrée).")
+        try:
+            while not self._should_stop():
+                desk_name = desk.attach_thread_to_input_desktop()
+                if desk_name is None:
+                    time.sleep(0.5)
+                    continue
+                _logger.info("Capture attachée au bureau d'entrée : %s", desk_name)
+                try:
+                    with capture_mod.mss.mss() as sct:
+                        self._capturer.request_keyframe()
+                        while not self._should_stop():
+                            # Bascule de bureau ? (connexion d'un utilisateur, UAC, verrouillage)
+                            if desk.current_input_desktop_name() != desk_name:
+                                _logger.info("Bascule de bureau détectée (%s → autre) : ré-attachement.", desk_name)
+                                break
+                            loop_start = time.monotonic()
+                            frame = self._capturer._grab_and_encode(sct)
+                            if frame is not None and not self._send_binary(frame):
+                                self._stop.set()
+                                break
+                            elapsed = time.monotonic() - loop_start
+                            remaining = (1.0 / self._capturer.target_fps) - elapsed
+                            if remaining > 0:
+                                time.sleep(remaining)
+                except Exception as exc:  # noqa: BLE001 - capture jamais fatale.
+                    _logger.error("Capture non-assistée interrompue : %s", exc)
+                    time.sleep(0.5)
+        except Exception as exc:  # noqa: BLE001
+            _logger.error("Boucle non-assistée interrompue : %s", exc)
+        finally:
+            _logger.info("Flux de capture non-assisté arrêté.")
+            self._stop.set()
+
     def _send_binary(self, data: bytes) -> bool:
         """Envoie une trame binaire ; renvoie False si la WebSocket est tombée."""
         ws = self._ws
@@ -159,7 +206,13 @@ class RemoteSession:
         except Exception as exc:  # noqa: BLE001
             _logger.debug("Envoi de la liste des moniteurs impossible : %s", exc)
         try:
-            self._send_text({"t": "user", "name": _current_user_label()})
+            if self._desktop_follow:
+                from . import desktop as desk
+                d = (desk.current_input_desktop_name() or "").lower()
+                label = "Écran de connexion (non-assisté)" if d == "winlogon" else "Poste — non-assisté (SYSTEM)"
+            else:
+                label = _current_user_label()
+            self._send_text({"t": "user", "name": label})
         except Exception as exc:  # noqa: BLE001
             _logger.debug("Envoi de l'utilisateur impossible : %s", exc)
 
@@ -222,7 +275,23 @@ class RemoteSession:
             self._injector.set_monitor(self._capturer.current_monitor_geometry())
             return
         # Sinon : entrée souris/clavier effective.
+        if self._desktop_follow:
+            self._ensure_inject_desktop()
         inject_mod.apply_input_message(self._injector, data)
+
+    def _ensure_inject_desktop(self) -> None:
+        """Mode non-assisté : attache le thread de réception (qui injecte) au bureau
+        d'entrée actif, et ré-attache à chaque bascule — ``SendInput`` cible le
+        bureau du thread appelant."""
+        try:
+            from . import desktop as desk
+            name = desk.current_input_desktop_name()
+            if name and name != self._inject_desk:
+                desk.attach_thread_to_input_desktop()
+                self._inject_desk = name
+                _logger.info("Injection ré-attachée au bureau : %s", name)
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("Ré-attachement de l'injection impossible : %s", exc)
 
     # -- Exécution ------------------------------------------------------------
     def run(self) -> None:
@@ -243,8 +312,9 @@ class RemoteSession:
         self._send_metadata()
 
         # Thread d'envoi (trames) ; la boucle principale reçoit les entrées.
+        send_target = self._send_loop_unattended if self._desktop_follow else self._send_loop
         self._send_thread = threading.Thread(
-            target=self._send_loop, name="truesight-remote-send", daemon=True
+            target=send_target, name="truesight-remote-send", daemon=True
         )
         self._send_thread.start()
 
@@ -270,8 +340,11 @@ class RemoteSession:
         _logger.info("Session de bureau à distance terminée.")
 
 
-def run(token: str, ws_url: str, verify_tls: bool = True) -> int:
+def run(token: str, ws_url: str, verify_tls: bool = True, desktop_follow: bool = False) -> int:
     """Point d'entrée de la session (utilisé par le helper et le mode console).
+
+    ``desktop_follow`` (mode non-assisté) : la capture/injection suivent le bureau
+    d'entrée actif (helper SYSTEM, écran de connexion compris).
 
     Bloque jusqu'à la fin de la session. Renvoie 0 (succès), 1 (échec
     d'initialisation). Ne lève jamais.
@@ -280,7 +353,7 @@ def run(token: str, ws_url: str, verify_tls: bool = True) -> int:
         _logger.error("Session impossible : token ou ws_url manquant.")
         return 1
     try:
-        session = RemoteSession(token, ws_url, verify_tls=verify_tls)
+        session = RemoteSession(token, ws_url, verify_tls=verify_tls, desktop_follow=desktop_follow)
         session.run()
         return 0
     except Exception as exc:  # noqa: BLE001 - filet ultime.

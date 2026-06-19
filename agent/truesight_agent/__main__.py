@@ -98,6 +98,8 @@ def _run_remote_helper(argv: list[str]) -> int:
                         help="Type de session : 'remote' (bureau) ou 'terminal' (shell PTY).")
     parser.add_argument("--shell", default="powershell", choices=["powershell", "cmd"],
                         help="Shell à lancer si --kind terminal.")
+    parser.add_argument("--unattended", action="store_true",
+                        help="Mode non-assisté : suit le bureau d'entrée (helper SYSTEM, écran de connexion).")
     # argv[2:] : on saute le nom du programme et la sous-commande 'remote-helper'.
     args = parser.parse_args(argv[2:])
 
@@ -142,8 +144,10 @@ def _run_remote_helper(argv: list[str]) -> int:
             )
         from .remote import session as remote_session
         from .remote import capture as remote_capture
-        _hlog.info("Capture disponible : %s.", remote_capture.is_available())
-        return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls)
+        _hlog.info("Capture disponible : %s ; non-assisté=%s.",
+                   remote_capture.is_available(), args.unattended)
+        return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls,
+                                  desktop_follow=args.unattended)
     except Exception as exc:  # noqa: BLE001 - on trace toute erreur fatale du helper.
         _hlog.exception("Helper en échec : %s", exc)
         return 1

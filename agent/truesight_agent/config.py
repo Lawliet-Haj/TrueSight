@@ -115,6 +115,7 @@ class AgentConfig:
         command_poll_interval: int,
         inventory_interval_hours: float,
         site: str = "",
+        remote_unattended: bool = True,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.enrollment_token = enrollment_token
@@ -124,6 +125,11 @@ class AgentConfig:
         self.inventory_interval_hours = float(inventory_interval_hours)
         # Emplacement (site) pré-affecté via config.ini : envoyé à l'enrôlement.
         self.site = (site or "").strip()
+        # Prise de main NON-ASSISTÉE : autorise le bureau à distance même sans
+        # utilisateur connecté (écran de connexion / verrouillage), via un helper
+        # SYSTEM attaché au bureau d'entrée actif. False → comportement historique
+        # (capture uniquement dans la session d'un utilisateur connecté).
+        self.remote_unattended = bool(remote_unattended)
 
     def apply_server_config(self, server_config: dict) -> bool:
         """Applique les intervalles renvoyés par le serveur dans le heartbeat.
@@ -193,6 +199,8 @@ def load_config(path: str | None = None) -> AgentConfig:
     inventory_interval_hours = parser.getfloat("agent", "inventory_interval_hours", fallback=12.0)
     # Emplacement pré-affecté (optionnel) : posé par l'installeur/lien par site.
     site = parser.get("agent", "site", fallback="").strip()
+    # Prise de main non-assistée (défaut : activée).
+    remote_unattended = _str_to_bool(parser.get("agent", "remote_unattended", fallback="true"))
 
     return AgentConfig(
         server_url=server_url,
@@ -202,6 +210,7 @@ def load_config(path: str | None = None) -> AgentConfig:
         command_poll_interval=command_poll_interval,
         inventory_interval_hours=inventory_interval_hours,
         site=site,
+        remote_unattended=remote_unattended,
     )
 
 

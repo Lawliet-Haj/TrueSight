@@ -83,22 +83,119 @@ def is_session_zero() -> bool:
         return False
 
 
-def _helper_command(token: str, ws_url: str, kind: str = "remote", shell: str = "powershell") -> list[str]:
+def _helper_command(token: str, ws_url: str, kind: str = "remote",
+                    shell: str = "powershell", unattended: bool = False) -> list[str]:
     """Construit la ligne de commande du helper à lancer dans la session active.
 
     - Exécutable figé (.exe) : ``truesight-agent.exe remote-helper --token .. --ws-url .. --kind ..``
     - Mode développement (python -m) : ``python -m truesight_agent remote-helper ...``
 
     ``kind`` vaut 'remote' (capture écran) ou 'terminal' (shell PTY) ; pour le
-    terminal on transmet aussi ``--shell``.
+    terminal on transmet aussi ``--shell``. ``unattended`` ajoute ``--unattended``
+    (le helper suit alors le bureau d'entrée actif : Default ↔ Winlogon).
     """
     args = ["remote-helper", "--token", token, "--ws-url", ws_url, "--kind", kind]
     if kind == "terminal":
         args += ["--shell", shell]
+    if unattended:
+        args += ["--unattended"]
     if cfg.is_frozen():
         return [sys.executable, *args]
     # Dev : relancer l'interpréteur sur le paquet.
     return [sys.executable, "-m", "truesight_agent", *args]
+
+
+def _unattended_enabled() -> bool:
+    """True si la prise de main non-assistée est autorisée (config, défaut True)."""
+    try:
+        return bool(cfg.load_config().remote_unattended)
+    except Exception:  # noqa: BLE001 - config illisible → on autorise par défaut.
+        return True
+
+
+def _launch_in_active_session_as_system(token: str, ws_url: str,
+                                        kind: str = "remote", shell: str = "powershell") -> bool:
+    """Lance le helper en SYSTEM dans la session console, sur le bureau d'entrée actif.
+
+    Sert la prise de main NON-ASSISTÉE : aucun utilisateur connecté (écran de
+    connexion) ou bureau sécurisé. On part du jeton SYSTEM du service courant, on
+    le duplique en jeton primaire, on le recible sur la session console active
+    (SetTokenInformation TokenSessionId — exige SeTcbPrivilege, acquis par SYSTEM),
+    puis on lance le helper avec ``lpDesktop`` = bureau d'entrée courant.
+
+    Renvoie True si le process a été créé. Tolérant : journalise et renvoie False.
+    """
+    if not _PYWIN32_AVAILABLE:
+        _logger.error("pywin32 absent : impossible de lancer le helper non-assisté.")
+        return False
+
+    dup_token = None
+    environment = None
+    try:
+        console_session_id = win32ts.WTSGetActiveConsoleSessionId()
+        if console_session_id in (0xFFFFFFFF, None):
+            _logger.warning("Non-assisté : aucune session console active.")
+            return False
+
+        # Jeton SYSTEM du service courant → dupliqué en jeton primaire reciblable.
+        access = (win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+                  | win32security.TOKEN_ASSIGN_PRIMARY | win32security.TOKEN_ADJUST_DEFAULT
+                  | win32security.TOKEN_ADJUST_SESSIONID)
+        proc_token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), access)
+        try:
+            dup_token = win32security.DuplicateTokenEx(
+                proc_token, win32security.SecurityImpersonation,
+                win32con.MAXIMUM_ALLOWED, win32security.TokenPrimary, None,
+            )
+        finally:
+            try:
+                win32api.CloseHandle(proc_token)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Recible le jeton sur la session console interactive (écran de connexion inclus).
+        win32security.SetTokenInformation(
+            dup_token, win32security.TokenSessionId, int(console_session_id)
+        )
+
+        try:
+            environment = win32profile.CreateEnvironmentBlock(dup_token, False)
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("CreateEnvironmentBlock indisponible (%s), env par défaut.", exc)
+            environment = None
+
+        # Bureau d'entrée courant : 'Default' (utilisateur) ou 'Winlogon' (sécurisé).
+        from . import desktop as desk_mod
+        desk_name = desk_mod.current_input_desktop_name() or "Default"
+
+        cmdline = _helper_command(token, ws_url, kind, shell, unattended=True)
+        cmdline_str = subprocess.list2cmdline(cmdline)
+
+        startup = win32process.STARTUPINFO()
+        startup.lpDesktop = "winsta0\\" + desk_name
+        creation_flags = win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW
+
+        win32process.CreateProcessAsUser(
+            dup_token, None, cmdline_str, None, None, False,
+            creation_flags, environment, None, startup,
+        )
+        _logger.info("Helper NON-ASSISTÉ (SYSTEM) lancé en session %s, bureau %s.",
+                     console_session_id, desk_name)
+        return True
+    except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+        _logger.error("Lancement non-assisté (SYSTEM) impossible : %s", exc)
+        return False
+    finally:
+        try:
+            if environment is not None:
+                win32profile.DestroyEnvironmentBlock(environment)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if dup_token is not None:
+                win32api.CloseHandle(dup_token)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote", shell: str = "powershell") -> bool:
@@ -234,10 +331,19 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
             if companion.send_session_request(payload):
                 _logger.info("Service en session 0 : session %s confiée au compagnon utilisateur.", kind)
                 return True
-            # 2) Repli : helper CreateProcessAsUser (bureau à distance OK ; terminal
-            #    peu fiable). Utile si le compagnon n'est pas (encore) démarré.
-            _logger.info("Compagnon indisponible : repli sur le helper (kind=%s).", kind)
-            return _launch_in_active_session(token, ws_url, kind, shell)
+            # 2) Repli : helper CreateProcessAsUser dans la session de l'utilisateur
+            #    connecté (bureau à distance OK ; terminal peu fiable).
+            _logger.info("Compagnon indisponible : repli sur le helper utilisateur (kind=%s).", kind)
+            if _launch_in_active_session(token, ws_url, kind, shell):
+                return True
+            # 3) Repli NON-ASSISTÉ : aucun utilisateur connecté (écran de connexion /
+            #    verrouillage) → helper SYSTEM attaché au bureau d'entrée actif.
+            #    Réservé au bureau à distance (le terminal non-assisté n'a pas de sens).
+            if kind == "remote" and _unattended_enabled():
+                _logger.info("Aucune session utilisateur : tentative de prise de main NON-ASSISTÉE.")
+                return _launch_in_active_session_as_system(token, ws_url, kind, shell)
+            _logger.warning("Session %s non démarrée (aucune session utilisateur, non-assisté indisponible).", kind)
+            return False
         _logger.info("Session utilisateur : exécution directe de la session (kind=%s).", kind)
         _run_session_inline(token, ws_url, verify_tls, kind, shell)
         return True

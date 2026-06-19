@@ -144,10 +144,29 @@ def _run_remote_helper(argv: list[str]) -> int:
             )
         from .remote import session as remote_session
         from .remote import capture as remote_capture
-        _hlog.info("Capture disponible : %s ; non-assisté=%s.",
-                   remote_capture.is_available(), args.unattended)
-        return remote_session.run(args.token, args.ws_url, verify_tls=verify_tls,
-                                  desktop_follow=args.unattended)
+        try:
+            from .remote import capture_dxgi
+            _dxgi_ok = capture_dxgi.is_available()
+        except Exception:  # noqa: BLE001
+            capture_dxgi = None  # type: ignore
+            _dxgi_ok = False
+        _hlog.info("Capture disponible : mss=%s, DXGI=%s ; non-assisté=%s.",
+                   remote_capture.is_available(), _dxgi_ok, args.unattended)
+        rc = remote_session.run(args.token, args.ws_url, verify_tls=verify_tls,
+                                desktop_follow=args.unattended)
+        # Si la capture DXGI (comtypes) a été utilisée, le GC de comtypes crashe à
+        # la finalisation (access violation). Le helper étant mono-usage (la
+        # session est terminée), on sort « dur » via os._exit() pour court-circuiter
+        # le GC : on flush d'abord les logs pour ne rien perdre.
+        if capture_dxgi is not None and capture_dxgi.camera_was_created():
+            _hlog.info("Sortie dure du helper (DXGI/comtypes) : code %s.", rc)
+            for _h in logging.getLogger("truesight").handlers:
+                try:
+                    _h.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+            os._exit(rc if isinstance(rc, int) else 0)
+        return rc
     except Exception as exc:  # noqa: BLE001 - on trace toute erreur fatale du helper.
         _hlog.exception("Helper en échec : %s", exc)
         return 1

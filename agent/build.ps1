@@ -134,6 +134,8 @@ pyinstaller `
     --collect-submodules "win32com" `
     --collect-submodules "mss" `
     --collect-all "winpty" `
+    --collect-all "dxcam" `
+    --collect-all "comtypes" `
     --collect-submodules "truesight_agent" `
     "$entryPoint"
 

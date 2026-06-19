@@ -134,12 +134,114 @@ class RemoteSession:
     def _send_loop_unattended(self) -> None:
         """Capture NON-ASSISTÉE : suit le bureau d'entrée actif (Default ↔ Winlogon).
 
+        Privilégie **DXGI Desktop Duplication** (``capture_dxgi``) : c'est le SEUL
+        moyen de capturer le **bureau sécurisé** (écran de connexion / verrouillage
+        / UAC) — GDI/BitBlt (``mss``) y renvoie une image NOIRE. Repli automatique
+        sur ``mss`` si DXGI est indisponible (le bureau sécurisé y restera noir,
+        mais le bureau utilisateur reste capturable).
+
+        Contrainte DXGI (cf. ``capture_dxgi``) : la caméra ne peut être ni recréée
+        ni libérée dans le process (crash COM). On en crée donc UNE, on la
+        réutilise, et à la moindre bascule de bureau/écran on ARRÊTE la session :
+        le viewer se reconnecte et un nouveau helper repart sur le bon bureau. Le
+        helper sort ensuite via ``os._exit()`` (cf. ``__main__``).
+        """
+        from . import desktop as desk
+        try:
+            from . import capture_dxgi
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("Module DXGI introuvable (%s) : repli mss.", exc)
+            capture_dxgi = None  # type: ignore
+
+        if capture_dxgi is None or not capture_dxgi.is_available():
+            _logger.info(
+                "DXGI indisponible : capture non-assistée via mss (GDI) — "
+                "le bureau sécurisé (écran de connexion) restera NOIR."
+            )
+            self._send_loop_unattended_mss()
+            return
+
+        _logger.info("Flux de capture NON-ASSISTÉ démarré (DXGI Desktop Duplication).")
+        try:
+            # Attache le thread au bureau d'entrée AVANT de créer la duplication
+            # DXGI : la capture est liée au bureau actif au moment de l'appel. Au
+            # démarrage (boot/logon), ce bureau peut n'être pas prêt : on patiente.
+            desk_name = None
+            for _ in range(40):  # ~20 s max.
+                if self._should_stop():
+                    return
+                desk_name = desk.attach_thread_to_input_desktop()
+                if desk_name is not None:
+                    break
+                time.sleep(0.5)
+            if desk_name is None:
+                _logger.error("Bureau d'entrée inaccessible : repli mss.")
+                self._send_loop_unattended_mss()
+                return
+
+            mon_idx = self._capturer.monitor_index
+            cam = capture_dxgi.create(mon_idx)
+            if cam is None:
+                _logger.error("Caméra DXGI indisponible : repli mss.")
+                self._send_loop_unattended_mss()
+                return
+            _logger.info("Capture DXGI active sur le bureau « %s » (écran %d).", desk_name, mon_idx)
+
+            # Dernière trame brute (raw, w, h) : permet de re-servir une keyframe
+            # (connexion viewer, changement de qualité/largeur) même si DXGI ne
+            # renvoie rien (écran statique → grab() == None).
+            last = None
+            while not self._should_stop():
+                loop_start = time.monotonic()
+                # Bascule de bureau (login terminé, UAC, verrouillage) ou changement
+                # d'écran : on NE recrée PAS la duplication (crash) → fin de session,
+                # le viewer se reconnecte sur un helper neuf attaché au bon bureau.
+                if desk.current_input_desktop_name() != desk_name:
+                    _logger.info("Bascule de bureau (%s → autre) : fin de session (reconnexion attendue).", desk_name)
+                    break
+                if self._capturer.monitor_index != mon_idx:
+                    _logger.info("Changement d'écran demandé : fin de session (reconnexion attendue).")
+                    break
+
+                got = capture_dxgi.grab(cam)
+                keyframe = self._capturer._force_keyframe
+                self._capturer._force_keyframe = False
+                if got is not None:
+                    last = got
+                elif keyframe and last is not None:
+                    # Rien de neuf, mais le viewer réclame une image → re-sert la dernière.
+                    got = last
+                if got is not None:
+                    raw, width, height = got
+                    raw, width, height = capture_mod._downscale_bgra(
+                        raw, width, height, self._capturer.max_width
+                    )
+                    jpeg = capture_mod._encode_jpeg(raw, width, height, self._capturer.quality)
+                    if jpeg is not None:
+                        frame = capture_mod.build_frame(jpeg, width, height, mon_idx)
+                        if not self._send_binary(frame):
+                            break
+                elapsed = time.monotonic() - loop_start
+                remaining = (1.0 / self._capturer.target_fps) - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
+        except Exception as exc:  # noqa: BLE001
+            _logger.error("Boucle non-assistée (DXGI) interrompue : %s", exc)
+        finally:
+            _logger.info("Flux de capture non-assisté (DXGI) arrêté.")
+            self._stop.set()
+
+    def _send_loop_unattended_mss(self) -> None:
+        """Repli NON-ASSISTÉ via ``mss`` (GDI) si DXGI est indisponible.
+
         Ce thread (SYSTEM) s'attache au bureau d'entrée, capture via mss, et
         RE-crée la capture à chaque bascule de bureau (connexion, UAC, verrouillage)
         — un objet ``mss`` est lié au bureau du thread au moment de sa création.
+        ATTENTION : GDI renvoie une image NOIRE sur le bureau sécurisé (écran de
+        connexion). Ce chemin ne sert que de filet quand DXGI manque.
         """
         from . import desktop as desk
-        _logger.info("Flux de capture NON-ASSISTÉ démarré (suivi du bureau d'entrée).")
+        _logger.info("Flux de capture NON-ASSISTÉ (mss/GDI) démarré (suivi du bureau d'entrée).")
         try:
             while not self._should_stop():
                 desk_name = desk.attach_thread_to_input_desktop()

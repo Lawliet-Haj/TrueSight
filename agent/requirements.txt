@@ -10,8 +10,12 @@ pywin32>=306
 WMI>=1.5.1
 # ----------------------------------------------------------------------------
 # Bureau à distance (module remote/) :
-# Capture d'écran rapide (multi-moniteurs).
+# Capture d'écran rapide (multi-moniteurs) — chemin ASSISTÉ (session utilisateur).
 mss>=9.0,<10.0
+# Capture DXGI Desktop Duplication — chemin NON-ASSISTÉ (helper SYSTEM). SEUL moyen
+# de capturer le BUREAU SÉCURISÉ (écran de connexion / verrouillage / UAC) : GDI
+# (mss) y renvoie une image NOIRE. Tire numpy + comtypes (voir capture_dxgi.py).
+dxcam>=0.3,<0.4
 # Encodage JPEG des trames (repli si PyTurboJPEG absent) + downscale.
 pillow>=10.0,<12.0
 # Client WebSocket synchrone (session wss vers le relais).

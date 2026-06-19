@@ -31,34 +31,34 @@
 
   <!-- Rail gauche : navigation par icônes -->
   <aside class="rail">
-    <a href="{{ url_for('web.overview_page') }}" class="brandmark" title="TrueSight"><span></span></a>
+    <a href="{{ url_for('web.overview_page') }}" class="brandmark" title="TrueSight" aria-label="TrueSight — accueil"><span></span></a>
 
     <a href="{{ url_for('web.overview_page') }}"
        class="navi {% if request.endpoint == 'web.overview_page' %}on{% endif %}"
-       title="Vue d'ensemble"><svg><use href="#i-gauge"/></svg></a>
+       title="Vue d'ensemble" aria-label="Vue d'ensemble"><svg><use href="#i-gauge"/></svg></a>
 
     <a href="{{ url_for('web.agents_page') }}"
        class="navi {% if request.endpoint in ('web.agents_page', 'web.agent_detail_page') %}on{% endif %}"
-       title="Parc"><svg><use href="#i-grid"/></svg></a>
+       title="Parc" aria-label="Parc de postes"><svg><use href="#i-grid"/></svg></a>
 
     <a href="{{ url_for('web.alerts_page') }}"
        class="navi {% if request.endpoint == 'web.alerts_page' %}on{% endif %}"
-       title="Alertes"><svg><use href="#i-bell"/></svg></a>
+       title="Alertes" aria-label="Alertes"><svg><use href="#i-bell"/></svg></a>
 
     <a href="{{ url_for('web.inventory_page') }}"
        class="navi {% if request.endpoint == 'web.inventory_page' %}on{% endif %}"
-       title="Inventaire logiciel"><svg><use href="#i-box"/></svg></a>
+       title="Inventaire logiciel" aria-label="Inventaire logiciel"><svg><use href="#i-box"/></svg></a>
 
     <div class="spacer"></div>
 
     {% if user.role in ('admin', 'superadmin') %}
     <a href="{{ url_for('web.audit_page') }}"
        class="navi {% if request.endpoint == 'web.audit_page' %}on{% endif %}"
-       title="Journal d'audit"><svg><use href="#i-shield"/></svg></a>
+       title="Journal d'audit" aria-label="Journal d'audit"><svg><use href="#i-shield"/></svg></a>
     {% endif %}
     <a href="{{ url_for('web.settings_page') }}"
        class="navi {% if request.endpoint == 'web.settings_page' %}on{% endif %}"
-       title="Réglages"><svg><use href="#i-cog"/></svg></a>
+       title="Réglages" aria-label="Réglages"><svg><use href="#i-cog"/></svg></a>
   </aside>
 
   <div class="main">
@@ -184,6 +184,9 @@
   refresh();
 })();
 </script>
+
+<!-- Primitives d'interface partagées (toasts + modale de confirmation) — avant les scripts de page -->
+<script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 
 {% block scripts %}{% endblock %}
 </body>

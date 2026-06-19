@@ -151,14 +151,19 @@
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ name: name }),
     });
-    if (!r.ok) { var d = await jsonOf(r); window.alert(d.error || "Échec du renommage."); }
+    if (!r.ok) { var d = await jsonOf(r); TS.toast(d.error || "Échec du renommage.", "error"); }
     load();
   }
 
   async function deleteSite(id, name) {
-    if (!window.confirm("Supprimer l'emplacement « " + name + " » ?\nLes postes associés deviendront « non assignés ».")) return;
+    var ask = await TS.confirm({
+      title: "Supprimer l'emplacement « " + name + " » ?",
+      body: "Les postes associés deviendront « non assignés ».",
+      danger: true, confirmLabel: "Supprimer",
+    });
+    if (!ask.confirmed) return;
     var r = await fetch("/api/v1/sites/" + id, { method: "DELETE", headers: { Accept: "application/json" } });
-    if (!r.ok) { var d = await jsonOf(r); window.alert(d.error || "Échec de la suppression."); }
+    if (!r.ok) { var d = await jsonOf(r); TS.toast(d.error || "Échec de la suppression.", "error"); }
     load();
   }
 

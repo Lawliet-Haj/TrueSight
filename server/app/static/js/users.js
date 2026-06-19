@@ -123,9 +123,9 @@
         : await postJSON(url, payload || {});
       if (r.status === 401) { window.location.href = "/login"; return; }
       var d = await jsonOf(r);
-      if (!r.ok) window.alert(d.error || "Action refusée.");
+      if (!r.ok) TS.toast(d.error || "Action refusée.", "error");
     } catch (_) {
-      window.alert("Erreur réseau.");
+      TS.toast("Erreur réseau.", "error");
     }
     load();
   }
@@ -170,7 +170,12 @@
       return;
     }
     if (action === "delete") {
-      if (!window.confirm("Supprimer définitivement ce compte d'accès ?")) return;
+      var ask = await TS.confirm({
+        title: "Supprimer ce compte d'accès ?",
+        body: "Le compte ne pourra plus se connecter au dashboard.",
+        danger: true, confirmLabel: "Supprimer",
+      });
+      if (!ask.confirmed) return;
       await act("/api/v1/users/" + id, null, "DELETE");
       return;
     }

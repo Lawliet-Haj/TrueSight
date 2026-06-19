@@ -253,10 +253,13 @@
 
   var BULK_LABELS = { lock: "Verrouiller", restart: "Redémarrer" };
 
-  async function applyBulk(kind, payload, confirmMsg) {
+  async function applyBulk(kind, payload, confirmOpts) {
     var ids = selectedIds();
     if (!ids.length) return;
-    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    if (confirmOpts) {
+      var ask = await TS.confirm(confirmOpts);
+      if (!ask.confirmed) return;
+    }
     var body = Object.assign({ agent_ids: ids, kind: kind }, payload);
     try {
       var resp = await fetch("/api/v1/agents/bulk", {
@@ -265,12 +268,12 @@
         body: JSON.stringify(body),
       });
       var data = await resp.json().catch(function () { return {}; });
-      if (!resp.ok) { window.alert("Échec : " + (data.error || resp.status)); return; }
-      window.alert("Action envoyée à " + data.count + " poste(s).");
+      if (!resp.ok) { TS.toast(data.error || ("Échec (" + resp.status + ")"), "error"); return; }
+      TS.toast("Action envoyée à " + data.count + " poste(s).", "success");
       selected = {};
       render(lastData);
     } catch (e) {
-      window.alert("Erreur réseau lors de l'envoi groupé.");
+      TS.toast("Erreur réseau lors de l'envoi groupé.", "error");
     }
   }
 
@@ -283,15 +286,21 @@
         var kind = b.getAttribute("data-bulk");
         var n = selectedIds().length;
         if (kind === "lock" || kind === "restart") {
-          applyBulk("quick", { action: kind }, BULK_LABELS[kind] + " " + n + " poste(s) ?");
+          applyBulk("quick", { action: kind }, {
+            title: BULK_LABELS[kind] + " " + n + " poste(s) ?",
+            body: "L'action sera exécutée sur les postes sélectionnés.",
+            danger: kind === "restart", confirmLabel: BULK_LABELS[kind],
+          });
         } else if (kind === "message") {
           var msg = window.prompt("Message à afficher sur les " + n + " poste(s) :");
           if (msg && msg.trim()) applyBulk("quick", { action: "message", text: msg.trim() });
         } else if (kind === "command") {
           var cmd = window.prompt("Commande PowerShell à exécuter sur les " + n + " poste(s) :");
           if (cmd && cmd.trim()) {
-            applyBulk("command", { shell: "powershell", command_text: cmd.trim(), timeout_seconds: 120 },
-              "Exécuter cette commande sur " + n + " poste(s) ?\n\n" + cmd.trim());
+            applyBulk("command", { shell: "powershell", command_text: cmd.trim(), timeout_seconds: 120 }, {
+              title: "Exécuter sur " + n + " poste(s) ?", body: cmd.trim(),
+              danger: true, confirmLabel: "Exécuter",
+            });
           }
         }
       });
@@ -324,19 +333,23 @@
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ name: name.trim() }),
       });
-      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); window.alert(d.error || "Échec du renommage."); }
-    } catch (e) { window.alert("Erreur réseau."); }
+      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); TS.toast(d.error || "Échec du renommage.", "error"); }
+    } catch (e) { TS.toast("Erreur réseau.", "error"); }
     load();
   }
 
   async function deleteAgent(id, name) {
-    if (!window.confirm("Supprimer définitivement le poste « " + name + " » du parc ?\n" +
-        "Toutes ses données (inventaire, métriques, historique) seront effacées.\n" +
-        "À utiliser après désinstallation de l'agent sur le poste.")) return;
+    var ask = await TS.confirm({
+      title: "Supprimer « " + name + " » du parc ?",
+      body: "Toutes ses données (inventaire, métriques, historique) seront effacées. À utiliser après désinstallation de l'agent sur le poste.",
+      danger: true, confirmLabel: "Supprimer",
+    });
+    if (!ask.confirmed) return;
     try {
       var r = await fetch("/api/v1/agents/" + id, { method: "DELETE", headers: { Accept: "application/json" } });
-      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); window.alert(d.error || "Échec de la suppression."); }
-    } catch (e) { window.alert("Erreur réseau."); }
+      if (!r.ok) { var d = await r.json().catch(function () { return {}; }); TS.toast(d.error || "Échec de la suppression.", "error"); }
+      else { TS.toast("Poste supprimé.", "success"); }
+    } catch (e) { TS.toast("Erreur réseau.", "error"); }
     delete selected[id];
     load();
   }
@@ -407,7 +420,7 @@
         var v = sel ? sel.value : "";
         var ids = selectedIds();
         if (!ids.length) return;
-        if (v === "") { window.alert("Choisissez un emplacement à affecter."); return; }
+        if (v === "") { TS.toast("Choisissez un emplacement à affecter.", "error"); return; }
         try {
           var r = await fetch("/api/v1/agents/bulk-site", {
             method: "POST",
@@ -415,10 +428,11 @@
             body: JSON.stringify({ agent_ids: ids, site_id: v === "none" ? null : v }),
           });
           var d = await r.json().catch(function () { return {}; });
-          if (!r.ok) { window.alert(d.error || "Échec de l'affectation."); return; }
+          if (!r.ok) { TS.toast(d.error || "Échec de l'affectation.", "error"); return; }
+          TS.toast("Emplacement affecté à " + (d.count != null ? d.count : ids.length) + " poste(s).", "success");
           selected = {};
           load();
-        } catch (e) { window.alert("Erreur réseau."); }
+        } catch (e) { TS.toast("Erreur réseau.", "error"); }
       });
     }
   }

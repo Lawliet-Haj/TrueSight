@@ -75,21 +75,26 @@
       b.addEventListener("click", function () {
         var name = b.getAttribute("data-name");
         if (!name || !currentAgent) return;
-        if (!window.confirm("Désinstaller « " + name + " » sur ce poste ?\n\n" +
-          "Désinstallation silencieuse (QuietUninstallString / MSI). Indisponible pour certains EXE.")) return;
-        var prev = b.textContent;
-        b.disabled = true; b.textContent = "envoi…";
-        fetch("/api/v1/agents/" + currentAgent + "/software/uninstall", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ source: "registry", name: name }),
-        })
-          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
-          .then(function (res) {
-            if (!res.ok) { b.disabled = false; b.textContent = prev; window.alert("Erreur : " + (res.d.error || "échec")); return; }
-            pollUninstall(res.d.command_id, b);
+        TS.confirm({
+          title: "Désinstaller « " + name + " » ?",
+          body: "Désinstallation silencieuse sur ce poste (QuietUninstallString / MSI). Indisponible pour certains EXE.",
+          danger: true, confirmLabel: "Désinstaller",
+        }).then(function (ask) {
+          if (!ask.confirmed) return;
+          var prev = b.textContent;
+          b.disabled = true; b.textContent = "envoi…";
+          fetch("/api/v1/agents/" + currentAgent + "/software/uninstall", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ source: "registry", name: name }),
           })
-          .catch(function () { b.disabled = false; b.textContent = prev; });
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+            .then(function (res) {
+              if (!res.ok) { b.disabled = false; b.textContent = prev; TS.toast(res.d.error || "Échec de la désinstallation.", "error"); return; }
+              pollUninstall(res.d.command_id, b);
+            })
+            .catch(function () { b.disabled = false; b.textContent = prev; });
+        });
       });
     });
   }

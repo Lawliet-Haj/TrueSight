@@ -98,9 +98,15 @@
     });
     ok.addEventListener("click", function () {
       if (ok.disabled) return;
-      if (p.danger && !window.confirm((KIND_LABEL[p.kind] || "Action") + " sur ce poste ?\n\n" + pre.textContent)) return;
-      ok.disabled = true; no.disabled = true;
-      runConfirm(p, status, output);
+      function go() { ok.disabled = true; no.disabled = true; runConfirm(p, status, output); }
+      if (p.danger) {
+        TS.confirm({
+          title: (KIND_LABEL[p.kind] || "Action") + " ?",
+          body: pre.textContent, danger: true, confirmLabel: "Confirmer",
+        }).then(function (r) { if (r.confirmed) go(); });
+      } else {
+        go();
+      }
     });
   }
 

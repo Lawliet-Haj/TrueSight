@@ -336,9 +336,14 @@
       b.addEventListener("click", function () {
         var name = b.getAttribute("data-name");
         if (!name) return;
-        if (!window.confirm("Désinstaller « " + name + " » sur ce poste ?\n\n" +
-          "Désinstallation silencieuse (QuietUninstallString / MSI). Indisponible pour certains EXE.")) return;
-        runSoftwareCommand("uninstall", { source: "registry", name: name }, "Désinstallation de " + name);
+        TS.confirm({
+          title: "Désinstaller « " + name + " » ?",
+          body: "Désinstallation silencieuse sur ce poste (QuietUninstallString / MSI). Indisponible pour certains EXE.",
+          danger: true, confirmLabel: "Désinstaller",
+        }).then(function (r) {
+          if (!r.confirmed) return;
+          runSoftwareCommand("uninstall", { source: "registry", name: name }, "Désinstallation de " + name);
+        });
       });
     });
   }
@@ -418,8 +423,14 @@
         if (argsInput.value.trim()) payload.exe_args = argsInput.value.trim();
         label = "Installation depuis URL";
       }
-      if (!window.confirm(label + " sur ce poste ?\n\nInstallation silencieuse sous le compte SYSTEM.")) return;
-      runSoftwareCommand("install", payload, label);
+      TS.confirm({
+        title: label + " ?",
+        body: "Installation silencieuse sous le compte SYSTEM du poste.",
+        confirmLabel: "Installer",
+      }).then(function (r) {
+        if (!r.confirmed) return;
+        runSoftwareCommand("install", payload, label);
+      });
     });
   }
 
@@ -485,7 +496,8 @@
       var timeout = parseInt(document.getElementById("cmd-timeout").value, 10) || 120;
       if (!text) { statusEl.textContent = "Veuillez saisir une commande."; return; }
 
-      if (!window.confirm("Exécuter cette commande sur le poste ?\n\n" + text)) return;
+      var ask = await TS.confirm({ title: "Exécuter cette commande ?", body: text, confirmLabel: "Exécuter" });
+      if (!ask.confirmed) return;
 
       runBtn.disabled = true;
       statusEl.textContent = "Envoi de la commande…";
@@ -532,7 +544,13 @@
 
     async function runQuickAction(action, text) {
       if (action !== "message") {
-        if (!window.confirm(labels[action] + " ?\n\nCette action sera exécutée sur le poste.")) return;
+        var ask = await TS.confirm({
+          title: labels[action] + " ?",
+          body: "Cette action sera exécutée sur le poste.",
+          danger: (action === "restart" || action === "logoff"),
+          confirmLabel: labels[action],
+        });
+        if (!ask.confirmed) return;
       }
       if (statusEl) statusEl.textContent = "Envoi de l'action…";
       if (outputEl) outputEl.classList.add("hidden");
@@ -750,7 +768,12 @@
     function killProc(pid, name) {
       var pidNum = parseInt(pid, 10);
       if (isNaN(pidNum)) return;  // garde-fou (le PID doit être numérique)
-      if (!window.confirm("Tuer le processus « " + name + " » (PID " + pidNum + ") sur le poste ?")) return;
+      TS.confirm({
+        title: "Arrêter « " + name + " » ?",
+        body: "Le processus (PID " + pidNum + ") sera forcé à s'arrêter sur le poste.",
+        danger: true, confirmLabel: "Arrêter",
+      }).then(function (ask) {
+      if (!ask.confirmed) return;
       statusEl.textContent = "Arrêt du processus " + pidNum + "…";
       runForResult("Stop-Process -Id " + pidNum + " -Force; 'OK'", 30).then(function (data) {
         var r = (data && data.result) || {};
@@ -762,6 +785,7 @@
         }
         setTimeout(load, 1200);
       }).catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+      });
     }
 
     loadBtn.addEventListener("click", load);
@@ -1037,14 +1061,18 @@
 
     function delUser(name) {
       if (!name) return;
-      if (!window.confirm("Supprimer le compte « " + name + " » sur ce poste ?")) return;
-      var removeProfile = window.confirm(
-        "Supprimer AUSSI les fichiers du profil (C:\\Users\\" + name + ") ?\n\n" +
-        "OK = supprimer les données du profil · Annuler = conserver les données.");
-      statusEl.textContent = "Suppression de " + name + "…";
-      run("delete", { username: name, remove_profile: removeProfile }, statusEl, null)
-        .then(function () { load(); })
-        .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+      TS.confirm({
+        title: "Supprimer le compte « " + name + " » ?",
+        body: "Le compte local sera supprimé sur ce poste.",
+        danger: true, confirmLabel: "Supprimer",
+        checkbox: "Supprimer aussi les fichiers du profil (C:\\Users\\" + name + ")",
+      }).then(function (r) {
+        if (!r.confirmed) return;
+        statusEl.textContent = "Suppression de " + name + "…";
+        run("delete", { username: name, remove_profile: r.checked }, statusEl, null)
+          .then(function () { load(); })
+          .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+      });
     }
 
     loadBtn.addEventListener("click", load);
@@ -1060,16 +1088,28 @@
       var admin = document.getElementById("acct-admin").checked;
       if (!username) { statusEl.textContent = "Nom d'utilisateur requis."; return; }
       if (!password) { statusEl.textContent = "Mot de passe requis."; return; }
-      if (admin && !window.confirm("Créer « " + username + " » comme ADMINISTRATEUR du poste ?")) return;
-      statusEl.textContent = "Création du compte…";
-      createOut.classList.add("hidden");
-      run("create", { username: username, full_name: fullname, password: password, administrator: admin }, statusEl, createOut)
-        .then(function (data) {
-          document.getElementById("acct-password").value = "";
-          if (data && data.status === "done") statusEl.textContent = "Compte créé.";
-          load();
-        })
-        .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+
+      function doCreate() {
+        statusEl.textContent = "Création du compte…";
+        createOut.classList.add("hidden");
+        run("create", { username: username, full_name: fullname, password: password, administrator: admin }, statusEl, createOut)
+          .then(function (data) {
+            document.getElementById("acct-password").value = "";
+            if (data && data.status === "done") { statusEl.textContent = "Compte créé."; TS.toast("Compte « " + username + " » créé.", "success"); }
+            load();
+          })
+          .catch(function (e) { statusEl.textContent = "Erreur : " + e.message; });
+      }
+
+      if (admin) {
+        TS.confirm({
+          title: "Créer un compte ADMINISTRATEUR ?",
+          body: "« " + username + " » disposera des droits d'administrateur sur le poste.",
+          danger: true, confirmLabel: "Créer (admin)",
+        }).then(function (r) { if (r.confirmed) doCreate(); });
+      } else {
+        doCreate();
+      }
     });
   }
 

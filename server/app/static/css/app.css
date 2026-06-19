@@ -8,7 +8,7 @@
 :root{
   --bg:#080B0F; --bg-2:#0C1116; --bg-3:#10171E; --raised:#131C24;
   --line:rgba(255,255,255,.06); --line-2:rgba(255,255,255,.11); --line-3:rgba(255,255,255,.18);
-  --text:#E8EEF4; --dim:#93A1B0; --faint:#5A6773;
+  --text:#E8EEF4; --dim:#93A1B0; --faint:#6B7785;
   --signal:#2BE3C6; --signal-dim:#1B9C8A; --ok:#34E2B0; --warn:#F5B83D; --danger:#FF5D63; --info:#5AB6FF;
   --glow:0 0 0 1px rgba(43,227,198,.25),0 0 22px -6px rgba(43,227,198,.55);
   --font-ui:'Hanken Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -691,6 +691,60 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 .cop-bar{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--line);background:var(--bg-2)}
 .cop-bar .input{flex:1}
 .cop-bar .btn{flex:none}
+
+/* ---------------------------------------------------------------------------
+   Accessibilité — anneau de focus clavier homogène
+   (.tab garde son style propre, plus spécifique)
+   --------------------------------------------------------------------------- */
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.btn:focus-visible,.navi:focus-visible,.icon-btn:focus-visible,.btn-ico:focus-visible,
+.seg-btn:focus-visible,.search:focus-within{outline:2px solid var(--signal);outline-offset:2px}
+
+/* ---------------------------------------------------------------------------
+   Densité des onglets (fiche poste) : défiler plutôt que comprimer
+   --------------------------------------------------------------------------- */
+.tablist{overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.tablist::-webkit-scrollbar{height:6px}
+.tablist::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+.tab{flex:0 0 auto}
+
+/* ---------------------------------------------------------------------------
+   Composants d'état / d'étiquette — système (1 rôle = 1 primitive)
+   · .badge  → STATUT (santé, état)        : carré, mono majuscule, couleurs ok/warn/danger/info
+   · .pill   → alias de .badge (libellés d'état dans les tableaux)
+   · .chip   → COMPTEUR / FILTRE           : arrondi (pilule), mono
+   · .seg    → BASCULE segmentée (filtres d'état)
+   Ne pas introduire de nouvelle variante : réutiliser l'une de ces 4.
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Confirmation (modale) + toasts — remplacent window.confirm / window.alert
+   --------------------------------------------------------------------------- */
+.ts-modal-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;
+  background:rgba(4,6,9,.62);backdrop-filter:blur(3px);opacity:0;transition:opacity .18s ease}
+.ts-modal-overlay.show{opacity:1}
+.ts-modal{width:100%;max-width:440px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-lg);
+  box-shadow:0 24px 60px -16px rgba(0,0,0,.7);padding:20px 22px;
+  transform:translateY(8px) scale(.985);transition:transform .18s ease}
+.ts-modal-overlay.show .ts-modal{transform:none}
+.ts-modal.danger{border-top:3px solid var(--danger)}
+.ts-modal-title{font-size:15.5px;font-weight:700;color:var(--text);margin-bottom:8px}
+.ts-modal-body{font-size:13px;color:var(--dim);line-height:1.55;white-space:pre-line;word-break:break-word;max-height:42vh;overflow:auto}
+.ts-modal-check{display:flex;align-items:flex-start;gap:9px;margin-top:14px;font-size:12.5px;color:var(--dim);cursor:pointer;line-height:1.45}
+.ts-modal-check input{width:16px;height:16px;margin-top:1px;flex:none;accent-color:var(--danger)}
+.ts-modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.btn.danger-solid{background:var(--danger);border:none;color:#1a0506;font-weight:700}
+.btn.danger-solid:hover{filter:brightness(1.07);color:#1a0506}
+
+.ts-toasts{position:fixed;right:18px;bottom:18px;z-index:1100;display:flex;flex-direction:column;gap:10px;
+  max-width:min(360px,calc(100vw - 36px))}
+.ts-toast{background:var(--raised);border:1px solid var(--line-2);border-left:3px solid var(--dim);border-radius:10px;
+  padding:11px 14px;font-size:13px;line-height:1.45;color:var(--text);box-shadow:0 12px 30px -10px rgba(0,0,0,.6);
+  cursor:pointer;word-break:break-word;opacity:0;transform:translateX(14px);transition:opacity .2s ease,transform .2s ease}
+.ts-toast.show{opacity:1;transform:none}
+.ts-toast.ok{border-left-color:var(--ok)}
+.ts-toast.err{border-left-color:var(--danger)}
+.ts-toast.info{border-left-color:var(--info)}
 
 /* ---------------------------------------------------------------------------
    Utilitaires

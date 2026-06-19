@@ -138,14 +138,19 @@
   linksBody.addEventListener("click", async function (e) {
     var btn = e.target.closest('[data-action="revoke-link"]');
     if (!btn) return;
-    if (!window.confirm("Révoquer ce lien d'installation ? Les postes déjà enrôlés ne sont pas affectés.")) return;
+    var ask = await TS.confirm({
+      title: "Révoquer ce lien d'installation ?",
+      body: "Les postes déjà enrôlés ne sont pas affectés.",
+      danger: true, confirmLabel: "Révoquer",
+    });
+    if (!ask.confirmed) return;
     try {
       var r = await fetch("/api/v1/install-tokens/" + btn.getAttribute("data-id"), {
         method: "DELETE", headers: { Accept: "application/json" },
       });
       var d = await jsonOf(r);
-      if (!r.ok) window.alert(d.error || "Action refusée.");
-    } catch (_) { window.alert("Erreur réseau."); }
+      if (!r.ok) TS.toast(d.error || "Action refusée.", "error");
+    } catch (_) { TS.toast("Erreur réseau.", "error"); }
     loadLinks();
   });
 
@@ -299,16 +304,21 @@
         try {
           var r = await fetch("/api/v1/agent-releases/" + id + "/current", { method: "POST", headers: { Accept: "application/json" } });
           var d = await jsonOf(r);
-          if (!r.ok) window.alert(d.error || "Action refusée.");
-        } catch (_) { window.alert("Erreur réseau."); }
+          if (!r.ok) TS.toast(d.error || "Action refusée.", "error");
+        } catch (_) { TS.toast("Erreur réseau.", "error"); }
         loadReleases();
       } else if (action === "del-release") {
-        if (!window.confirm("Supprimer ce paquet ? (irréversible)")) return;
+        var ask = await TS.confirm({
+          title: "Supprimer ce paquet ?",
+          body: "Action irréversible.",
+          danger: true, confirmLabel: "Supprimer",
+        });
+        if (!ask.confirmed) return;
         try {
           var r2 = await fetch("/api/v1/agent-releases/" + id, { method: "DELETE", headers: { Accept: "application/json" } });
           var d2 = await jsonOf(r2);
-          if (!r2.ok) window.alert(d2.error || "Action refusée.");
-        } catch (_) { window.alert("Erreur réseau."); }
+          if (!r2.ok) TS.toast(d2.error || "Action refusée.", "error");
+        } catch (_) { TS.toast("Erreur réseau.", "error"); }
         loadReleases();
       }
     });

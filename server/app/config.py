@@ -64,15 +64,22 @@ class Config:
     # --- En-têtes de sécurité HTTP --------------------------------------
     # HSTS n'est émis que sur une requête HTTPS (cf. _register_security_headers).
     ENABLE_HSTS = _get_bool("ENABLE_HSTS", True)
-    # Content-Security-Policy : désactivée par défaut (chaîne vide) tant qu'elle
-    # n'a pas été validée en navigateur — une CSP trop stricte casserait les CDN
-    # (Chart.js, xterm) ou le WebSocket du bureau à distance. Politique recommandée
-    # à activer une fois en HTTPS (à poser dans le .env, sur UNE ligne) :
-    #   default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
-    #   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net;
-    #   font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;
-    #   connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
-    CONTENT_SECURITY_POLICY = os.environ.get("CONTENT_SECURITY_POLICY", "").strip()
+    # Content-Security-Policy STRICTE par défaut. Tous les assets sont auto-hébergés
+    # (Chart.js, xterm, polices) et les scripts inline ont été externalisés, donc
+    # script-src 'self' (aucun script externe ni inline). 'unsafe-inline' n'est gardé
+    # que pour les STYLES (attributs style= omniprésents + styles injectés par xterm)
+    # — risque faible. ws:/wss: pour le bureau à distance ; data:/blob: pour les
+    # captures (canvas). Surchargeable via la variable d'environnement.
+    _DEFAULT_CSP = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    CONTENT_SECURITY_POLICY = os.environ.get("CONTENT_SECURITY_POLICY", _DEFAULT_CSP).strip()
 
     # --- Secrets métier --------------------------------------------------
     ENROLLMENT_TOKEN = os.environ.get("ENROLLMENT_TOKEN", "dev-enrollment-token")

@@ -109,9 +109,9 @@ def _register_security_headers(app: Flask):
     - ``Strict-Transport-Security`` : envoyé UNIQUEMENT sur une requête HTTPS
       (``request.is_secure`` reflète X-Forwarded-Proto via ProxyFix), pour ne pas
       casser l'accès HTTP de la pile de test.
-    - ``Content-Security-Policy`` : envoyée si ``CONTENT_SECURITY_POLICY`` est
-      définie (désactivée par défaut tant qu'elle n'a pas été validée navigateur,
-      pour ne pas risquer de bloquer le bureau à distance / les CDN).
+    - ``Content-Security-Policy`` : STRICTE par défaut (cf. config — assets
+      auto-hébergés, scripts externalisés). Surchargeable / désactivable via la
+      variable d'environnement ``CONTENT_SECURITY_POLICY`` (chaîne vide = aucune).
     """
     from flask import request
 

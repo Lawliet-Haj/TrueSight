@@ -118,3 +118,23 @@
 
   window.TS = { toast: toast, confirm: confirm };
 })();
+
+// ---- Bascule de thème clair / sombre (mémorisée) -------------------------
+// (le pré-réglage anti-flash est dans theme-init.js, chargé en <head>).
+(function () {
+  "use strict";
+  var root = document.documentElement;
+  var btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  function refresh() {
+    var light = root.classList.contains("theme-light");
+    btn.innerHTML = '<svg><use href="#i-' + (light ? "sun" : "moon") + '"/></svg>';
+    btn.title = light ? "Passer en thème sombre" : "Passer en thème clair";
+  }
+  btn.addEventListener("click", function () {
+    root.classList.toggle("theme-light");
+    try { localStorage.setItem("ts-theme", root.classList.contains("theme-light") ? "light" : "dark"); } catch (e) {}
+    refresh();
+  });
+  refresh();
+})();

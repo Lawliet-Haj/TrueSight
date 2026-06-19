@@ -6,20 +6,18 @@
   <title>{% block title %}TrueSight{% endblock %} — TrueSight</title>
 
   <!-- Thème : applique le choix mémorisé AVANT le rendu (évite le flash) -->
-  <script>try{if(localStorage.getItem('ts-theme')==='light')document.documentElement.classList.add('theme-light');}catch(e){}</script>
+  <script src="{{ url_for('static', filename='js/theme-init.js') }}"></script>
 
-  <!-- Polices : Hanken Grotesk (UI) + JetBrains Mono (chiffres / mono) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <!-- Polices auto-hébergées (Hanken Grotesk + JetBrains Mono) — aucun appel CDN externe -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}">
 
-  <!-- Chart.js via CDN (cf. SPEC §7 : pas de build node) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <!-- Chart.js (auto-hébergé) -->
+  <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 
-  <!-- xterm.js via CDN (terminal interactif du bureau à distance) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <!-- xterm.js (auto-hébergé) — terminal interactif du bureau à distance -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/xterm.min.css') }}">
+  <script src="{{ url_for('static', filename='vendor/xterm.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/addon-fit.min.js') }}"></script>
 
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
@@ -165,27 +163,7 @@
   <symbol id="i-pin" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 21s7-6.5 7-12a7 7 0 10-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
 </defs></svg>
 
-<!-- Bascule de thème clair / sombre (mémorisée) -->
-<script>
-(function () {
-  var root = document.documentElement;
-  var btn = document.getElementById("theme-toggle");
-  if (!btn) return;
-  function refresh() {
-    var light = root.classList.contains("theme-light");
-    btn.innerHTML = '<svg><use href="#i-' + (light ? "sun" : "moon") + '"/></svg>';
-    btn.title = light ? "Passer en thème sombre" : "Passer en thème clair";
-  }
-  btn.addEventListener("click", function () {
-    root.classList.toggle("theme-light");
-    try { localStorage.setItem("ts-theme", root.classList.contains("theme-light") ? "light" : "dark"); } catch (e) {}
-    refresh();
-  });
-  refresh();
-})();
-</script>
-
-<!-- Primitives d'interface partagées (toasts + modale de confirmation) — avant les scripts de page -->
+<!-- Primitives d'interface partagées (toasts + modale + bascule de thème) — avant les scripts de page -->
 <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 
 {% block scripts %}{% endblock %}

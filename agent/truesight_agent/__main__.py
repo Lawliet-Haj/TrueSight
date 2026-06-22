@@ -150,8 +150,13 @@ def _run_remote_helper(argv: list[str]) -> int:
         except Exception:  # noqa: BLE001
             capture_dxgi = None  # type: ignore
             _dxgi_ok = False
-        _hlog.info("Capture disponible : mss=%s, DXGI=%s ; non-assisté=%s.",
-                   remote_capture.is_available(), _dxgi_ok, args.unattended)
+        try:
+            from .remote import audio as _audio_mod
+            _audio_ok = _audio_mod.is_available()
+        except Exception:  # noqa: BLE001
+            _audio_ok = False
+        _hlog.info("Capture disponible : mss=%s, DXGI=%s, audio=%s ; non-assisté=%s.",
+                   remote_capture.is_available(), _dxgi_ok, _audio_ok, args.unattended)
         rc = remote_session.run(args.token, args.ws_url, verify_tls=verify_tls,
                                 desktop_follow=args.unattended)
         # Si la capture DXGI (comtypes) a été utilisée, le GC de comtypes crashe à

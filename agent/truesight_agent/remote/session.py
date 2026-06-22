@@ -74,6 +74,10 @@ class RemoteSession:
         self._input_locked = False            # saisie physique locale bloquée (BlockInput)
         self._lock_on_disconnect = False      # verrouiller le poste en fin de session
         self._privacy = None                  # PrivacyScreen (voile noir local) ou None
+        # Écoute audio (son système du poste) : capture à la demande du viewer.
+        self._audio = None                    # AudioCapture ou None
+        self._audio_thread: threading.Thread | None = None
+        self._audio_on = False
 
     # -- Cycle de vie ---------------------------------------------------------
     def stop(self) -> None:
@@ -407,6 +411,65 @@ class RemoteSession:
                 self._privacy.stop()
             self._send_text({"t": "privacy_state", "on": False, "ok": True})
 
+    # -- Écoute audio (son système du poste) ----------------------------------
+    def _set_audio(self, on: bool) -> None:
+        """Démarre/arrête la capture du son système (loopback) à la demande du viewer."""
+        if not on:
+            self._audio_on = False  # la boucle s'arrête et libère le flux.
+            self._send_text({"t": "audio_state", "on": False, "ok": True})
+            return
+        # Pas de son à l'écran de connexion (helper SYSTEM) : on l'indique au viewer.
+        if self._desktop_follow:
+            _logger.info("Écoute audio ignorée : session non-assistée (écran de connexion).")
+            self._send_text({"t": "audio_state", "on": False, "ok": False})
+            return
+        if self._audio_on:
+            return
+        try:
+            from . import audio as audio_mod
+        except Exception as exc:  # noqa: BLE001
+            _logger.info("Module audio indisponible : %s", exc)
+            self._send_text({"t": "audio_state", "on": False, "ok": False})
+            return
+        if not audio_mod.is_available():
+            self._send_text({"t": "audio_state", "on": False, "ok": False})
+            return
+        self._audio = audio_mod.AudioCapture()
+        if not self._audio.start():
+            self._audio = None
+            self._send_text({"t": "audio_state", "on": False, "ok": False})
+            return
+        self._audio_on = True
+        self._audio_thread = threading.Thread(
+            target=self._audio_loop, name="truesight-remote-audio", daemon=True
+        )
+        self._audio_thread.start()
+        self._send_text({"t": "audio_state", "on": True, "ok": True})
+
+    def _audio_loop(self) -> None:
+        """Lit le son loopback en continu et l'envoie en trames binaires (type 0x10)."""
+        from . import audio as audio_mod
+        capturer = self._audio
+        if capturer is None:
+            return
+        _logger.info("Flux audio démarré.")
+        try:
+            while self._audio_on and not self._should_stop():
+                pcm = capturer.read_mono()
+                if not pcm:
+                    continue
+                frame = audio_mod.build_audio_frame(pcm, capturer.sample_rate)
+                if not self._send_binary(frame):
+                    break
+        except Exception as exc:  # noqa: BLE001 - jamais fatal.
+            _logger.debug("Boucle audio interrompue : %s", exc)
+        finally:
+            try:
+                capturer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            _logger.info("Flux audio arrêté.")
+
     # -- Boucle de réception des entrées (principal) --------------------------
     def _recv_loop(self) -> None:
         """Reçoit les messages texte JSON (viewer → agent) et les applique."""
@@ -481,6 +544,9 @@ class RemoteSession:
         if msg_type == "privacy":
             self._set_privacy(bool(data.get("on")))
             return
+        if msg_type == "audio":
+            self._set_audio(bool(data.get("on")))
+            return
         # Sinon : entrée souris/clavier effective.
         if self._desktop_follow:
             self._ensure_inject_desktop()
@@ -554,6 +620,14 @@ class RemoteSession:
             except Exception:  # noqa: BLE001
                 pass
             self._privacy = None
+        # Arrête l'écoute audio (la boucle libère le flux PortAudio).
+        self._audio_on = False
+        if self._audio is not None:
+            try:
+                self._audio.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._audio = None
         # Verrouillage du poste à la déconnexion (option viewer).
         if self._lock_on_disconnect:
             try:
@@ -567,7 +641,7 @@ class RemoteSession:
                 ws.close()
             except Exception:  # noqa: BLE001
                 pass
-        for thread in (self._send_thread, self._cursor_thread):
+        for thread in (self._send_thread, self._cursor_thread, self._audio_thread):
             if thread is not None:
                 try:
                     thread.join(timeout=5)

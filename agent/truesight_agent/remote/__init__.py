@@ -43,6 +43,16 @@ FRAME_HEADER_SIZE = 8
 MSG_TYPE_TILED_FRAME = 0x02
 TILED_HEADER_SIZE = 10
 TILE_SUBHEADER_SIZE = 12
+
+# Trame AUDIO (écoute du son système, agent → viewer). En-tête 8 octets :
+#   octet 0 : version (0x01)
+#   octet 1 : type (0x10 = audio PCM)
+#   octets 2-5 : fréquence d'échantillonnage (uint32 LE)
+#   octet 6 : nombre de canaux (uint8, 1 = mono)
+#   octet 7 : drapeaux (uint8, réservé)
+# Puis : échantillons PCM 16 bits signés (little-endian), entrelacés si stéréo.
+MSG_TYPE_AUDIO = 0x10
+AUDIO_HEADER_SIZE = 8
 # Taille de tuile par défaut (carré). Compromis : assez gros pour limiter le
 # surcoût d'en-têtes JPEG, assez petit pour ne renvoyer que de petites régions.
 DEFAULT_TILE_SIZE = 256

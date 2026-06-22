@@ -136,6 +136,8 @@ pyinstaller `
     --collect-all "winpty" `
     --collect-all "dxcam" `
     --collect-all "comtypes" `
+    --collect-all "pyaudiowpatch" `
+    --hidden-import "_portaudiowpatch" `
     --collect-submodules "truesight_agent" `
     "$entryPoint"
 

@@ -42,6 +42,7 @@
   var elSas = document.getElementById("remote-sas");
   var elPrivacy = document.getElementById("remote-privacy");
   var elLockExit = document.getElementById("remote-lockexit");
+  var elAudio = document.getElementById("remote-audio");
   if (!elStart || !elCanvas) return;
 
   var ctx = elCanvas.getContext("2d", { alpha: false });
@@ -77,6 +78,13 @@
   var lockInputOn = false;
   var privacyOn = false;
   var lockExitOn = false;
+
+  // --- Écoute audio (son système du poste, lecture Web Audio) ---
+  var audioOn = false;
+  var audioCtx = null;
+  var audioGain = null;
+  var audioPlayTime = 0;          // prochain instant de lecture planifié (s)
+  var AUDIO_JITTER = 0.18;        // tampon initial anti-coupure (s)
 
   // ---------------------------------------------------------------------------
   // Utilitaires UI
@@ -125,10 +133,12 @@
       setControlling(false);
       // Réinitialise les bascules de contrôle exclusif (l'agent les relâche aussi).
       setExclusiveButtons(false);
-      lockInputOn = false; privacyOn = false; lockExitOn = false;
+      lockInputOn = false; privacyOn = false; lockExitOn = false; audioOn = false;
       setToggle(elLockInput, false);
       setToggle(elPrivacy, false);
       setToggle(elLockExit, false);
+      setToggle(elAudio, false);
+      stopAudioPlayback();
     }
   }
 
@@ -155,7 +165,7 @@
 
   // Active/désactive les boutons de contrôle exclusif (session ouverte requise).
   function setExclusiveButtons(enabled) {
-    [elLockInput, elSas, elPrivacy, elLockExit].forEach(function (b) {
+    [elLockInput, elSas, elPrivacy, elLockExit, elAudio].forEach(function (b) {
       if (b) b.disabled = !enabled;
     });
   }
@@ -282,7 +292,52 @@
     if (version !== 0x01) return;
     if (frameType === 0x00) handleFullFrame(dv, buffer);       // trame pleine (keyframe)
     else if (frameType === 0x02) handleTiledFrame(dv, buffer); // trame tuilée (delta)
+    else if (frameType === 0x10) handleAudioFrame(dv, buffer); // son système (PCM)
     // autres types : ignorés (compat ascendante).
+  }
+
+  // Trame AUDIO : [version][type=0x10][rate u32][channels u8][flags u8] + PCM int16 mono.
+  // Lecture via Web Audio : on planifie chaque bloc à la suite (tampon anti-jitter).
+  function handleAudioFrame(dv, buffer) {
+    if (!audioOn || !audioCtx) return;
+    var rate = dv.getUint32(2, true);
+    if (!rate) return;
+    var pcm = new Int16Array(buffer, 8);
+    if (!pcm.length) return;
+    var f32 = new Float32Array(pcm.length);
+    for (var i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+    try {
+      var buf = audioCtx.createBuffer(1, f32.length, rate);
+      buf.getChannelData(0).set(f32);
+      var src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioGain);
+      var now = audioCtx.currentTime;
+      // Si on a pris du retard (sous-alimentation), on resynchronise avec un peu de marge.
+      if (audioPlayTime < now + 0.01) audioPlayTime = now + AUDIO_JITTER;
+      src.start(audioPlayTime);
+      audioPlayTime += buf.duration;
+    } catch (e) { /* bloc illisible : ignoré */ }
+  }
+
+  function ensureAudioContext() {
+    if (audioCtx) return true;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return false;
+    try {
+      audioCtx = new Ctx();
+      audioGain = audioCtx.createGain();
+      audioGain.gain.value = 1.0;
+      audioGain.connect(audioCtx.destination);
+    } catch (e) { audioCtx = null; return false; }
+    return true;
+  }
+
+  function stopAudioPlayback() {
+    audioPlayTime = 0;
+    if (audioCtx) {
+      try { audioCtx.suspend(); } catch (e) { /* ignore */ }
+    }
   }
 
   // Trame PLEINE : [version][type=0x00][w u16][h u16][monitor u8][flags u8] + JPEG.
@@ -388,6 +443,14 @@
       setToggle(elPrivacy, privacyOn);
       if (!msg.ok && window.TS && TS.toast) {
         TS.toast("Écran de confidentialité indisponible sur ce poste (Windows 10 2004+ requis).", "error");
+      }
+    } else if (msg.t === "audio_state") {
+      // Confirmation agent : écoute (in)active ; ok=false si indisponible.
+      audioOn = !!msg.on;
+      setToggle(elAudio, audioOn);
+      if (!audioOn) stopAudioPlayback();
+      if (!msg.ok && window.TS && TS.toast) {
+        TS.toast("Écoute audio indisponible (session ouverte requise sur le poste).", "error");
       }
     }
   }
@@ -600,6 +663,10 @@
     if (elLatency) elLatency.textContent = "—";
     elScreen.classList.remove("has-stream");
     if (elCursor) elCursor.classList.add("hidden");
+    // Libère complètement l'audio (contexte fermé → périphérique relâché).
+    audioOn = false;
+    if (audioCtx) { try { audioCtx.close(); } catch (e) { /* ignore */ } audioCtx = null; audioGain = null; }
+    audioPlayTime = 0;
     // Efface le canvas.
     try { ctx.fillStyle = "#05080a"; ctx.fillRect(0, 0, elCanvas.width, elCanvas.height); } catch (e) { /* ignore */ }
     if (document.fullscreenElement) {
@@ -671,6 +738,24 @@
     lockExitOn = !lockExitOn;
     setToggle(elLockExit, lockExitOn);
     sendInput({ t: "lock_on_disconnect", on: lockExitOn });
+  });
+  if (elAudio) elAudio.addEventListener("click", function () {
+    if (elAudio.disabled) return;
+    var want = !audioOn;
+    if (want) {
+      // Le contexte audio doit naître d'un geste utilisateur (ce clic).
+      if (!ensureAudioContext()) {
+        if (window.TS && TS.toast) TS.toast("Audio non supporté par ce navigateur.", "error");
+        return;
+      }
+      try { audioCtx.resume(); } catch (e) { /* ignore */ }
+      audioPlayTime = 0;
+    } else {
+      stopAudioPlayback();
+    }
+    audioOn = want;                  // optimiste ; l'agent confirme via audio_state
+    setToggle(elAudio, audioOn);
+    sendInput({ t: "audio", on: audioOn });
   });
 
   // Ferme proprement la session si l'onglet est quitté.

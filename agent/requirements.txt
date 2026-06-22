@@ -20,6 +20,9 @@ dxcam>=0.3,<0.4
 pillow>=10.0,<12.0
 # Client WebSocket synchrone (session wss vers le relais).
 websocket-client>=1.7,<2.0
+# Écoute audio distante : capture du son système (WASAPI loopback) via PortAudio.
+# Embarque le module compilé _portaudiowpatch (PortAudio statique) — voir audio.py.
+PyAudioWPatch>=0.2.12,<0.3
 # ----------------------------------------------------------------------------
 # Terminal interactif (module terminal/) :
 # PTY ConPTY pour lancer un vrai shell PowerShell/cmd dont l'E/S transite par

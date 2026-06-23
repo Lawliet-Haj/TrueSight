@@ -1009,11 +1009,14 @@
       });
     });
 
-    // Activation par ancre (#terminal / #console / #remote) à l'ouverture.
+    // Activation à l'ouverture : une ancre explicite (#terminal / #console /
+    // #remote) prime ; sinon le PREMIER onglet dans l'ordre de l'utilisateur
+    // (= premier dans le DOM, après applyTabOrder).
     var hash = window.location.hash;
     if (hash === "#console") activate("command");
     else if (hash === "#terminal") activate("terminal");
-    else activate("remote");
+    else if (hash === "#remote") activate("remote");
+    else activate(tabs[0] ? tabs[0].getAttribute("data-tab") : "remote");
   }
 
   // --- Comptes utilisateurs locaux (admin) ---

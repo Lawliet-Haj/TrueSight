@@ -165,7 +165,8 @@
     var catalog = [];  // [{key, label}] depuis le serveur
 
     function rowHtml(key, label) {
-      return '<li class="tab-order-row" data-key="' + key + '">' +
+      return '<li class="tab-order-row" data-key="' + key + '" draggable="true">' +
+        '<span class="to-handle" aria-hidden="true" title="Glisser pour réordonner">⠿</span>' +
         '<span class="to-label">' + label + "</span>" +
         '<span class="grow"></span>' +
         '<button type="button" class="btn xs to-move" data-dir="up" title="Monter" aria-label="Monter">↑</button>' +
@@ -188,6 +189,7 @@
       });
     }
 
+    // Réordonnancement par les flèches ↑/↓ (accessible / repli tactile).
     list.addEventListener("click", function (e) {
       var btn = e.target.closest(".to-move");
       if (!btn) return;
@@ -199,6 +201,42 @@
         row.parentNode.insertBefore(row.nextElementSibling, row);
       }
     });
+
+    // Réordonnancement par glisser-déposer (HTML5 drag & drop).
+    var dragRow = null;
+    function rowAfterPoint(y) {
+      var rows = Array.prototype.slice.call(list.querySelectorAll(".tab-order-row:not(.dragging)"));
+      var closest = null, closestOffset = Number.NEGATIVE_INFINITY;
+      rows.forEach(function (row) {
+        var box = row.getBoundingClientRect();
+        var offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = row; }
+      });
+      return closest;
+    }
+    list.addEventListener("dragstart", function (e) {
+      var row = e.target.closest(".tab-order-row");
+      if (!row) return;
+      dragRow = row;
+      row.classList.add("dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", row.getAttribute("data-key")); } catch (_) {}
+      }
+    });
+    list.addEventListener("dragend", function () {
+      if (dragRow) dragRow.classList.remove("dragging");
+      dragRow = null;
+    });
+    list.addEventListener("dragover", function (e) {
+      if (!dragRow) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      var after = rowAfterPoint(e.clientY);
+      if (after == null) list.appendChild(dragRow);
+      else if (after !== dragRow) list.insertBefore(dragRow, after);
+    });
+    list.addEventListener("drop", function (e) { e.preventDefault(); });
 
     var saveBtn = $("tab-order-save");
     if (saveBtn) saveBtn.addEventListener("click", async function () {

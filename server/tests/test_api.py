@@ -1177,6 +1177,16 @@ def test_install_token_invalid_and_revoke(app, client, admin_session, tmp_path):
     assert "invalide" in client.get(f"/install.ps1?t={token}").get_data(as_text=True)
 
 
+def test_install_script_force_kills_and_retries(client, admin_session):
+    """Le bootstrap force la fin des processus agent (taskkill /F /T) et re-essaie
+    la copie — garde-fou contre « le fichier est en cours d'utilisation »."""
+    token = admin_session.post("/api/v1/install-tokens", json={}).get_json()["token"]
+    body = client.get(f"/install.ps1?t={token}").get_data(as_text=True)
+    assert 'taskkill.exe /F /T /IM "truesight-agent.exe"' in body
+    assert "Stop-AllAgent" in body
+    assert "for ($attempt = 1; $attempt -le 5" in body  # boucle de re-essai de copie
+
+
 def test_install_token_permissions(app, client, admin_session):
     """Création de lien : admin OK, viewer refusé (403)."""
     admin_session.post(

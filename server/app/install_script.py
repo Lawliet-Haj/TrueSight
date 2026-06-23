@@ -75,39 +75,54 @@ try {
     $targetExe    = Join-Path $AppDir  "truesight-agent.exe"
     $targetConfig = Join-Path $DataDir "config.ini"
 
-    # --- 5. Arret du service existant AVANT copie (sans suppression) -----------
-    # On NE supprime PAS le service : un delete + recreate rapproche peut le
-    # laisser « marque pour suppression » et empecher tout redemarrage. Un arret
-    # suffit pour liberer les fichiers (le binPath sous Program Files est inchange).
-    $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($existing) {
-        # DESACTIVE le service avant de l'arreter : sinon la reprise sur echec
-        # (sc failure ... restart) le relance pendant l'install et reverrouille
-        # les fichiers. Le service est repasse en start= auto a l'etape 7.
-        Info "Arret du service existant (desactivation temporaire)..."
-        & sc.exe config $ServiceName start= disabled 2>&1 | Out-Null
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        for ($i = 0; $i -lt 40; $i++) {
-            $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-            if (-not $s -or $s.Status -eq "Stopped") { break }
+    # --- 5. Arret du service + de TOUS les processus agent AVANT copie ---------
+    # Les fichiers _internal\*.pyd (dont servicemanager.pyd) restent verrouilles
+    # tant qu'un truesight-agent.exe tourne : service SYSTEM, compagnon (session
+    # utilisateur) ET helper de session (survit a l'arret du service). Stop-Process
+    # echoue parfois en silence sur l'hote de service en « stop-pending » -> on
+    # FORCE la fin de l'arbre de processus avec taskkill /F /T, puis on attend.
+    # On NE supprime PAS le service (un delete+recreate rapproche peut le laisser
+    # « marque pour suppression ») et on le DESACTIVE d'abord (sinon la reprise sur
+    # echec le relance en pleine copie) ; il repasse en start= auto a l'etape 7.
+    function Stop-AllAgent {
+        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+            & sc.exe config $ServiceName start= disabled 2>&1 | Out-Null
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+        }
+        try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
+        & taskkill.exe /F /T /IM "truesight-agent.exe" 2>&1 | Out-Null
+        for ($j = 0; $j -lt 40; $j++) {
+            if (-not (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue)) { return $true }
             Start-Sleep -Milliseconds 500
         }
+        return $false
     }
-    # Arret du compagnon + de TOUS les helpers (ils verrouillent _internal\*.pyd
-    # et survivent a l'arret du service) ; on attend leur disparition effective.
-    try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
-    Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    for ($i = 0; $i -lt 40; $i++) {
-        if (-not (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue)) { break }
-        Start-Sleep -Milliseconds 500
-    }
+
+    Info "Arret du service et des processus agent existants..."
+    [void](Stop-AllAgent)
     Start-Sleep -Seconds 2
 
-    # --- 6. Deploiement de l'application + configuration -----------------------
+    # --- 6. Deploiement de l'application (avec re-essais) ----------------------
+    # Un fichier peut rester verrouille un court instant apres la fin du processus
+    # (handle pas encore libere) ou par l'antivirus -> on re-tue + on re-essaie.
     Info "Deploiement de l'application dans $AppDir..."
-    Get-ChildItem -Path $AppDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path (Join-Path $srcApp '*') -Destination $AppDir -Recurse -Force
-    if (-not (Test-Path $targetExe)) { throw "Echec de la copie : $targetExe introuvable." }
+    $copied = $false
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Get-ChildItem -Path $AppDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction Stop
+            Copy-Item -Path (Join-Path $srcApp '*') -Destination $AppDir -Recurse -Force -ErrorAction Stop
+            $copied = $true
+            break
+        } catch {
+            $msg = ($_.Exception.Message -split "`n")[0]
+            Info "Copie : tentative $attempt bloquee ($msg). Nouvel arret des processus puis nouvel essai..."
+            [void](Stop-AllAgent)
+            Start-Sleep -Seconds 3
+        }
+    }
+    if (-not $copied -or -not (Test-Path $targetExe)) {
+        throw "Echec de la copie de l'application (fichiers verrouilles). Redemarrez le poste puis relancez l'installation."
+    }
 
     if (-not (Test-Path $targetConfig)) {
         Copy-Item -Path $cfg -Destination $targetConfig -Force

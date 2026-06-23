@@ -135,6 +135,9 @@ def test_build_rescan_is_readonly():
     # Lecture seule : pas d'appel d'installation.
     assert "CreateUpdateInstaller" not in text
     assert "Search('IsInstalled=0 and IsHidden=0')" in text
+    # Émet le bloc JSON parsable par l'UI (liste cochable).
+    assert pc.RESCAN_JSON_MARKER in text
+    assert "ConvertTo-Json" in text
 
 
 # ==========================================================================

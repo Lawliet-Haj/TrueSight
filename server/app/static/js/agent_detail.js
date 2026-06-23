@@ -1155,7 +1155,12 @@
         if (cbAll) cbAll.checked = false;
         return;
       }
-      body.innerHTML = updatesCache.map(function (u) {
+      body.innerHTML = patchRowsHtml(updatesCache);
+      if (cbAll) cbAll.checked = false;
+    }
+
+    function patchRowsHtml(list) {
+      return list.map(function (u) {
         var kb = u.kb || "—";
         var sev = u.severity || "Unknown";
         var size = (u.size_mb != null) ? u.size_mb : "—";
@@ -1172,7 +1177,17 @@
           "<td>" + reboot + "</td>" +
           "</tr>";
       }).join("");
-      if (cbAll) cbAll.checked = false;
+    }
+
+    // Le rescan renvoie, après un marqueur, un JSON de la liste des correctifs.
+    function parseRescanUpdates(stdout) {
+      var marker = "===PATCHES_JSON===";
+      var i = (stdout || "").indexOf(marker);
+      if (i === -1) return null;
+      try {
+        var arr = JSON.parse(stdout.slice(i + marker.length).trim());
+        return Array.isArray(arr) ? arr : null;
+      } catch (e) { return null; }
     }
 
     function loadPatches() {
@@ -1230,7 +1245,30 @@
       }).then(function (res) {
         if (!res.ok) { statusEl.textContent = "Erreur : " + (res.data.error || "envoi impossible"); return; }
         statusEl.textContent = "Analyse en cours sur le poste…";
-        pollCommand(res.data.command_id, statusEl, outputEl);
+        pollCommand(res.data.command_id, statusEl, null, function (data) {
+          if (!data) { statusEl.textContent = "Analyse interrompue."; return; }
+          if (["error", "timeout"].indexOf(data.status) !== -1) {
+            statusEl.textContent = "Échec de l'analyse.";
+            if (outputEl) renderCmdResult(outputEl, data);
+            return;
+          }
+          var parsed = parseRescanUpdates(data.result && data.result.stdout);
+          if (parsed === null) {
+            // Repli : sortie non reconnue → on affiche le texte brut.
+            statusEl.textContent = "Analyse terminée (format non reconnu).";
+            if (outputEl) renderCmdResult(outputEl, data);
+            return;
+          }
+          updatesCache = parsed;
+          body.innerHTML = parsed.length
+            ? patchRowsHtml(parsed)
+            : '<tr><td colspan="6" class="empty-cell">Aucun correctif en attente. Poste à jour.</td></tr>';
+          if (cbAll) cbAll.checked = false;
+          metaEl.textContent = parsed.length
+            + (parsed.length === 1 ? " correctif détecté" : " correctifs détectés")
+            + " — analyse en direct. Cochez puis « Installer la sélection ».";
+          statusEl.textContent = "Analyse terminée.";
+        });
       }).catch(function () { statusEl.textContent = "Erreur réseau lors de l'envoi."; });
     });
 

@@ -122,9 +122,17 @@ def build_install(mode: str, kb_list=None):
     return ("powershell", cmd, PATCH_TIMEOUT)
 
 
+# Marqueur qui précède le bloc JSON dans la sortie du rescan : l'UI le repère
+# pour parser la liste des correctifs et la rendre cochable dans le tableau.
+RESCAN_JSON_MARKER = "===PATCHES_JSON==="
+
+
 def build_rescan():
     """Recherche read-only des correctifs en attente (rafraîchissement à la
-    demande). N'installe rien ; affiche un tableau lisible sur stdout."""
+    demande). N'installe rien. Émet un récap lisible puis, après le marqueur
+    ``RESCAN_JSON_MARKER``, un tableau JSON ``[{kb,title,severity,size_mb,
+    reboot_required}]`` que le dashboard parse pour peupler la liste cochable —
+    fonctionne quel que soit l'âge de l'agent (commande construite côté serveur)."""
     cmd = (
         "$ErrorActionPreference='Stop'; "
         "try { "
@@ -132,11 +140,15 @@ def build_rescan():
         "$searcher = $session.CreateUpdateSearcher(); "
         "$res = $searcher.Search('IsInstalled=0 and IsHidden=0'); "
         "Write-Output ('Correctifs en attente: ' + $res.Updates.Count); "
-        "$rows = @(); "
-        "foreach ($u in $res.Updates) { $kb=''; foreach ($k in $u.KBArticleIDs) { $kb='KB'+$k; break }; "
+        "$items = foreach ($u in $res.Updates) { "
+        "$kb=''; foreach ($k in $u.KBArticleIDs) { $kb='KB'+$k; break }; "
         "$mb=0; try { $mb=[math]::Round($u.MaxDownloadSize/1MB,1) } catch {}; "
-        "$rows += [pscustomobject]@{ KB=$kb; Severite=$u.MsrcSeverity; Mo=$mb; Titre=$u.Title } } "
-        "if ($rows.Count -gt 0) { $rows | Format-Table -AutoSize | Out-String | Write-Output }; "
+        "$sev=$u.MsrcSeverity; if (-not $sev) { $sev='Unknown' }; "
+        "$rb=$false; try { $rb=([int]$u.InstallationBehavior.RebootBehavior -ne 0) } catch {}; "
+        "[pscustomobject]@{ kb=$kb; title=[string]$u.Title; severity=$sev; size_mb=$mb; reboot_required=$rb } }; "
+        "$json='[' + (($items | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join ',') + ']'; "
+        f"Write-Output {_ps_lit(RESCAN_JSON_MARKER)}; "
+        "Write-Output $json; "
         "exit 0 "
         "} catch { Write-Output ('ERREUR: ' + $_.Exception.Message); exit 1 }"
     )

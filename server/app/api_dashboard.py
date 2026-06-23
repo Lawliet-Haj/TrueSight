@@ -20,6 +20,7 @@ from .health import PROBLEM_LABELS, agent_health, is_online
 from .models import (
     Agent,
     AgentSecurity,
+    AgentServices,
     Alert,
     AlertRule,
     AuditLog,
@@ -28,7 +29,9 @@ from .models import (
     HardwareInventory,
     Metric,
     PatchJob,
+    RemediationAttempt,
     RemoteSession,
+    ServiceWatch,
     Site,
     SoftwareInventory,
     User,
@@ -1918,10 +1921,151 @@ def list_alerts():
             "resolved_at": _iso_utc(alert.resolved_at),
             "notified": bool(alert.notified),
             "active": alert.resolved_at is None,
+            # service_down : quels services sont concernés (sinon None).
+            "context": alert.context or None,
         }
         for alert, agent, rule in rows
     ]
     return jsonify(out), 200
+
+
+# --------------------------------------------------------------------------
+# Supervision des services Windows — services par poste + config ServiceWatch
+# --------------------------------------------------------------------------
+def _watch_applies_agent(w: ServiceWatch, agent: Agent) -> bool:
+    """Un ServiceWatch s'applique-t-il à ce poste (scope global/site/tag) ?"""
+    scope = (w.scope or "global").lower()
+    if scope == "global":
+        return True
+    if scope == "site":
+        return bool(agent.site_id) and str(agent.site_id) == (w.scope_value or "")
+    if scope == "tag":
+        return (w.scope_value or "") in (agent.tags or [])
+    return False
+
+
+def _clamp_int(value, default, lo, hi):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def _watch_payload(w: ServiceWatch) -> dict:
+    return {
+        "id": w.id, "service_name": w.service_name, "scope": w.scope,
+        "scope_value": w.scope_value, "auto_restart": w.auto_restart,
+        "max_attempts": w.max_attempts, "is_active": w.is_active,
+    }
+
+
+@bp.get("/agents/<agent_id>/services")
+@login_required
+def get_agent_services(agent_id):
+    """État des services Windows d'un poste + services surveillés + remédiations récentes."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        return jsonify({"error": "agent introuvable"}), 404
+    row = db.session.get(AgentServices, aid)
+    services = row.services if (row and isinstance(row.services, list)) else []
+    watched = set()
+    for w in db.session.query(ServiceWatch).filter_by(is_active=True).all():
+        if _watch_applies_agent(w, agent):
+            watched.add((w.service_name or "").lower())
+    recent = (
+        db.session.query(RemediationAttempt)
+        .filter_by(agent_id=aid)
+        .order_by(RemediationAttempt.created_at.desc())
+        .limit(20).all()
+    )
+    return jsonify({
+        "collected_at": _iso_utc(row.collected_at) if row else None,
+        "services": services,
+        "watched": sorted(watched),
+        "remediations": [
+            {"service": r.service_name, "outcome": r.outcome, "created_at": _iso_utc(r.created_at)}
+            for r in recent
+        ],
+    }), 200
+
+
+@bp.get("/service-watches")
+@admin_required
+def list_service_watches():
+    """Liste des services surveillés (config de supervision)."""
+    rows = db.session.query(ServiceWatch).order_by(ServiceWatch.service_name.asc()).all()
+    return jsonify([_watch_payload(w) for w in rows]), 200
+
+
+@bp.post("/service-watches")
+@admin_required
+def create_service_watch():
+    """Déclare un service surveillé (attendu en cours d'exécution).
+
+    Body : ``{service_name, scope:'global'|'site'|'tag', scope_value, auto_restart, max_attempts}``.
+    """
+    data = request.get_json(silent=True) or {}
+    name = (data.get("service_name") or "").strip()
+    if not name or len(name) > 128:
+        return jsonify({"error": "service_name requis (≤ 128 caractères)"}), 400
+    scope = (data.get("scope") or "global").strip().lower()
+    if scope not in ("global", "site", "tag"):
+        return jsonify({"error": "scope invalide (global | site | tag)"}), 400
+    scope_value = (data.get("scope_value") or "").strip() or None
+    if scope != "global" and not scope_value:
+        return jsonify({"error": "scope_value requis pour site/tag"}), 400
+    w = ServiceWatch(
+        service_name=name, scope=scope, scope_value=scope_value,
+        auto_restart=bool(data.get("auto_restart")),
+        max_attempts=_clamp_int(data.get("max_attempts"), 3, 1, 10),
+        is_active=True, created_by=g.user.id, created_at=utcnow(),
+    )
+    db.session.add(w)
+    db.session.flush()
+    write_audit(action="service_watch.create", user_id=g.user.id,
+                details={"id": w.id, "service": name, "scope": scope,
+                         "auto_restart": w.auto_restart}, commit=False)
+    db.session.commit()
+    return jsonify(_watch_payload(w)), 201
+
+
+@bp.patch("/service-watches/<int:watch_id>")
+@admin_required
+def update_service_watch(watch_id):
+    """Met à jour un service surveillé (auto_restart, max_attempts, is_active)."""
+    w = db.session.get(ServiceWatch, watch_id)
+    if w is None:
+        return jsonify({"error": "service surveillé introuvable"}), 404
+    data = request.get_json(silent=True) or {}
+    if "auto_restart" in data:
+        w.auto_restart = bool(data["auto_restart"])
+    if "is_active" in data:
+        w.is_active = bool(data["is_active"])
+    if "max_attempts" in data:
+        w.max_attempts = _clamp_int(data.get("max_attempts"), w.max_attempts, 1, 10)
+    write_audit(action="service_watch.update", user_id=g.user.id,
+                details={"id": w.id, "auto_restart": w.auto_restart,
+                         "is_active": w.is_active}, commit=False)
+    db.session.commit()
+    return jsonify(_watch_payload(w)), 200
+
+
+@bp.delete("/service-watches/<int:watch_id>")
+@admin_required
+def delete_service_watch(watch_id):
+    """Supprime un service surveillé."""
+    w = db.session.get(ServiceWatch, watch_id)
+    if w is None:
+        return jsonify({"error": "service surveillé introuvable"}), 404
+    db.session.delete(w)
+    write_audit(action="service_watch.delete", user_id=g.user.id,
+                details={"id": watch_id}, commit=False)
+    db.session.commit()
+    return jsonify({"ok": True}), 200
 
 
 # --------------------------------------------------------------------------
@@ -1992,6 +2136,7 @@ WORKZONE_TABS = [
     {"key": "activity", "label": "Activité"},
     {"key": "accounts", "label": "Comptes"},
     {"key": "patches", "label": "Correctifs"},
+    {"key": "services", "label": "Services"},
     {"key": "hardware", "label": "Matériel"},
     {"key": "copilot", "label": "Copilote"},
 ]

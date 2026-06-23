@@ -117,6 +117,47 @@
     </div>
   </div>
 </div>
+
+<!-- Supervision des services Windows -->
+<div class="panel" style="margin-top:14px">
+  <div class="phead">
+    <svg class="ico"><use href="#i-activity"/></svg>
+    <h2>Services supervisés</h2>
+    <span class="tag">alerte si arrêté</span>
+  </div>
+  <div class="pbody">
+    <p class="sub" style="margin-bottom:12px">Déclarez les services Windows qui <b>doivent tourner</b>. Un service surveillé arrêté lève une alerte. Activez <b>« redémarrage auto »</b> (opt‑in) pour qu'il soit relancé automatiquement (garde‑fous : cooldown + max tentatives).</p>
+    <form id="sw-form" class="deploy-form" autocomplete="off">
+      <div class="field grow">
+        <label for="sw-name">Nom du service Windows</label>
+        <input type="text" id="sw-name" class="input" placeholder="ex. Spooler, wuauserv, MonAppService" maxlength="128" required>
+      </div>
+      <div class="field">
+        <label for="sw-scope">Périmètre</label>
+        <select id="sw-scope" class="input">
+          <option value="global">Tous les postes</option>
+          <option value="site">Emplacement</option>
+          <option value="tag">Étiquette</option>
+        </select>
+      </div>
+      <div class="field hidden" id="sw-scopeval-field">
+        <label for="sw-scopeval">Valeur (emplacement / étiquette)</label>
+        <input type="text" id="sw-scopeval" class="input" placeholder="nom du site ou tag">
+      </div>
+      <label class="chk"><input type="checkbox" id="sw-auto"> Redémarrage auto</label>
+      <button type="submit" class="btn go">Ajouter</button>
+      <span class="form-msg" id="sw-msg"></span>
+    </form>
+    <div class="scroll-y sticky-head" style="max-height:none;border-top:1px solid var(--line);margin-top:12px">
+      <table>
+        <thead>
+          <tr><th>Service</th><th>Périmètre</th><th>Redémarrage auto</th><th>État</th><th class="num">Action</th></tr>
+        </thead>
+        <tbody id="sw-body"><tr><td colspan="5" class="empty-cell">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 {% if user.role == 'superadmin' %}

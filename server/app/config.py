@@ -108,6 +108,20 @@ class Config:
     ALERT_CPU_HIGH_PCT = _get_float("ALERT_CPU_HIGH_PCT", 90.0)
     ALERT_RAM_HIGH_PCT = _get_float("ALERT_RAM_HIGH_PCT", 90.0)
 
+    # --- Supervision des services & auto-remédiation --------------------
+    # Règle service_down active (un service surveillé arrêté → alerte).
+    ALERT_SERVICE_DOWN_ENABLED = _get_bool("ALERT_SERVICE_DOWN_ENABLED", True)
+    # Kill-switch global de l'auto-remédiation (redémarrage auto des services).
+    # Même si un ServiceWatch a auto_restart=True, rien n'est lancé si False.
+    REMEDIATION_AUTO_RESTART_ENABLED = _get_bool("REMEDIATION_AUTO_RESTART_ENABLED", True)
+    # Garde-fous anti-boucle : délai mini entre 2 tentatives pour un même
+    # (poste, service), et plafond de tentatives sur une fenêtre glissante.
+    REMEDIATION_COOLDOWN_SECONDS = _get_int("REMEDIATION_COOLDOWN_SECONDS", 600)
+    REMEDIATION_WINDOW_SECONDS = _get_int("REMEDIATION_WINDOW_SECONDS", 3600)
+    REMEDIATION_MAX_ATTEMPTS = _get_int("REMEDIATION_MAX_ATTEMPTS", 3)
+    # Délai max de la commande de remédiation (Restart-Service).
+    REMEDIATION_COMMAND_TIMEOUT = _get_int("REMEDIATION_COMMAND_TIMEOUT", 120)
+
     # --- Admin initial ---------------------------------------------------
     ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@truesight.local")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")

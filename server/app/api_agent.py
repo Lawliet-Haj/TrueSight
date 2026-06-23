@@ -14,6 +14,7 @@ from .extensions import db
 from .models import (
     Agent,
     AgentSecurity,
+    AgentServices,
     Command,
     CommandResult,
     HardwareInventory,
@@ -278,6 +279,18 @@ def heartbeat(agent_id):
         logged_in_user=metrics.get("logged_in_user"),
     )
     db.session.add(metric)
+
+    # État des services Windows (supervision) — envoyé périodiquement par l'agent.
+    # Upsert 1 ligne/agent (overwrite), comme AgentSecurity. Absent = on ne touche pas.
+    services = data.get("services")
+    if isinstance(services, list):
+        svc = db.session.get(AgentServices, agent.id)
+        if svc is None:
+            svc = AgentServices(agent_id=agent.id)
+            db.session.add(svc)
+        svc.services = services
+        svc.collected_at = utcnow()
+
     db.session.commit()
 
     pending_count = (

@@ -317,6 +317,69 @@ class Alert(db.Model):
     triggered_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Contexte additionnel (ex. service_down : quels services sont tombés). NULL
+    # pour les règles historiques (offline/cpu/ram/disk). Rétro-compatible.
+    context: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class AgentServices(db.Model):
+    """État des services Windows d'un poste (1 ligne par agent — ``agent_services``).
+
+    Rafraîchi au heartbeat (détection rapide). ``services`` = liste compacte
+    ``[{name, display_name, state, start_mode}]``. Calqué sur ``AgentSecurity``.
+    """
+
+    __tablename__ = "agent_services"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    services: Mapped[list | None] = mapped_column(JSONType)
+    collected_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+
+class ServiceWatch(db.Model):
+    """Service Windows attendu et sa politique de remédiation (``service_watches``).
+
+    Définit quels services DOIVENT tourner, sur quel périmètre, et si l'agent doit
+    les redémarrer automatiquement (opt-in) quand ils tombent.
+    """
+
+    __tablename__ = "service_watches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Périmètre : 'global' (tous), 'site' (scope_value = site_id), 'tag' (scope_value = tag).
+    scope: Mapped[str] = mapped_column(Text, default="global", nullable=False)
+    scope_value: Mapped[str | None] = mapped_column(Text)
+    auto_restart: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+
+class RemediationAttempt(db.Model):
+    """Tentative de remédiation automatique (``remediation_attempts``).
+
+    Sert aux garde-fous anti-boucle (cooldown / max tentatives) et à l'historique.
+    Le statut est dérivé/mis à jour depuis le ``CommandResult`` lié.
+    """
+
+    __tablename__ = "remediation_attempts"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_name: Mapped[str] = mapped_column(Text, nullable=False)
+    command_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("commands.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow, index=True)
+    outcome: Mapped[str | None] = mapped_column(Text)
 
 
 class AgentRelease(db.Model):

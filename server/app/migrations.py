@@ -35,6 +35,9 @@ def ensure_schema():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences jsonb",
         # Jeton d'installation en clair (re-affichage de la commande d'un lien actif).
         "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS token_plain text",
+        # Contexte d'alerte (ex. service_down : quels services). Tables nouvelles
+        # (agent_services, service_watches, remediation_attempts) créées par create_all.
+        "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS context jsonb",
     ]
     for stmt in statements:
         try:

@@ -1734,6 +1734,166 @@ def test_agent_detail_has_files_panel(client, admin_session):
 
 
 # --------------------------------------------------------------------------
+# Supervision des services Windows + auto-remédiation
+# --------------------------------------------------------------------------
+def _hb_services(client, agent_id, token, services):
+    return client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {}, "services": services}, headers=_auth(token),
+    )
+
+
+def test_heartbeat_services_upsert(client, admin_session):
+    """Le heartbeat avec 'services' upsert AgentServices ; GET /services le renvoie."""
+    agent_id, token = _enroll(client, "MACHINE-SVC1")
+    r = _hb_services(client, agent_id, token,
+                     [{"name": "Spooler", "state": "running", "start_mode": "auto"}])
+    assert r.status_code == 200
+    data = admin_session.get(f"/api/v1/agents/{agent_id}/services").get_json()
+    assert any(s["name"] == "Spooler" for s in data["services"])
+
+
+def test_service_down_rule_seeded(client, admin_session, app):
+    """La règle service_down est créée au boot."""
+    from app.extensions import db
+    from app.models import AlertRule
+    with app.app_context():
+        assert db.session.query(AlertRule).filter_by(type="service_down").first() is not None
+
+
+def test_service_watch_crud(client, admin_session):
+    """CRUD d'un service surveillé (admin)."""
+    r = admin_session.post("/api/v1/service-watches",
+                           json={"service_name": "Spooler", "auto_restart": False})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    wid = r.get_json()["id"]
+    assert any(w["service_name"] == "Spooler" for w in admin_session.get("/api/v1/service-watches").get_json())
+    p = admin_session.patch(f"/api/v1/service-watches/{wid}", json={"auto_restart": True})
+    assert p.get_json()["auto_restart"] is True
+    assert admin_session.delete(f"/api/v1/service-watches/{wid}").status_code == 200
+
+
+def test_service_watch_requires_admin(client):
+    assert client.post("/api/v1/service-watches", json={"service_name": "X"}).status_code == 401
+
+
+def test_service_down_alert_and_resolution(client, admin_session, app):
+    """Service surveillé arrêté → alerte service_down (avec contexte) ; revenu → résolue."""
+    from app import alerts
+    agent_id, token = _enroll(client, "MACHINE-SVC2")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "MyApp", "auto_restart": False})
+
+    _hb_services(client, agent_id, token, [{"name": "MyApp", "state": "stopped", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+    sd = [a for a in admin_session.get("/api/v1/alerts").get_json()
+          if a["type"] == "service_down" and a["agent_id"] == agent_id]
+    assert sd and sd[0]["context"] and "MyApp" in sd[0]["context"]["services"]
+
+    _hb_services(client, agent_id, token, [{"name": "MyApp", "state": "running", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+    active = [a for a in admin_session.get("/api/v1/alerts?status=active").get_json()
+              if a["type"] == "service_down" and a["agent_id"] == agent_id]
+    assert not active
+
+
+def test_service_down_no_false_positive_without_report(client, admin_session, app):
+    """Un poste sans AgentServices ne déclenche pas service_down."""
+    from app import alerts
+    agent_id, _ = _enroll(client, "MACHINE-SVC2B")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "MyApp", "auto_restart": False})
+    with app.app_context():
+        alerts.evaluate_all(app)
+    sd = [a for a in admin_session.get("/api/v1/alerts").get_json()
+          if a["type"] == "service_down" and a["agent_id"] == agent_id]
+    assert not sd
+
+
+def test_service_down_auto_remediation(client, admin_session, app):
+    """auto_restart=True + service arrêté → Command système Restart-Service + audit."""
+    import uuid as _uuid
+    from app import alerts
+    from app.extensions import db
+    from app.models import Command, RemediationAttempt
+    agent_id, token = _enroll(client, "MACHINE-SVC3")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "MyApp", "auto_restart": True})
+    _hb_services(client, agent_id, token, [{"name": "MyApp", "state": "stopped", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+        cmds = db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).all()
+        rem = [c for c in cmds if "Restart-Service" in (c.command_text or "")]
+        assert rem, "aucune commande de remédiation créée"
+        assert rem[0].created_by is None  # commande système
+        assert db.session.query(RemediationAttempt).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 1
+    assert "remediation.auto" in [e["action"] for e in admin_session.get("/api/v1/audit?limit=50").get_json()]
+
+
+def test_no_remediation_when_opt_out(client, admin_session, app):
+    """auto_restart=False → alerte mais AUCUNE commande de remédiation."""
+    import uuid as _uuid
+    from app import alerts
+    from app.extensions import db
+    from app.models import Command
+    agent_id, token = _enroll(client, "MACHINE-SVC3B")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "MyApp", "auto_restart": False})
+    _hb_services(client, agent_id, token, [{"name": "MyApp", "state": "stopped", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+        assert db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 0
+
+
+def test_remediation_anti_double(client, admin_session, app):
+    """Deux cycles d'affilée ne créent qu'UNE commande (anti-doublon/cooldown)."""
+    import uuid as _uuid
+    from app import alerts
+    from app.extensions import db
+    from app.models import Command
+    agent_id, token = _enroll(client, "MACHINE-SVC4")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "MyApp", "auto_restart": True})
+    _hb_services(client, agent_id, token, [{"name": "MyApp", "state": "stopped", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+        alerts.evaluate_all(app)
+        assert db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 1
+
+
+def test_remediation_rejects_injection_name(client, admin_session, app):
+    """Un nom de service avec caractères dangereux ne produit aucune commande."""
+    import uuid as _uuid
+    from app import alerts
+    from app.extensions import db
+    from app.models import Command
+    agent_id, token = _enroll(client, "MACHINE-SVC5")
+    admin_session.post("/api/v1/service-watches", json={"service_name": "Bad; Stop-Computer", "auto_restart": True})
+    _hb_services(client, agent_id, token, [{"name": "Bad; Stop-Computer", "state": "stopped", "start_mode": "auto"}])
+    with app.app_context():
+        alerts.evaluate_all(app)
+        assert db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 0
+
+
+def test_services_tab_in_catalog(client, admin_session):
+    """L'onglet 'services' est dans le catalogue canonique (UI Réglages)."""
+    tabs = admin_session.get("/api/v1/settings/preferences").get_json()["tabs"]
+    assert any(t["key"] == "services" for t in tabs)
+
+
+def test_agent_detail_has_services_panel(client, admin_session):
+    """La fiche poste embarque l'onglet et le panneau Services."""
+    agent_id, _ = _enroll(client, "MACHINE-SVCUI")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    for marker in ("panel-services", "svc-body", "svc-load", 'data-tab="services"'):
+        assert marker in html, f"marqueur panneau Services manquant : {marker}"
+
+
+def test_settings_has_service_watches_panel(client, admin_session):
+    """La page Réglages embarque le formulaire 'Services supervisés'."""
+    html = admin_session.get("/settings").get_data(as_text=True)
+    for marker in ("sw-form", "sw-body", "Services supervisés"):
+        assert marker in html, f"marqueur panneau supervision manquant : {marker}"
+
+
+# --------------------------------------------------------------------------
 # Préférences UI — ordre des onglets de la fiche poste
 # --------------------------------------------------------------------------
 def test_settings_preferences_default(client, admin_session):

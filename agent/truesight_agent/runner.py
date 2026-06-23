@@ -296,10 +296,19 @@ class AgentRunner:
             "agent_version": __version__,
             "hostname": cfg.get_hostname(),
         }
+        # Supervision des services : on remonte l'état des services 1 heartbeat
+        # sur N (~2 min) pour une détection rapide sans spawn PowerShell à chaque
+        # battement. Le serveur upsert AgentServices quand le champ est présent.
+        _SERVICES_EVERY = 4
+        hb_count = 0
         while not self._stop_event.is_set():
             try:
                 metrics = collectors.collect_metrics()
-                result = self.client.heartbeat(metrics, meta=meta)
+                services = None
+                if hb_count % _SERVICES_EVERY == 0:
+                    services = collectors.collect_services()
+                hb_count += 1
+                result = self.client.heartbeat(metrics, meta=meta, services=services)
                 if result.ok and isinstance(result.data, dict):
                     # Pilotage central des intervalles.
                     server_config = result.data.get("config")

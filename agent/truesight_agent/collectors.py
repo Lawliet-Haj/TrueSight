@@ -163,6 +163,60 @@ def collect_security() -> dict:
     }
 
 
+# Nombre maximum de services remontés (borne le volume JSON du heartbeat).
+_MAX_SERVICES = 1000
+
+
+def collect_services() -> list:
+    """État des services Windows : ``[{name, display_name, state, start_mode}]``.
+
+    Via ``Get-CimInstance Win32_Service``. Sert à la supervision (un service
+    attendu arrêté → alerte / auto-remédiation côté serveur). Tolérant : renvoie
+    ``[]`` en cas d'échec ; jamais bloquant. Liste bornée à ``_MAX_SERVICES``.
+    """
+    cmd = (
+        "Get-CimInstance Win32_Service | "
+        "Select-Object Name,DisplayName,State,StartMode | ConvertTo-Json -Compress"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+            capture_output=True, text=True, timeout=45, creationflags=_CREATE_NO_WINDOW,
+        )
+        raw = (proc.stdout or "").strip()
+        if not raw:
+            return []
+        data = json.loads(raw)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        _logger.info("État des services indisponible : %s", exc)
+        return []
+    except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+        _logger.info("État des services indisponible (%s).", exc)
+        return []
+
+    # ConvertTo-Json renvoie un objet seul si 1 service, sinon une liste.
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return []
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("Name") or "").strip()
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "display_name": str(item.get("DisplayName") or "").strip(),
+            "state": str(item.get("State") or "").strip().lower(),        # running / stopped …
+            "start_mode": str(item.get("StartMode") or "").strip().lower(),  # auto / manual / disabled
+        })
+        if len(out) >= _MAX_SERVICES:
+            break
+    return out
+
+
 def _collect_defender() -> dict:
     """État de Windows Defender via ``Get-MpComputerStatus`` (PowerShell)."""
     cmd = (

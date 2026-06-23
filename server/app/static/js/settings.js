@@ -271,4 +271,96 @@
   }
 
   setupTabOrder();
+
+  // ---- Services supervisés (admin) ----
+  function setupServiceWatches() {
+    var body = $("sw-body");
+    if (!body) return;
+    var form = $("sw-form");
+    var msg = $("sw-msg");
+    var scopeSel = $("sw-scope");
+    var scopeValField = $("sw-scopeval-field");
+
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+    function scopeLabel(s, v) {
+      if (s === "site") return "Emplacement : " + (v || "?");
+      if (s === "tag") return "Étiquette : " + (v || "?");
+      return "Tous les postes";
+    }
+    function render(rows) {
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucun service surveillé.</td></tr>'; return; }
+      body.innerHTML = rows.map(function (w) {
+        return "<tr>" +
+          '<td class="mono">' + esc(w.service_name) + "</td>" +
+          "<td>" + esc(scopeLabel(w.scope, w.scope_value)) + "</td>" +
+          '<td><button type="button" class="btn xs sw-auto' + (w.auto_restart ? " go" : "") + '" data-id="' + w.id + '" data-on="' + (w.auto_restart ? "1" : "0") + '">' + (w.auto_restart ? "Activé" : "Désactivé") + "</button></td>" +
+          "<td>" + (w.is_active ? '<span class="badge ok">actif</span>' : '<span class="badge off">inactif</span>') + "</td>" +
+          '<td class="num"><button type="button" class="btn xs danger sw-del" data-id="' + w.id + '"><svg><use href="#i-x"/></svg>Suppr.</button></td>' +
+          "</tr>";
+      }).join("");
+    }
+    async function load() {
+      try {
+        var r = await fetch("/api/v1/service-watches", { headers: { Accept: "application/json" } });
+        if (r.status === 401) { window.location.href = "/login"; return; }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        render(await r.json());
+      } catch (_) {
+        body.innerHTML = '<tr><td colspan="5" class="empty-cell err-cell">Erreur de chargement.</td></tr>';
+      }
+    }
+
+    if (scopeSel) scopeSel.addEventListener("change", function () {
+      scopeValField.classList.toggle("hidden", scopeSel.value === "global");
+    });
+    if (form) form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      clearMsg(msg);
+      var name = $("sw-name").value.trim();
+      if (!name) { setMsg(msg, "Nom de service requis.", false); return; }
+      var payload = { service_name: name, scope: scopeSel.value, auto_restart: $("sw-auto").checked };
+      if (scopeSel.value !== "global") payload.scope_value = $("sw-scopeval").value.trim();
+      try {
+        var r = await postJSON("/api/v1/service-watches", payload);
+        var d = await jsonOf(r);
+        if (!r.ok) { setMsg(msg, d.error || "Échec.", false); return; }
+        form.reset();
+        scopeValField.classList.add("hidden");
+        setMsg(msg, "Service ajouté à la supervision.", true);
+        load();
+      } catch (_) { setMsg(msg, "Erreur réseau.", false); }
+    });
+    body.addEventListener("click", async function (e) {
+      var auto = e.target.closest(".sw-auto");
+      var del = e.target.closest(".sw-del");
+      if (auto) {
+        var on = auto.getAttribute("data-on") === "1";
+        try {
+          await fetch("/api/v1/service-watches/" + auto.getAttribute("data-id"), {
+            method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ auto_restart: !on }),
+          });
+        } catch (_) { /* ignore */ }
+        load();
+      } else if (del) {
+        var ask = await TS.confirm({
+          title: "Retirer ce service de la supervision ?",
+          body: "Plus d'alerte ni de redémarrage automatique pour ce service.",
+          danger: true, confirmLabel: "Retirer",
+        });
+        if (!ask.confirmed) return;
+        try {
+          await fetch("/api/v1/service-watches/" + del.getAttribute("data-id"),
+                      { method: "DELETE", headers: { Accept: "application/json" } });
+        } catch (_) { /* ignore */ }
+        load();
+      }
+    });
+    load();
+  }
+  setupServiceWatches();
 })();

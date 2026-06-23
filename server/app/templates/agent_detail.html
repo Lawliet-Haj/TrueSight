@@ -75,6 +75,10 @@
               aria-selected="false" aria-controls="panel-patches" data-tab="patches" tabindex="-1">
         <svg><use href="#i-shield"/></svg>Correctifs
       </button>
+      <button class="tab" id="tab-services" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-services" data-tab="services" tabindex="-1">
+        <svg><use href="#i-activity"/></svg>Services
+      </button>
       <button class="tab" id="tab-hardware" role="tab" type="button"
               aria-selected="false" aria-controls="panel-hardware" data-tab="hardware" tabindex="-1">
         <svg><use href="#i-box"/></svg>Matériel
@@ -379,6 +383,34 @@
           </table>
         </div>
         <pre id="patch-output" class="cmd-output hidden"></pre>
+      </div>
+    </div>
+
+    <!-- Onglet : Services Windows (état remonté au heartbeat ; sert aussi à
+         repérer le nom court d'un service à superviser dans les Réglages). -->
+    <div class="tabpanel hidden" id="panel-services" role="tabpanel" aria-labelledby="tab-services">
+      <div class="svc-win">
+        <div class="console-row" style="margin-bottom:12px">
+          <button class="btn go" id="svc-load" type="button"><svg><use href="#i-refresh"/></svg>Charger les services</button>
+          <input type="search" id="svc-filter" class="input" placeholder="Filtrer (nom, état…)" style="max-width:240px">
+          <label class="chk" style="margin-left:auto"><input type="checkbox" id="svc-only-stopped"> Arrêtés uniquement</label>
+        </div>
+        <div class="patch-meta text-faint" id="svc-meta">Le nom court (ex. « Spooler ») est celui à saisir dans Réglages → Services supervisés.</div>
+        <div class="scroll-y sticky-head" style="max-height:none">
+          <table>
+            <thead>
+              <tr>
+                <th>Nom court</th>
+                <th>Nom affiché</th>
+                <th>État</th>
+                <th>Démarrage</th>
+              </tr>
+            </thead>
+            <tbody id="svc-body">
+              <tr><td colspan="4" class="empty-cell">Cliquez sur « Charger les services ».</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 

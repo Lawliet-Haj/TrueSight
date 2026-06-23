@@ -15,12 +15,14 @@
     cpu_high: "CPU élevé",
     ram_high: "RAM élevée",
     disk_low: "Disque faible",
+    service_down: "Service arrêté",
   };
   var TYPE_BADGE = {
     offline: "danger",
     cpu_high: "warn",
     ram_high: "warn",
     disk_low: "warn",
+    service_down: "danger",
   };
 
   function esc(s) {
@@ -92,12 +94,20 @@
           ? '<span class="badge ok">n8n ✓</span>'
           : '<span class="badge off">non</span>';
 
+        // Pour service_down : afficher les services concernés à la place du seuil.
+        var detailCell;
+        if (r.type === "service_down" && r.context && Array.isArray(r.context.services) && r.context.services.length) {
+          detailCell = '<td class="mono text-dim">' + esc(r.context.services.join(", ")) + "</td>";
+        } else {
+          detailCell = '<td class="mono text-dim">' + esc(fmtThreshold(r.type, r.threshold)) + "</td>";
+        }
+
         return (
           "<tr" + clickable + ">" +
           '<td><div class="host"><span class="dot ' + (active ? "alert" : "off") + '"></span>' +
             '<div class="nm">' + esc(r.hostname || "—") + "</div></div></td>" +
           '<td><span class="badge ' + badge + '">' + esc(label) + "</span></td>" +
-          '<td class="mono text-dim">' + esc(fmtThreshold(r.type, r.threshold)) + "</td>" +
+          detailCell +
           '<td><span class="seen" title="' + esc(fmtDate(r.triggered_at)) + '">' + esc(fmtRelative(r.triggered_at)) + "</span></td>" +
           "<td>" + resolvedCell + "</td>" +
           "<td>" + notifiedCell + "</td>" +

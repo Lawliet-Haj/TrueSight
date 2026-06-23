@@ -77,18 +77,21 @@ def ensure_alert_rules():
     """Crée les règles d'alerte par défaut si elles n'existent pas déjà."""
     cfg = current_app.config
     defaults = [
-        ("offline", float(cfg.get("OFFLINE_THRESHOLD_SECONDS", 300))),
-        ("disk_low", float(cfg.get("ALERT_DISK_LOW_PCT", 10))),
-        ("cpu_high", float(cfg.get("ALERT_CPU_HIGH_PCT", 90))),
-        ("ram_high", float(cfg.get("ALERT_RAM_HIGH_PCT", 90))),
+        ("offline", float(cfg.get("OFFLINE_THRESHOLD_SECONDS", 300)), True),
+        ("disk_low", float(cfg.get("ALERT_DISK_LOW_PCT", 10)), True),
+        ("cpu_high", float(cfg.get("ALERT_CPU_HIGH_PCT", 90)), True),
+        ("ram_high", float(cfg.get("ALERT_RAM_HIGH_PCT", 90)), True),
+        # service_down : seuil non utilisé (0). Active par config ; sans
+        # ServiceWatch défini, la règle ne déclenche jamais (no-op).
+        ("service_down", 0.0, bool(cfg.get("ALERT_SERVICE_DOWN_ENABLED", True))),
     ]
 
     created = 0
-    for rule_type, threshold in defaults:
+    for rule_type, threshold, is_active in defaults:
         exists = db.session.query(AlertRule).filter_by(type=rule_type).first()
         if exists is None:
             db.session.add(
-                AlertRule(type=rule_type, threshold=threshold, is_active=True)
+                AlertRule(type=rule_type, threshold=threshold, is_active=is_active)
             )
             created += 1
 

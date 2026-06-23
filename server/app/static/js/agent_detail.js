@@ -1347,6 +1347,74 @@
     });
   }
 
+  // --- Onglet Services : état des services Windows (remonté au heartbeat) ---
+  // Lecture seule. Sert aussi à repérer le NOM COURT exact d'un service à
+  // déclarer dans Réglages → Services supervisés.
+  function setupServices() {
+    var body = document.getElementById("svc-body");
+    if (!body) return;
+    var loadBtn = document.getElementById("svc-load");
+    var meta = document.getElementById("svc-meta");
+    var filterEl = document.getElementById("svc-filter");
+    var onlyStopped = document.getElementById("svc-only-stopped");
+    var all = [];
+    var watched = {};
+
+    function stateBadge(state) {
+      var s = (state || "").toLowerCase();
+      if (s === "running") return '<span class="badge ok">en cours</span>';
+      if (s === "stopped") return '<span class="badge danger">arrêté</span>';
+      return '<span class="badge off">' + esc(state || "—") + "</span>";
+    }
+    function render() {
+      var q = ((filterEl && filterEl.value) || "").trim().toLowerCase();
+      var rows = all.filter(function (s) {
+        if (onlyStopped && onlyStopped.checked && (s.state || "").toLowerCase() === "running") return false;
+        if (!q) return true;
+        return (String(s.name || "") + " " + String(s.display_name || "") + " " + String(s.state || "")).toLowerCase().indexOf(q) >= 0;
+      });
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="empty-cell">Aucun service.</td></tr>'; return; }
+      body.innerHTML = rows.map(function (s) {
+        var isWatched = watched[(s.name || "").toLowerCase()];
+        return "<tr>" +
+          '<td class="mono">' + esc(s.name || "—") + (isWatched ? ' <span class="badge warn" title="Service supervisé">supervisé</span>' : "") + "</td>" +
+          "<td>" + esc(s.display_name || "—") + "</td>" +
+          "<td>" + stateBadge(s.state) + "</td>" +
+          '<td class="text-dim">' + esc(s.start_mode || "—") + "</td>" +
+          "</tr>";
+      }).join("");
+    }
+    function load() {
+      body.innerHTML = '<tr><td colspan="4" class="empty-cell">Chargement…</td></tr>';
+      fetch("/api/v1/agents/" + AGENT_ID + "/services", { headers: { Accept: "application/json" } })
+        .then(function (r) {
+          if (r.status === 401) { window.location.href = "/login"; return Promise.reject(); }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          all = Array.isArray(d.services) ? d.services : [];
+          watched = {};
+          (d.watched || []).forEach(function (n) { watched[n] = true; });
+          if (meta) {
+            meta.textContent = all.length
+              ? all.length + " service(s) — collecté " + (d.collected_at ? new Date(d.collected_at).toLocaleString("fr-FR") : "—") + ". Le nom court (1re colonne) est celui à saisir dans Réglages → Services supervisés."
+              : "Aucun service remonté pour l'instant — l'agent les envoie périodiquement (toutes les ~2 min).";
+          }
+          render();
+        })
+        .catch(function () { body.innerHTML = '<tr><td colspan="4" class="empty-cell err-cell">Erreur de chargement.</td></tr>'; });
+    }
+    if (loadBtn) loadBtn.addEventListener("click", load);
+    if (filterEl) filterEl.addEventListener("input", render);
+    if (onlyStopped) onlyStopped.addEventListener("change", render);
+
+    var loadedOnce = false;
+    document.addEventListener("ts:tab-activated", function (ev) {
+      if (ev.detail && ev.detail.tab === "services" && !loadedOnce) { loadedOnce = true; load(); }
+    });
+  }
+
   // Applique l'ordre des onglets personnalisé dans les Réglages (data-tab-order).
   // À exécuter AVANT setupTabs pour que la navigation clavier suive le nouvel ordre.
   function applyTabOrder() {
@@ -1388,6 +1456,7 @@
     setupActivity();
     setupAccounts();
     setupPatches();
+    setupServices();
     setupTags();
     setupFocus();
     applyTabOrder();

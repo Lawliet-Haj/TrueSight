@@ -7,18 +7,33 @@ condition redevient fausse. Toute nouvelle alerte est notifiée à n8n si
 ``N8N_WEBHOOK_URL`` est défini — un échec réseau ne fait jamais planter la boucle.
 """
 import logging
-from datetime import timezone
+import re
+from datetime import timedelta, timezone
 
 import requests
 
 from .extensions import db
-from .models import Agent, Alert, AlertRule, Metric
+from .models import (
+    Agent,
+    AgentServices,
+    Alert,
+    AlertRule,
+    Command,
+    Metric,
+    RemediationAttempt,
+    ServiceWatch,
+)
 from .models import utcnow
+from .security import write_audit
 
 _logger = logging.getLogger("truesight.alerts")
 
 # Délai d'attente court pour ne jamais bloquer la boucle de fond.
 _N8N_TIMEOUT_SECONDS = 5
+
+# Nom de service Windows autorisé pour une remédiation (liste blanche stricte) :
+# alphanumérique + . _ - espace. Bloque toute injection PowerShell.
+_SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9._\- ]{1,128}$")
 
 
 def evaluate_all(app):
@@ -33,11 +48,17 @@ def evaluate_all(app):
             return
         agents = db.session.query(Agent).all()
         offline_threshold = app.config["OFFLINE_THRESHOLD_SECONDS"]
+        # Services supervisés (préchargés une fois par cycle) — utilisés par la
+        # règle service_down. Petite table, on évite N requêtes par agent.
+        watches = (
+            db.session.query(ServiceWatch).filter_by(is_active=True).all()
+            if any(r.type == "service_down" for r in rules) else []
+        )
 
         for agent in agents:
             latest = _latest_metric(agent.id)
             for rule in rules:
-                _evaluate_rule(app, agent, rule, latest, offline_threshold)
+                _evaluate_rule(app, agent, rule, latest, offline_threshold, watches)
 
         db.session.commit()
     except Exception:  # pragma: no cover - robustesse boucle de fond
@@ -68,8 +89,14 @@ def _active_alert(agent_id, rule_id):
     )
 
 
-def _evaluate_rule(app, agent: Agent, rule: AlertRule, metric, offline_threshold: int):
+def _evaluate_rule(app, agent: Agent, rule: AlertRule, metric, offline_threshold: int, watches=None):
     """Évalue une règle pour un agent et gère le cycle déclenchement/résolution."""
+    # La règle service_down est multi-services (1 poste → N services attendus) et
+    # déclenche l'auto-remédiation : traitement dédié.
+    if rule.type == "service_down":
+        _evaluate_service_down(app, agent, rule, watches or [])
+        return
+
     breached, value = _check_condition(agent, rule, metric, offline_threshold)
     existing = _active_alert(agent.id, rule.id)
 
@@ -95,6 +122,157 @@ def _evaluate_rule(app, agent: Agent, rule: AlertRule, metric, offline_threshold
 
     elif not breached and existing is not None:
         existing.resolved_at = utcnow()
+
+
+# --------------------------------------------------------------------------
+# Supervision des services Windows + auto-remédiation
+# --------------------------------------------------------------------------
+def _watch_applies(watch: ServiceWatch, agent: Agent) -> bool:
+    """Le service surveillé s'applique-t-il à ce poste (scope global/site/tag) ?"""
+    scope = (watch.scope or "global").lower()
+    if scope == "global":
+        return True
+    if scope == "site":
+        return bool(agent.site_id) and str(agent.site_id) == (watch.scope_value or "")
+    if scope == "tag":
+        return (watch.scope_value or "") in (agent.tags or [])
+    return False
+
+
+def _down_watched_services(agent: Agent, watches) -> list:
+    """[(watch, service_name)] des services attendus NON démarrés sur ce poste.
+
+    Si l'agent n'a pas encore remonté ses services (AgentServices absent), on ne
+    déclenche rien (pas de faux positif au démarrage)."""
+    applicable = [w for w in watches if _watch_applies(w, agent)]
+    if not applicable:
+        return []
+    svc_row = db.session.get(AgentServices, agent.id)
+    if svc_row is None or not isinstance(svc_row.services, list):
+        return []
+    by_name = {}
+    for s in svc_row.services:
+        if isinstance(s, dict) and s.get("name"):
+            by_name[str(s["name"]).lower()] = str(s.get("state") or "").lower()
+    down = []
+    for w in applicable:
+        state = by_name.get((w.service_name or "").lower())
+        if state != "running":  # absent OU arrêté → en panne
+            down.append((w, w.service_name))
+    return down
+
+
+def _evaluate_service_down(app, agent: Agent, rule: AlertRule, watches):
+    """Alerte service_down (1 alerte/poste, contexte = services en panne) +
+    auto-remédiation par service (garde-fous anti-boucle)."""
+    down = _down_watched_services(agent, watches)
+    existing = _active_alert(agent.id, rule.id)
+    down_names = [name for (_w, name) in down]
+
+    if down and existing is None:
+        alert = Alert(
+            agent_id=agent.id, rule_id=rule.id, triggered_at=utcnow(),
+            notified=False, context={"services": down_names},
+        )
+        db.session.add(alert)
+        db.session.flush()
+        alert.notified = _notify_n8n(
+            app, alert_type="service_down", hostname=agent.hostname,
+            agent_id=str(agent.id), value=", ".join(down_names), threshold=None,
+        )
+    elif down and existing is not None:
+        if (existing.context or {}).get("services") != down_names:
+            existing.context = {"services": down_names}
+    elif not down and existing is not None:
+        existing.resolved_at = utcnow()
+
+    # Auto-remédiation : pour chaque service en panne avec auto_restart activé.
+    # Appelée à chaque cycle ; les garde-fous (cooldown/max/anti-doublon) évitent
+    # les rafales et couvrent un service tombé alors que l'alerte est déjà active.
+    if down and app.config.get("REMEDIATION_AUTO_RESTART_ENABLED", True):
+        for watch, name in down:
+            if watch.auto_restart:
+                try:
+                    _maybe_remediate(app, agent, watch, name)
+                except Exception:  # noqa: BLE001 - jamais bloquant.
+                    _logger.exception("Auto-remédiation %s/%s en échec", agent.id, name)
+
+
+def _maybe_remediate(app, agent: Agent, watch: ServiceWatch, service_name: str):
+    """Garde-fous anti-boucle puis, si autorisé, file une commande de redémarrage."""
+    now = utcnow()
+    cooldown = app.config.get("REMEDIATION_COOLDOWN_SECONDS", 600)
+    window = app.config.get("REMEDIATION_WINDOW_SECONDS", 3600)
+    global_max = int(app.config.get("REMEDIATION_MAX_ATTEMPTS", 3))
+    max_attempts = min(int(watch.max_attempts or global_max), global_max)
+
+    recent = (
+        db.session.query(RemediationAttempt)
+        .filter(RemediationAttempt.agent_id == agent.id,
+                RemediationAttempt.service_name == service_name)
+        .order_by(RemediationAttempt.created_at.desc())
+        .all()
+    )
+    # (1) Anti-doublon : une commande de remédiation encore en vol ?
+    for att in recent:
+        if att.command_id is not None:
+            cmd = db.session.get(Command, att.command_id)
+            if cmd is not None and cmd.status in ("pending", "dispatched"):
+                return
+    # (2) Cooldown : une tentative trop récente ?
+    if recent:
+        last = recent[0].created_at
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (now - last).total_seconds() < cooldown:
+                return
+    # (3) Plafond de tentatives sur la fenêtre glissante.
+    cutoff = now - timedelta(seconds=window)
+    in_window = 0
+    for att in recent:
+        ts = att.created_at
+        if ts is not None and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts is not None and ts >= cutoff:
+            in_window += 1
+    if in_window >= max_attempts:
+        _logger.info("Remédiation plafonnée pour %s/%s (%d/%d).",
+                     agent.id, service_name, in_window, max_attempts)
+        return
+    _queue_remediation_command(app, agent, service_name, in_window + 1)
+
+
+def _queue_remediation_command(app, agent: Agent, service_name: str, attempt_n: int):
+    """Crée une Command système (created_by=NULL) de redémarrage du service + une
+    RemediationAttempt + un audit. Valide STRICTEMENT le nom (anti-injection)."""
+    if not _SERVICE_NAME_RE.match(service_name or ""):
+        _logger.warning("Nom de service invalide, remédiation refusée : %r", service_name)
+        return
+    timeout = int(app.config.get("REMEDIATION_COMMAND_TIMEOUT", 120))
+    lit = "'" + service_name.replace("'", "''") + "'"  # littéral PowerShell sûr
+    command_text = (
+        "try { Restart-Service -Name " + lit + " -Force -ErrorAction Stop; "
+        "Write-Output 'OK' } catch { Write-Error $_; exit 1 }"
+    )
+    cmd = Command(
+        agent_id=agent.id, created_by=None, shell="powershell",
+        command_text=command_text, status="pending", timeout_seconds=timeout,
+        created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()
+    db.session.add(RemediationAttempt(
+        agent_id=agent.id, service_name=service_name, command_id=cmd.id,
+        created_at=utcnow(), outcome="queued",
+    ))
+    write_audit(
+        action="remediation.auto", user_id=None, target_agent=agent.id,
+        details={"service": service_name, "command_id": str(cmd.id), "attempt": attempt_n},
+        commit=False,
+    )
+    _logger.info("Auto-remédiation filée : %s -> redémarrage de %s (tentative %d).",
+                 agent.hostname, service_name, attempt_n)
 
 
 def _check_condition(agent: Agent, rule: AlertRule, metric, offline_threshold: int):

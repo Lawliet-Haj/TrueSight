@@ -949,7 +949,33 @@
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && document.body.classList.contains("wz-focus")) apply(false);
     });
-    try { if (localStorage.getItem("ts-wz-focus") === "1") apply(true); } catch (e) { /* ignore */ }
+    // « Remplir la fenêtre » est actif par défaut (les infos matériel/métriques
+    // sont dans l'onglet « Matériel », plus rien sous la zone de travail).
+    // Reste désactivable (bouton / Échap) et le choix est mémorisé.
+    try {
+      var savedFocus = localStorage.getItem("ts-wz-focus");
+      apply(savedFocus === null ? true : savedFocus === "1");
+    } catch (e) { apply(true); }
+  }
+
+  // Regroupe Matériel + Métriques + Logiciels dans l'onglet « Matériel »
+  // (déplace les sections existantes pour ne rien laisser sous la zone de travail).
+  function groupInfoIntoTab() {
+    var panel = document.getElementById("panel-hardware");
+    if (!panel) return;
+    var grid = document.querySelector(".grid-3");
+    var swBody = document.getElementById("software-body");
+    var swPanel = swBody ? swBody.closest(".panel") : null;
+    if (grid) panel.appendChild(grid);
+    if (swPanel) panel.appendChild(swPanel);
+    // Les graphes Chart.js créés dans un onglet masqué peuvent rendre à 0 px :
+    // on force un resize quand l'onglet « Matériel » devient visible.
+    document.addEventListener("ts:tab-activated", function (ev) {
+      if (ev.detail && ev.detail.tab === "hardware") {
+        if (cpuChart) cpuChart.resize();
+        if (ramChart) ramChart.resize();
+      }
+    });
   }
 
   // --- Onglets de la zone de travail (bureau / terminal / commande) ---
@@ -1319,6 +1345,9 @@
   }
 
   // --- Initialisation ---
+  // Regroupe matériel/métriques/logiciels dans l'onglet AVANT de créer les
+  // graphes (les canvases doivent être à leur place définitive).
+  if (IS_ADMIN) groupInfoIntoTab();
   loadDetail();
   loadMetrics();
   loadSoftware();

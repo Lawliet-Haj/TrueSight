@@ -74,6 +74,10 @@
               aria-selected="false" aria-controls="panel-patches" data-tab="patches" tabindex="-1">
         <svg><use href="#i-shield"/></svg>Correctifs
       </button>
+      <button class="tab" id="tab-hardware" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-hardware" data-tab="hardware" tabindex="-1">
+        <svg><use href="#i-box"/></svg>Matériel
+      </button>
       {% if ai_enabled %}
       <button class="tab" id="tab-copilot" role="tab" type="button"
               aria-selected="false" aria-controls="panel-copilot" data-tab="copilot" tabindex="-1">
@@ -355,6 +359,10 @@
         <pre id="patch-output" class="cmd-output hidden"></pre>
       </div>
     </div>
+
+    <!-- Onglet : Matériel / métriques / logiciels — REGROUPÉS ici par le JS
+         (les sections plus bas y sont déplacées au chargement, côté admin). -->
+    <div class="tabpanel hidden" id="panel-hardware" role="tabpanel" aria-labelledby="tab-hardware"></div>
 
     {% if ai_enabled %}
     <!-- Onglet : Copilote IA (diagnostic + propositions d'action à confirmer) -->

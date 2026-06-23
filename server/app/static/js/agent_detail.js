@@ -1344,6 +1344,32 @@
     });
   }
 
+  // Applique l'ordre des onglets personnalisé dans les Réglages (data-tab-order).
+  // À exécuter AVANT setupTabs pour que la navigation clavier suive le nouvel ordre.
+  function applyTabOrder() {
+    var tablist = document.querySelector(".workzone .tablist");
+    if (!tablist) return;
+    var raw = pageData.getAttribute("data-tab-order");
+    if (!raw) return;
+    var order;
+    try { order = JSON.parse(raw); } catch (e) { return; }
+    if (!Array.isArray(order) || !order.length) return;
+    var spacer = tablist.querySelector(".tablist-spacer");
+    var tabs = Array.prototype.slice.call(tablist.querySelectorAll(".tab"));
+    var byKey = {};
+    tabs.forEach(function (t) { byKey[t.getAttribute("data-tab")] = t; });
+    var placed = {};
+    // 1) Onglets de l'ordre voulu (s'ils existent), réinsérés avant le spacer.
+    order.forEach(function (key) {
+      var btn = byKey[key];
+      if (btn) { tablist.insertBefore(btn, spacer); placed[key] = true; }
+    });
+    // 2) Onglets non listés : conservés dans leur ordre d'origine, avant le spacer.
+    tabs.forEach(function (t) {
+      if (!placed[t.getAttribute("data-tab")]) tablist.insertBefore(t, spacer);
+    });
+  }
+
   // --- Initialisation ---
   // Regroupe matériel/métriques/logiciels dans l'onglet AVANT de créer les
   // graphes (les canvases doivent être à leur place définitive).
@@ -1361,6 +1387,7 @@
     setupPatches();
     setupTags();
     setupFocus();
+    applyTabOrder();
     setupTabs();
     setupSoftwareDeploy();
   }

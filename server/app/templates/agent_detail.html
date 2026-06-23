@@ -28,6 +28,7 @@
        data-agent-id="{{ agent_id }}"
        data-is-admin="{{ '1' if is_admin else '0' }}"
        data-ai-enabled="{{ '1' if ai_enabled else '0' }}"
+       data-tab-order='{{ (tab_order or []) | tojson }}'
        class="hidden"></div>
 
   {% if is_admin %}

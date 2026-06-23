@@ -156,4 +156,81 @@
   }
 
   loadStatus();
+
+  // ---- Ordre des onglets de la fiche poste (admin) ----
+  function setupTabOrder() {
+    var list = $("tab-order-list");
+    if (!list) return;  // section absente (viewer)
+    var msg = $("tab-order-msg");
+    var catalog = [];  // [{key, label}] depuis le serveur
+
+    function rowHtml(key, label) {
+      return '<li class="tab-order-row" data-key="' + key + '">' +
+        '<span class="to-label">' + label + "</span>" +
+        '<span class="grow"></span>' +
+        '<button type="button" class="btn xs to-move" data-dir="up" title="Monter" aria-label="Monter">↑</button>' +
+        '<button type="button" class="btn xs to-move" data-dir="down" title="Descendre" aria-label="Descendre">↓</button>' +
+        "</li>";
+    }
+
+    function render(order) {
+      var byKey = {};
+      catalog.forEach(function (t) { byKey[t.key] = t.label; });
+      var keys = [];
+      (order || []).forEach(function (k) { if (byKey[k] && keys.indexOf(k) === -1) keys.push(k); });
+      catalog.forEach(function (t) { if (keys.indexOf(t.key) === -1) keys.push(t.key); });
+      list.innerHTML = keys.map(function (k) { return rowHtml(k, byKey[k]); }).join("");
+    }
+
+    function currentOrder() {
+      return Array.prototype.map.call(list.querySelectorAll(".tab-order-row"), function (li) {
+        return li.getAttribute("data-key");
+      });
+    }
+
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest(".to-move");
+      if (!btn) return;
+      var row = btn.closest(".tab-order-row");
+      if (!row) return;
+      if (btn.getAttribute("data-dir") === "up") {
+        if (row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+      } else if (row.nextElementSibling) {
+        row.parentNode.insertBefore(row.nextElementSibling, row);
+      }
+    });
+
+    var saveBtn = $("tab-order-save");
+    if (saveBtn) saveBtn.addEventListener("click", async function () {
+      clearMsg(msg);
+      try {
+        var r = await postJSON("/api/v1/settings/tab-order", { order: currentOrder() });
+        var d = await jsonOf(r);
+        if (!r.ok) { setMsg(msg, d.error || "Échec.", false); return; }
+        setMsg(msg, "Ordre enregistré. Il s'applique à l'ouverture d'une fiche poste.", true);
+      } catch (_) { setMsg(msg, "Erreur réseau.", false); }
+    });
+
+    var resetBtn = $("tab-order-reset");
+    if (resetBtn) resetBtn.addEventListener("click", async function () {
+      clearMsg(msg);
+      try {
+        var r = await postJSON("/api/v1/settings/tab-order", { order: [] });
+        var d = await jsonOf(r);
+        if (!r.ok) { setMsg(msg, d.error || "Échec.", false); return; }
+        render([]);  // ordre par défaut (catalogue)
+        setMsg(msg, "Ordre réinitialisé (par défaut).", true);
+      } catch (_) { setMsg(msg, "Erreur réseau.", false); }
+    });
+
+    fetch("/api/v1/settings/preferences", { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (d) {
+        catalog = Array.isArray(d.tabs) ? d.tabs : [];
+        render(d.tab_order || []);
+      })
+      .catch(function () { list.innerHTML = '<li class="dl-loading err-cell">Erreur de chargement.</li>'; });
+  }
+
+  setupTabOrder();
 })();

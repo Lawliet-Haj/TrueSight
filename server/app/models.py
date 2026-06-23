@@ -195,6 +195,9 @@ class User(db.Model):
     mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Préférences UI par utilisateur (JSON souple). Ex. {"tab_order": [...]} pour
+    # l'ordre des onglets de la fiche poste. Peut être NULL sur d'anciennes lignes.
+    preferences: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
 
 

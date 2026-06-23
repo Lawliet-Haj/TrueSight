@@ -1943,6 +1943,90 @@ def inventory_software():
 
 
 # --------------------------------------------------------------------------
+# Préférences UI de l'utilisateur courant — ordre des onglets de la fiche poste
+# --------------------------------------------------------------------------
+# Catalogue canonique des onglets de la zone de travail (clé + libellé). Source
+# de vérité partagée : l'UI Réglages l'affiche, la fiche poste réordonne selon
+# l'ordre enregistré, et le POST valide contre l'ensemble des clés connues.
+WORKZONE_TABS = [
+    {"key": "remote", "label": "Bureau à distance"},
+    {"key": "terminal", "label": "Terminal"},
+    {"key": "command", "label": "Commande ponctuelle"},
+    {"key": "processes", "label": "Processus"},
+    {"key": "activity", "label": "Activité"},
+    {"key": "accounts", "label": "Comptes"},
+    {"key": "patches", "label": "Correctifs"},
+    {"key": "hardware", "label": "Matériel"},
+    {"key": "copilot", "label": "Copilote"},
+]
+_WORKZONE_TAB_KEYS = {t["key"] for t in WORKZONE_TABS}
+
+
+def user_tab_order(user) -> list:
+    """Ordre des onglets enregistré par l'utilisateur (liste de clés valides, sans
+    doublon), ou [] si aucun. Tolérant aux préférences NULL/anciennes."""
+    prefs = getattr(user, "preferences", None) or {}
+    raw = prefs.get("tab_order") if isinstance(prefs, dict) else None
+    if not isinstance(raw, list):
+        return []
+    seen = set()
+    out = []
+    for key in raw:
+        if key in _WORKZONE_TAB_KEYS and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+@bp.get("/settings/preferences")
+@login_required
+def get_settings_preferences():
+    """Préférences UI + catalogue des onglets (pour l'écran Réglages)."""
+    return jsonify({
+        "tabs": WORKZONE_TABS,
+        "tab_order": user_tab_order(g.user),
+    }), 200
+
+
+@bp.post("/settings/tab-order")
+@login_required
+def set_settings_tab_order():
+    """Enregistre l'ordre des onglets de la fiche poste pour l'utilisateur courant.
+
+    Body : ``{"order": ["remote", "hardware", ...]}`` — les clés inconnues sont
+    ignorées, les doublons supprimés. Une liste vide réinitialise (ordre par défaut).
+    """
+    data = request.get_json(silent=True) or {}
+    raw = data.get("order")
+    if raw is not None and not isinstance(raw, list):
+        return jsonify({"error": "order doit être une liste"}), 400
+
+    order = []
+    seen = set()
+    for key in (raw or []):
+        if key in _WORKZONE_TAB_KEYS and key not in seen:
+            seen.add(key)
+            order.append(key)
+
+    # Fusion non destructive avec les autres préférences éventuelles.
+    prefs = dict(g.user.preferences or {})
+    prefs["tab_order"] = order
+    g.user.preferences = prefs
+    # SQLAlchemy ne détecte pas toujours la mutation d'un JSON en place : on
+    # réaffecte l'attribut (ci-dessus) ET on marque l'objet modifié par sécurité.
+    db.session.add(g.user)
+
+    write_audit(
+        action="settings.tab_order",
+        user_id=g.user.id,
+        details={"order": order},
+        commit=False,
+    )
+    db.session.commit()
+    return jsonify({"tab_order": order}), 200
+
+
+# --------------------------------------------------------------------------
 # Réglages de l'utilisateur courant — mot de passe & MFA
 # --------------------------------------------------------------------------
 @bp.post("/settings/password")

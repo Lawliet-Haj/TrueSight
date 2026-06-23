@@ -1656,3 +1656,56 @@ def test_install_cmd_download(client, admin_session):
 
     # Jeton inexistant → 403.
     assert client.get("/api/v1/install/inexistant/installer.cmd").status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Préférences UI — ordre des onglets de la fiche poste
+# --------------------------------------------------------------------------
+def test_settings_preferences_default(client, admin_session):
+    """GET /settings/preferences renvoie le catalogue d'onglets + un ordre vide par défaut."""
+    resp = admin_session.get("/api/v1/settings/preferences")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["tab_order"] == []
+    keys = [t["key"] for t in data["tabs"]]
+    for k in ("remote", "terminal", "hardware", "patches"):
+        assert k in keys
+
+
+def test_settings_tab_order_requires_login(client):
+    """Sans session, l'enregistrement de l'ordre est refusé."""
+    assert client.post("/api/v1/settings/tab-order", json={"order": ["remote"]}).status_code == 401
+
+
+def test_settings_tab_order_save_filters_and_persists(client, admin_session):
+    """POST filtre les clés inconnues + doublons, et l'ordre persiste (GET le renvoie)."""
+    resp = admin_session.post(
+        "/api/v1/settings/tab-order",
+        json={"order": ["hardware", "bogus", "remote", "hardware", "terminal"]},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert resp.get_json()["tab_order"] == ["hardware", "remote", "terminal"]
+
+    # Persistance.
+    again = admin_session.get("/api/v1/settings/preferences").get_json()
+    assert again["tab_order"] == ["hardware", "remote", "terminal"]
+
+    # Réinitialisation (liste vide).
+    reset = admin_session.post("/api/v1/settings/tab-order", json={"order": []})
+    assert reset.get_json()["tab_order"] == []
+
+
+def test_settings_tab_order_invalid_type(client, admin_session):
+    """Un champ order non-liste est rejeté (400)."""
+    assert admin_session.post(
+        "/api/v1/settings/tab-order", json={"order": "remote"}
+    ).status_code == 400
+
+
+def test_agent_detail_embeds_tab_order(client, admin_session):
+    """L'ordre enregistré est injecté dans la fiche poste (data-tab-order)."""
+    agent_id, _ = _enroll(client, "MACHINE-TABORDER")
+    admin_session.post("/api/v1/settings/tab-order", json={"order": ["hardware", "remote"]})
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    assert "data-tab-order=" in html
+    assert "hardware" in html

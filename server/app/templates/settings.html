@@ -99,6 +99,26 @@
   </div>
 </div>
 
+{% if user.role in ('admin', 'superadmin') %}
+<!-- Ordre des onglets de la fiche poste (par utilisateur) -->
+<div class="panel" style="margin-top:14px">
+  <div class="phead">
+    <svg class="ico"><use href="#i-grid"/></svg>
+    <h2>Onglets de la fiche poste</h2>
+    <span class="tag">ordre d'affichage</span>
+  </div>
+  <div class="pbody">
+    <p class="sub" style="margin-bottom:12px">Réorganisez les onglets de la zone de travail (Bureau à distance, Terminal, Matériel…) avec les flèches. L'ordre est propre à votre compte et s'applique à l'ouverture d'une fiche poste.</p>
+    <ul class="tab-order-list" id="tab-order-list"><li class="dl-loading">Chargement…</li></ul>
+    <div class="form-actions" style="margin-top:12px">
+      <button type="button" class="btn go" id="tab-order-save">Enregistrer l'ordre</button>
+      <button type="button" class="btn" id="tab-order-reset">Réinitialiser</button>
+      <span class="form-msg" id="tab-order-msg"></span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if user.role == 'superadmin' %}
 <!-- Gestion des accès (super-administrateur uniquement) -->
 <div class="panel" style="margin-top:14px">

@@ -253,6 +253,8 @@ def agent_detail_page(agent_id):
         return render_template("agent_detail.html", user=g.user, agent_id=None, not_found=True), 404
 
     is_admin = g.user.role in ("admin", "superadmin")
+    # Ordre des onglets personnalisé par l'utilisateur (Réglages) — appliqué côté JS.
+    from .api_dashboard import user_tab_order
     return render_template(
         "agent_detail.html",
         user=g.user,
@@ -261,6 +263,7 @@ def agent_detail_page(agent_id):
         is_admin=is_admin,
         # Copilote IA : visible seulement pour un admin ET si une clé est configurée.
         ai_enabled=is_admin and bool((current_app.config.get("OPENAI_API_KEY") or "").strip()),
+        tab_order=user_tab_order(g.user),
         not_found=False,
     )
 

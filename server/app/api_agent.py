@@ -32,7 +32,10 @@ from .security import (
 
 # Durée de validité de l'appariement d'une session de bureau à distance.
 # Au-delà, une session encore « requested » est considérée expirée (REMOTE.md §7).
-REMOTE_SESSION_TTL_SECONDS = 60
+# Aligné sur PAIRING_TTL_SECONDS du relais (120 s) : la connexion wss de l'agent
+# peut être lente/instable depuis certains postes (timeouts + ré-essais) ; on lui
+# laisse plus de temps pour s'apparier avant d'expirer la session côté signalisation.
+REMOTE_SESSION_TTL_SECONDS = 120
 
 bp = Blueprint("api_agent", __name__, url_prefix="/api/v1")
 

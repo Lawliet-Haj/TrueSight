@@ -42,8 +42,12 @@ logger = logging.getLogger("truesight.relay")
 LISTEN_HOST = os.environ.get("RELAY_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("RELAY_PORT", "8765"))
 
-# Fenêtre d'appariement : une session « requested » au-delà de 60 s est expirée.
-PAIRING_TTL_SECONDS = 60
+# Fenêtre d'appariement : une session « requested » au-delà de ce délai est
+# refusée à la connexion, ET une connexion restée seule (non appariée) est fermée
+# au-delà de ce même délai (auto-nettoyage des orphelines). Élargi à 120 s : la
+# connexion wss de l'agent depuis certains postes est lente/instable (timeouts +
+# ré-essais) ; 60 s ne laissait pas toujours le temps de s'apparier.
+PAIRING_TTL_SECONDS = 120
 
 # Taille max d'un message accepté (protège contre une trame aberrante).
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -315,6 +319,26 @@ async def handle_connection(ws):
 
     logger.info("Connexion %s acceptée pour la session %s", role, session_id)
 
+    # Chien de garde d'appariement : si cette connexion reste SEULE (le pair ne
+    # rejoint jamais) au-delà du TTL, on la ferme — sinon une connexion orpheline
+    # (agent sans viewer, ou l'inverse) resterait ouverte indéfiniment, occuperait
+    # le rôle et bloquerait toute nouvelle session. Auto-nettoyage.
+    async def _pairing_watchdog():
+        try:
+            await asyncio.sleep(PAIRING_TTL_SECONDS)
+        except asyncio.CancelledError:
+            return
+        if not sess.activated:
+            logger.info(
+                "Session %s non appariée après %ss (%s seul) : fermeture.",
+                session_id, PAIRING_TTL_SECONDS, role,
+            )
+            try:
+                await ws.close(code=4408, reason="non apparié (délai dépassé)")
+            except Exception:  # pragma: no cover
+                pass
+
+    watchdog = asyncio.create_task(_pairing_watchdog())
     try:
         if role == "agent":
             await _relay_loop(ws, lambda: sess.viewer)
@@ -325,6 +349,7 @@ async def handle_connection(ws):
     except Exception:  # pragma: no cover - isole toute erreur par connexion
         logger.exception("Erreur dans la boucle de relais (session %s, %s)", session_id, role)
     finally:
+        watchdog.cancel()
         await _teardown(session_id, sess, role)
 
 

@@ -374,10 +374,11 @@ textarea.input{
 .tab:focus-visible{outline:none;box-shadow:inset 0 0 0 1px var(--signal-dim)}
 .tabpanel{padding:14px;min-height:60vh;display:flex;flex-direction:column}
 .tabpanel.hidden{display:none}
-/* Onglet « Matériel » : contenu empilé (matériel + métriques + logiciels) qui
-   défile à l'intérieur de l'onglet quand la fenêtre est remplie. */
-#panel-hardware{overflow-y:auto;gap:14px}
-#panel-hardware .grid-3{margin-bottom:0}
+/* Onglet « Matériel » : contenu empilé (matériel + métriques + logiciels).
+   display:block (et NON flex) pour que les enfants gardent leur hauteur
+   naturelle au lieu d'être compressés → le panneau déborde et défile
+   réellement (overflow-y:auto) quand la fenêtre est remplie. */
+#panel-hardware{display:block;overflow-y:auto}
 
 /* Outil de la barre d'onglets (agrandir / réduire) */
 .tablist-spacer{flex:1}

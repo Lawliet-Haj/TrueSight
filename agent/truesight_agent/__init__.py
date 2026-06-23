@@ -5,7 +5,9 @@ Il collecte l'inventaire matériel/logiciel, envoie des métriques (heartbeat),
 récupère les commandes en attente et renvoie leurs résultats.
 """
 
-# Version de l'agent. 1.3.0 : transfert de fichiers pendant la prise de main
+# Version de l'agent. 1.3.1 : connexion wss au relais ré-essayée (4 tentatives +
+# backoff) — fiabilise la prise de main quand la connexion au relais est lente/
+# instable depuis le poste. 1.3.0 : transfert de fichiers pendant la prise de main
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
 # connecté). 1.2.0 : collecte enrichie des correctifs Windows en attente (KB,
 # titre, sévérité, taille, type, redémarrage requis). 1.1.3 : écoute du son

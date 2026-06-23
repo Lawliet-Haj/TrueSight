@@ -45,6 +45,12 @@ except Exception as _exc:  # noqa: BLE001
 
 # Délai d'établissement de la connexion wss (secondes).
 _CONNECT_TIMEOUT = 15
+# La connexion wss au relais est parfois lente/refusée par intermittence depuis
+# certains postes : on ré-essaie plusieurs fois (avec backoff) AVANT d'abandonner,
+# car le service ne re-pousse pas la session au compagnon après un échec (dédup).
+# Le total reste sous PAIRING_TTL_SECONDS du relais (120 s).
+_CONNECT_ATTEMPTS = 4
+_CONNECT_RETRY_DELAY = 2.0
 # Durée de vie maximale d'une session sans démantèlement explicite (garde-fou).
 _MAX_SESSION_SECONDS = 60 * 60  # 1 h
 
@@ -109,25 +115,37 @@ class RemoteSession:
         if not _WS_AVAILABLE:
             _logger.error("Connexion impossible : websocket-client absent.")
             return False
-        try:
-            sslopt = None
-            if self.ws_url.lower().startswith("wss://") and not self.verify_tls:
-                # Mode dev : on ne vérifie pas le certificat (aligné sur verify_tls).
-                import ssl
-                sslopt = {"cert_reqs": ssl.CERT_NONE}
-            self._ws = websocket.create_connection(
-                self.ws_url,
-                timeout=_CONNECT_TIMEOUT,
-                sslopt=sslopt,
-                enable_multithread=True,  # envoi (thread) + réception (boucle) en parallèle.
-            )
-            # Au-delà du handshake, on veut une réception bloquante mais réveillable.
-            self._ws.settimeout(1.0)
-            _logger.info("Connecté au relais (agent) : %s", _redact(self.ws_url))
-            return True
-        except Exception as exc:  # noqa: BLE001
-            _logger.error("Connexion au relais impossible : %s", exc)
-            return False
+        sslopt = None
+        if self.ws_url.lower().startswith("wss://") and not self.verify_tls:
+            # Mode dev : on ne vérifie pas le certificat (aligné sur verify_tls).
+            import ssl
+            sslopt = {"cert_reqs": ssl.CERT_NONE}
+        last_exc = None
+        for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+            if self._stop.is_set():
+                return False
+            try:
+                self._ws = websocket.create_connection(
+                    self.ws_url,
+                    timeout=_CONNECT_TIMEOUT,
+                    sslopt=sslopt,
+                    enable_multithread=True,  # envoi (thread) + réception (boucle) en parallèle.
+                )
+                # Au-delà du handshake, on veut une réception bloquante mais réveillable.
+                self._ws.settimeout(1.0)
+                _logger.info("Connecté au relais (agent) : %s (tentative %d/%d)",
+                             _redact(self.ws_url), attempt, _CONNECT_ATTEMPTS)
+                return True
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                _logger.warning("Connexion au relais impossible (tentative %d/%d) : %s",
+                                attempt, _CONNECT_ATTEMPTS, exc)
+                # Backoff interruptible (réveil immédiat si arrêt demandé).
+                if attempt < _CONNECT_ATTEMPTS and self._stop.wait(timeout=_CONNECT_RETRY_DELAY):
+                    return False
+        _logger.error("Connexion au relais abandonnée après %d tentatives : %s",
+                      _CONNECT_ATTEMPTS, last_exc)
+        return False
 
     # -- Boucle d'envoi des trames (thread) -----------------------------------
     def _send_loop(self) -> None:

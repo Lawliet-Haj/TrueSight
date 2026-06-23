@@ -532,6 +532,14 @@ def run(console: bool = False, enroll_only: bool = False) -> int:
 
     Retourne un code de sortie (0 = succès).
     """
+    # Filet : privilégier l'IPv4 même si on entre par ici sans passer par
+    # __main__.main (ex. service pywin32). Idempotent.
+    try:
+        from . import net
+        net.prefer_ipv4()
+    except Exception:  # noqa: BLE001
+        pass
+
     setup_logging(console=console)
 
     try:

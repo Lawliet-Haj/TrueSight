@@ -181,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
     """Point d'entrée principal (console, service ou helper selon le contexte)."""
     argv = argv if argv is not None else sys.argv
 
+    # Privilégier l'IPv4 pour TOUTES les connexions de ce process (service,
+    # compagnon, helper, console) : évite les échecs ~50 % quand le serveur est en
+    # double pile (A + AAAA) et que l'IPv6 du poste est cassée. Cf. net.prefer_ipv4.
+    from . import net
+    net.prefer_ipv4()
+
     # Compagnon de session utilisateur (terminal interactif + bureau à distance).
     # Lancé par une tâche planifiée au logon ; écoute le service via un named pipe.
     if len(argv) >= 2 and argv[1].lower() == "companion":

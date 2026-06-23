@@ -27,6 +27,7 @@ from .models import (
     CommandResult,
     HardwareInventory,
     Metric,
+    PatchJob,
     RemoteSession,
     Site,
     SoftwareInventory,
@@ -1480,6 +1481,266 @@ def _software_bulk(resolver, audit_action, default_source):
         results.append({"agent_id": str(aid), "command_id": str(cmd_id)})
         created += 1
 
+    db.session.commit()
+    return jsonify({"count": created, "results": results}), 201
+
+
+# --------------------------------------------------------------------------
+# Gestion des correctifs Windows (admin) — état / installation / rescan
+#
+# Pas de code agent dédié pour l'installation : on matérialise une commande
+# PowerShell COM (cf. patch_catalog) via le pipeline ``Command`` existant. Un
+# ``PatchJob`` relie la campagne à la commande ; son statut est DÉRIVÉ du
+# résultat (exit_code 3010 = redémarrage requis). On ne redémarre JAMAIS le
+# poste automatiquement (un utilisateur peut être en session).
+# --------------------------------------------------------------------------
+def _patch_job_payload(job: PatchJob) -> dict:
+    """Sérialise un PatchJob avec son statut DÉRIVÉ de la commande liée.
+
+    Statuts : ceux de la commande (pending|dispatched|done|error|timeout), plus
+    ``reboot_pending`` quand ``exit_code == 3010`` et ``expired`` si la commande
+    a été purgée (command_id devenu nul).
+    """
+    status = "pending"
+    exit_code = None
+    cmd = db.session.get(Command, job.command_id) if job.command_id else None
+    if job.command_id is not None and cmd is None:
+        status = "expired"
+    elif cmd is not None:
+        status = cmd.status
+        res = db.session.get(CommandResult, cmd.id)
+        if res is not None:
+            exit_code = res.exit_code
+            if exit_code == 3010:
+                status = "reboot_pending"
+            elif cmd.status == "error" and exit_code == 0:
+                status = "done"
+    return {
+        "id": str(job.id),
+        "mode": job.mode,
+        "kb_list": job.kb_list or [],
+        "command_id": str(job.command_id) if job.command_id else None,
+        "status": status,
+        "exit_code": exit_code,
+        "created_at": _iso_utc(job.created_at),
+    }
+
+
+def _queue_patch_command(aid, spec, mode, kb_list):
+    """Crée la commande ``pending`` + le ``PatchJob`` lié (sans commit). Renvoie
+    ``(command_id, patch_job_id)``."""
+    shell, command_text, timeout = spec
+    cmd = Command(
+        agent_id=aid,
+        created_by=g.user.id,
+        shell=shell,
+        command_text=command_text,
+        status="pending",
+        timeout_seconds=timeout,
+        created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()  # obtient l'id de la commande
+    job = PatchJob(
+        agent_id=aid,
+        command_id=cmd.id,
+        created_by=g.user.id,
+        mode=mode,
+        kb_list=(kb_list if mode == "selected" else None),
+        created_at=utcnow(),
+    )
+    db.session.add(job)
+    db.session.flush()
+    return cmd.id, job.id
+
+
+@bp.get("/agents/<agent_id>/patch")
+@login_required
+def get_agent_patch(agent_id):
+    """État des correctifs d'un poste : MAJ en attente (liste enrichie) + dernières
+    campagnes. Rétro-compatible avec les agents qui n'envoient que les compteurs."""
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    if db.session.get(Agent, aid) is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    sec = db.session.get(AgentSecurity, aid)
+    wu = (sec.windows_update if sec else None) or {}
+    updates = wu.get("updates") if isinstance(wu.get("updates"), list) else []
+
+    jobs = (
+        db.session.query(PatchJob)
+        .filter_by(agent_id=aid)
+        .order_by(PatchJob.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    job_payloads = [_patch_job_payload(j) for j in jobs]
+    reboot_pending = bool(job_payloads) and job_payloads[0]["status"] == "reboot_pending"
+
+    return jsonify({
+        "pending_count": wu.get("pending_count"),
+        "pending_critical": wu.get("pending_critical"),
+        "last_search_at": wu.get("last_search_at"),
+        "collected_at": _iso_utc(sec.collected_at) if sec else None,
+        "updates": updates,
+        "jobs": job_payloads,
+        "reboot_pending": reboot_pending,
+    }), 200
+
+
+@bp.post("/agents/<agent_id>/patch/install")
+@admin_required
+def patch_install(agent_id):
+    """Installe les correctifs Windows d'un poste (admin only).
+
+    Body : ``{"mode": "critical"|"all"|"selected", "kb_list": [...]}``.
+    """
+    from . import patch_catalog as pc
+
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    if db.session.get(Agent, aid) is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    data = request.get_json(silent=True) or {}
+    mode = (data.get("mode") or "").strip().lower()
+    kb_list = data.get("kb_list")
+    try:
+        spec = pc.build_install(mode, kb_list)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    cmd_id, job_id = _queue_patch_command(aid, spec, mode, kb_list)
+    write_audit(
+        action="patch.install",
+        user_id=g.user.id,
+        target_agent=aid,
+        details={
+            "command_id": str(cmd_id),
+            "patch_job_id": str(job_id),
+            "mode": mode,
+            "kb_list": kb_list if mode == "selected" else None,
+        },
+        commit=False,
+    )
+    db.session.commit()
+    return jsonify({"command_id": str(cmd_id), "patch_job_id": str(job_id)}), 201
+
+
+@bp.post("/agents/<agent_id>/patch/rescan")
+@admin_required
+def patch_rescan(agent_id):
+    """Relance une recherche des correctifs en attente (read-only) sur un poste.
+
+    Le résultat (tableau lisible) s'affiche comme une commande normale ; la
+    collecte de fond (~12 h) reste la source faisant autorité côté serveur.
+    """
+    from . import patch_catalog as pc
+
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    if db.session.get(Agent, aid) is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    shell, command_text, timeout = pc.build_rescan()
+    cmd = Command(
+        agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
+        status="pending", timeout_seconds=timeout, created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()
+    write_audit(
+        action="patch.rescan", user_id=g.user.id, target_agent=aid,
+        details={"command_id": str(cmd.id)}, commit=False,
+    )
+    db.session.commit()
+    return jsonify({"command_id": str(cmd.id)}), 201
+
+
+def _resolve_patch_targets(data):
+    """Résout les postes cibles d'un déploiement groupé.
+
+    Accepte ``{agent_ids:[...]}`` OU ``{site:<uuid>}`` OU ``{tag:<str>}``.
+    Renvoie une liste d'UUID, ou ``(None, message)`` en cas d'erreur.
+    """
+    raw_ids = data.get("agent_ids")
+    if isinstance(raw_ids, list) and raw_ids:
+        ids = []
+        for raw in raw_ids:
+            uid = _parse_uuid(raw)
+            if uid is not None:
+                ids.append(uid)
+        return ids
+
+    site = (data.get("site") or "").strip()
+    if site:
+        sid = _parse_uuid(site)
+        if sid is None:
+            return None, "site invalide"
+        agents = db.session.query(Agent).filter(
+            Agent.is_active.is_(True), Agent.site_id == sid
+        ).all()
+        return [a.id for a in agents]
+
+    tag = (data.get("tag") or "").strip()
+    if tag:
+        # Filtrage en Python (portable PostgreSQL/SQLite ; le parc est modeste).
+        agents = db.session.query(Agent).filter(Agent.is_active.is_(True)).all()
+        return [a.id for a in agents if tag in (a.tags or [])]
+
+    return None, "agent_ids, site ou tag requis"
+
+
+@bp.post("/patch/bulk-install")
+@admin_required
+def patch_bulk_install():
+    """Installe des correctifs sur PLUSIEURS postes (groupe site/tag ou liste).
+
+    Body : ``{"mode": ..., "kb_list": [...], "agent_ids"|"site"|"tag": ...}``.
+    Crée une commande + un PatchJob par poste, audite ``patch.bulk-install`` une
+    fois. Plafond 200 postes.
+    """
+    from . import patch_catalog as pc
+
+    data = request.get_json(silent=True) or {}
+    mode = (data.get("mode") or "").strip().lower()
+    kb_list = data.get("kb_list")
+    try:
+        spec = pc.build_install(mode, kb_list)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    targets = _resolve_patch_targets(data)
+    if isinstance(targets, tuple):  # (None, message)
+        return jsonify({"error": targets[1]}), 400
+    if not targets:
+        return jsonify({"error": "aucun poste cible"}), 400
+    if len(targets) > 200:
+        return jsonify({"error": "trop de postes (max 200)"}), 400
+
+    results = []
+    created = 0
+    for aid in targets:
+        if db.session.get(Agent, aid) is None:
+            results.append({"agent_id": str(aid), "error": "introuvable"})
+            continue
+        cmd_id, _job_id = _queue_patch_command(aid, spec, mode, kb_list)
+        results.append({"agent_id": str(aid), "command_id": str(cmd_id)})
+        created += 1
+
+    write_audit(
+        action="patch.bulk-install", user_id=g.user.id,
+        details={
+            "mode": mode,
+            "count": created,
+            "kb_list": kb_list if mode == "selected" else None,
+        },
+        commit=False,
+    )
     db.session.commit()
     return jsonify({"count": created, "results": results}), 201
 

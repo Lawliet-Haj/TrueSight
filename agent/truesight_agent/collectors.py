@@ -193,11 +193,70 @@ def _collect_defender() -> dict:
     }
 
 
+# Nombre maximum de correctifs détaillés remontés (borne le volume du JSON ;
+# le compteur pending_count/critical reste exact même si la liste est tronquée).
+_WU_MAX_DETAIL = 200
+
+
+def _wu_first_kb(update) -> str:
+    """Premier identifiant KB d'une mise à jour (``KBArticleIDs`` est une
+    Collection COM, pas une liste Python). Renvoie 'KB1234567' ou ''."""
+    try:
+        kbs = update.KBArticleIDs
+        if kbs is not None and int(kbs.Count) > 0:
+            raw = str(kbs.Item(0)).strip()
+            if raw:
+                return raw if raw.upper().startswith("KB") else "KB" + raw
+    except Exception:  # noqa: BLE001 - champ parfois absent/illisible.
+        pass
+    return ""
+
+
+def _wu_size_mb(update):
+    """Taille de téléchargement en Mo (ou None si indisponible)."""
+    try:
+        size = update.MaxDownloadSize
+        if size:
+            return round(int(size) / (1024 * 1024), 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _wu_type(update) -> str:
+    """Type de correctif via la première catégorie (Sécurité, Qualité, Pilote…)."""
+    try:
+        cats = update.Categories
+        for i in range(int(cats.Count)):
+            name = (cats.Item(i).Name or "").strip()
+            if name:
+                return name
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _wu_reboot_required(update) -> bool:
+    """Vrai si l'installation peut/doit redémarrer (RebootBehavior != 0)."""
+    try:
+        # 0 = jamais, 1 = toujours, 2 = peut demander un redémarrage.
+        return int(update.InstallationBehavior.RebootBehavior) != 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _collect_windows_update() -> dict:
-    """Nombre de MAJ Windows en attente via l'API COM Microsoft.Update.Session.
+    """MAJ Windows en attente (compteurs + liste détaillée) via l'API COM
+    Microsoft.Update.Session.
 
     Recherche en ligne (peut être lente) : appelée uniquement depuis la boucle
-    inventaire (~12 h). Tolérante à l'absence de pywin32 / aux erreurs WU.
+    inventaire (~12 h). Tolérante à l'absence de pywin32 / aux erreurs WU : en
+    cas d'échec, renvoie ``{}`` (comportement historique).
+
+    Renvoie ``{pending_count, pending_critical, last_search_at, updates:[...]}``
+    où chaque entrée de ``updates`` vaut
+    ``{kb, title, severity, size_mb, type, reboot_required}``. La liste est bornée
+    à ``_WU_MAX_DETAIL`` pour limiter le volume ; les compteurs restent exacts.
     """
     try:
         import pythoncom  # type: ignore
@@ -215,14 +274,39 @@ def _collect_windows_update() -> dict:
         updates = result.Updates
         total = int(updates.Count)
         critical = 0
+        details: list[dict] = []
         for i in range(total):
             try:
-                sev = updates.Item(i).MsrcSeverity
+                update = updates.Item(i)
+            except Exception:  # noqa: BLE001 - item illisible : on l'ignore.
+                continue
+            try:
+                sev = update.MsrcSeverity or None
             except Exception:  # noqa: BLE001
                 sev = None
             if sev in ("Critical", "Important"):
                 critical += 1
-        return {"pending_count": total, "pending_critical": critical}
+            if len(details) < _WU_MAX_DETAIL:
+                try:
+                    title = str(update.Title or "").strip()
+                except Exception:  # noqa: BLE001
+                    title = ""
+                details.append({
+                    "kb": _wu_first_kb(update) or "unknown",
+                    "title": title,
+                    "severity": sev or "Unknown",
+                    "size_mb": _wu_size_mb(update),
+                    "type": _wu_type(update),
+                    "reboot_required": _wu_reboot_required(update),
+                })
+        return {
+            "pending_count": total,
+            "pending_critical": critical,
+            "last_search_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds"),
+            "updates": details,
+        }
     except Exception as exc:  # noqa: BLE001 - WU indisponible / hors ligne.
         _logger.info("MAJ Windows en attente indisponibles : %s", exc)
         return {}

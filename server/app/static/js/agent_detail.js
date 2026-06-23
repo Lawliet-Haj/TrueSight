@@ -1113,6 +1113,173 @@
     });
   }
 
+  // --- Correctifs Windows (admin) ---
+  function sevBadgeClass(sev) {
+    if (sev === "Critical" || sev === "Important") return "danger";
+    if (sev === "Moderate") return "warn";
+    if (sev === "Low") return "info";
+    return "off";
+  }
+
+  function setupPatches() {
+    var loadBtn = document.getElementById("patch-load");
+    if (!loadBtn) return;
+    var statusEl = document.getElementById("patch-status");
+    var outputEl = document.getElementById("patch-output");
+    var metaEl = document.getElementById("patch-meta");
+    var body = document.getElementById("patch-body");
+    var cbAll = document.getElementById("patch-cb-all");
+    var rebootBadge = document.getElementById("patch-reboot-badge");
+    var rebootBtn = document.getElementById("patch-reboot");
+    var updatesCache = [];
+
+    function render(data) {
+      var pc = data.pending_count;
+      var crit = data.pending_critical;
+      var parts = [];
+      if (pc != null) parts.push(pc + (pc === 1 ? " correctif en attente" : " correctifs en attente"));
+      if (crit != null) parts.push(crit + " critique(s)/important(s)");
+      if (data.last_search_at) parts.push("dernière analyse : " + fmtDate(data.last_search_at));
+      else if (data.collected_at) parts.push("relevé : " + fmtDate(data.collected_at));
+      metaEl.textContent = parts.join(" · ") || "Aucune donnée de correctifs (poste non encore inventorié ou agent ancien).";
+
+      var pending = !!data.reboot_pending;
+      rebootBadge.classList.toggle("hidden", !pending);
+      rebootBtn.classList.toggle("hidden", !pending);
+
+      updatesCache = Array.isArray(data.updates) ? data.updates : [];
+      if (!updatesCache.length) {
+        body.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucun correctif détaillé. '
+          + (pc ? "Le poste rapporte " + pc + " MAJ — lancez « Rescanner » pour le détail." : "Poste à jour.")
+          + "</td></tr>";
+        if (cbAll) cbAll.checked = false;
+        return;
+      }
+      body.innerHTML = updatesCache.map(function (u) {
+        var kb = u.kb || "—";
+        var sev = u.severity || "Unknown";
+        var size = (u.size_mb != null) ? u.size_mb : "—";
+        var reboot = u.reboot_required ? '<span class="badge warn">oui</span>' : '<span class="text-faint">—</span>';
+        var cbCell = (kb && kb !== "unknown")
+          ? '<td class="cb-col"><input type="checkbox" class="patch-cb" data-kb="' + esc(kb) + '"></td>'
+          : '<td class="cb-col"></td>';
+        return "<tr>" +
+          cbCell +
+          '<td class="mono">' + esc(kb) + "</td>" +
+          "<td>" + esc(u.title || "—") + "</td>" +
+          '<td><span class="badge ' + sevBadgeClass(sev) + '">' + esc(sev) + "</span></td>" +
+          '<td class="num mono">' + esc(String(size)) + "</td>" +
+          "<td>" + reboot + "</td>" +
+          "</tr>";
+      }).join("");
+      if (cbAll) cbAll.checked = false;
+    }
+
+    function loadPatches() {
+      statusEl.textContent = "Chargement…";
+      fetch("/api/v1/agents/" + AGENT_ID + "/patch", { headers: { Accept: "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function (data) { statusEl.textContent = ""; render(data); })
+        .catch(function () {
+          statusEl.textContent = "Erreur de chargement.";
+          body.innerHTML = '<tr><td colspan="6" class="empty-cell err-cell">Erreur de chargement</td></tr>';
+        });
+    }
+
+    function selectedKbs() {
+      return Array.prototype.map.call(
+        document.querySelectorAll(".patch-cb:checked"),
+        function (c) { return c.getAttribute("data-kb"); }
+      );
+    }
+
+    function doInstall(mode, kbList, label) {
+      var body2 = "Des correctifs Windows vont être installés sur ce poste sous le compte SYSTEM. "
+        + "Le poste peut nécessiter un redémarrage en fin d'installation — un utilisateur "
+        + "peut être en session. Aucun redémarrage ne sera déclenché automatiquement.";
+      TS.confirm({ title: label + " ?", body: body2, danger: true, confirmLabel: "Installer" })
+        .then(function (r) {
+          if (!r.confirmed) return;
+          statusEl.textContent = label + " — envoi…";
+          if (outputEl) outputEl.classList.add("hidden");
+          var payload = { mode: mode };
+          if (mode === "selected") payload.kb_list = kbList;
+          fetch("/api/v1/agents/" + AGENT_ID + "/patch/install", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(payload),
+          }).then(function (resp) {
+            return resp.json().then(function (d) { return { ok: resp.ok, data: d }; });
+          }).then(function (res) {
+            if (!res.ok) { statusEl.textContent = "Erreur : " + (res.data.error || "envoi impossible"); return; }
+            statusEl.textContent = label + " — en file, exécution sur le poste (peut être long)…";
+            pollCommand(res.data.command_id, statusEl, outputEl, function () { loadPatches(); });
+          }).catch(function () { statusEl.textContent = "Erreur réseau lors de l'envoi."; });
+        });
+    }
+
+    loadBtn.addEventListener("click", loadPatches);
+
+    document.getElementById("patch-rescan").addEventListener("click", function () {
+      statusEl.textContent = "Analyse du poste…";
+      if (outputEl) outputEl.classList.add("hidden");
+      fetch("/api/v1/agents/" + AGENT_ID + "/patch/rescan", {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: "{}",
+      }).then(function (resp) {
+        return resp.json().then(function (d) { return { ok: resp.ok, data: d }; });
+      }).then(function (res) {
+        if (!res.ok) { statusEl.textContent = "Erreur : " + (res.data.error || "envoi impossible"); return; }
+        statusEl.textContent = "Analyse en cours sur le poste…";
+        pollCommand(res.data.command_id, statusEl, outputEl);
+      }).catch(function () { statusEl.textContent = "Erreur réseau lors de l'envoi."; });
+    });
+
+    document.getElementById("patch-install-critical").addEventListener("click", function () {
+      doInstall("critical", null, "Installation des correctifs critiques");
+    });
+    document.getElementById("patch-install-all").addEventListener("click", function () {
+      doInstall("all", null, "Installation de tous les correctifs");
+    });
+    document.getElementById("patch-install-selected").addEventListener("click", function () {
+      var kbs = selectedKbs();
+      if (!kbs.length) { statusEl.textContent = "Sélectionnez au moins un correctif (KB)."; return; }
+      doInstall("selected", kbs, "Installation de " + kbs.length + " correctif(s)");
+    });
+
+    if (cbAll) {
+      cbAll.addEventListener("change", function () {
+        Array.prototype.forEach.call(document.querySelectorAll(".patch-cb"), function (c) { c.checked = cbAll.checked; });
+      });
+    }
+
+    rebootBtn.addEventListener("click", function () {
+      TS.confirm({
+        title: "Redémarrer le poste ?",
+        body: "Le poste va redémarrer pour finaliser les correctifs. Un utilisateur peut être en session.",
+        danger: true, confirmLabel: "Redémarrer",
+      }).then(function (r) {
+        if (!r.confirmed) return;
+        statusEl.textContent = "Envoi du redémarrage…";
+        fetch("/api/v1/agents/" + AGENT_ID + "/quick-action", {
+          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ action: "restart" }),
+        }).then(function (resp) {
+          return resp.json().then(function (d) { return { ok: resp.ok, data: d }; });
+        }).then(function (res) {
+          if (!res.ok) { statusEl.textContent = "Erreur : " + (res.data.error || "envoi impossible"); return; }
+          statusEl.textContent = "Redémarrage demandé.";
+          pollCommand(res.data.command_id, statusEl, null);
+        }).catch(function () { statusEl.textContent = "Erreur réseau lors de l'envoi."; });
+      });
+    });
+
+    // Chargement paresseux à la première ouverture de l'onglet.
+    var loadedOnce = false;
+    document.addEventListener("ts:tab-activated", function (ev) {
+      if (ev.detail && ev.detail.tab === "patches" && !loadedOnce) { loadedOnce = true; loadPatches(); }
+    });
+  }
+
   // --- Initialisation ---
   loadDetail();
   loadMetrics();
@@ -1124,6 +1291,7 @@
     setupProcesses();
     setupActivity();
     setupAccounts();
+    setupPatches();
     setupTags();
     setupFocus();
     setupTabs();

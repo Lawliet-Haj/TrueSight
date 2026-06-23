@@ -39,6 +39,12 @@
     <div class="sub" id="kpi-avail-sub">postes supervisés</div>
     <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="var(--signal)" stroke-width="1.6" points="0,12 12,10 24,11 36,7 48,9 60,6 72,8 84,5"/></svg>
   </div>
+  <div class="kpi">
+    <div class="lbl"><svg><use href="#i-shield"/></svg>Correctifs</div>
+    <div class="val" id="count-patch">0</div>
+    <div class="sub" id="kpi-patch-sub">postes à mettre à jour</div>
+    <svg class="spark" width="84" height="30" viewBox="0 0 84 30"><polyline fill="none" stroke="var(--info)" stroke-width="1.6" points="0,16 12,14 24,15 36,11 48,13 60,9 72,12 84,8"/></svg>
+  </div>
 </section>
 
 <!-- Tableau du parc -->
@@ -51,6 +57,7 @@
       <button type="button" class="seg-btn" data-st="online">En ligne</button>
       <button type="button" class="seg-btn" data-st="offline">Hors ligne</button>
       <button type="button" class="seg-btn" data-st="alert">Alerte</button>
+      <button type="button" class="seg-btn" data-st="patch">Correctifs</button>
     </div>
     <select id="site-filter" class="input site-filter" title="Filtrer par emplacement">
       <option value="">Tous les emplacements</option>
@@ -74,6 +81,7 @@
     <button class="btn xs" type="button" data-bulk="restart"><svg><use href="#i-power"/></svg>Redémarrer</button>
     <button class="btn xs" type="button" data-bulk="message"><svg><use href="#i-message"/></svg>Message</button>
     <button class="btn xs" type="button" data-bulk="command"><svg><use href="#i-terminal"/></svg>Commande…</button>
+    <button class="btn xs" type="button" id="bulk-patch" title="Installer les correctifs Windows critiques sur les postes sélectionnés"><svg><use href="#i-shield"/></svg>Correctifs critiques</button>
     <span class="bulk-sep"></span>
     <select id="bulk-site" class="input bulk-site" title="Emplacement à affecter">
       <option value="">Emplacement…</option>

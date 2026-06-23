@@ -70,6 +70,10 @@
               aria-selected="false" aria-controls="panel-accounts" data-tab="accounts" tabindex="-1">
         <svg><use href="#i-lock"/></svg>Comptes
       </button>
+      <button class="tab" id="tab-patches" role="tab" type="button"
+              aria-selected="false" aria-controls="panel-patches" data-tab="patches" tabindex="-1">
+        <svg><use href="#i-shield"/></svg>Correctifs
+      </button>
       {% if ai_enabled %}
       <button class="tab" id="tab-copilot" role="tab" type="button"
               aria-selected="false" aria-controls="panel-copilot" data-tab="copilot" tabindex="-1">
@@ -308,6 +312,47 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- Onglet : Correctifs Windows (détection + installation à la demande) -->
+    <div class="tabpanel hidden" id="panel-patches" role="tabpanel" aria-labelledby="tab-patches">
+      <div class="patch-win">
+        <div class="console-row" style="margin-bottom:12px">
+          <button class="btn go" id="patch-load" type="button"><svg><use href="#i-refresh"/></svg>Charger les correctifs</button>
+          <button class="btn" id="patch-rescan" type="button"><svg><use href="#i-shield"/></svg>Rescanner le poste</button>
+          <span id="patch-reboot-badge" class="badge danger hidden" title="Un redémarrage est requis pour finaliser des correctifs.">Redémarrage requis</span>
+          <button class="btn danger hidden" id="patch-reboot" type="button"><svg><use href="#i-power"/></svg>Redémarrer</button>
+          <span class="grow"></span>
+          <span id="patch-status" class="cmd-status"></span>
+        </div>
+
+        <div class="console-row" style="margin-bottom:12px">
+          <button class="btn go" id="patch-install-critical" type="button"><svg><use href="#i-download"/></svg>Installer les critiques</button>
+          <button class="btn" id="patch-install-selected" type="button"><svg><use href="#i-download"/></svg>Installer la sélection</button>
+          <button class="btn" id="patch-install-all" type="button"><svg><use href="#i-download"/></svg>Installer tout</button>
+        </div>
+
+        <div class="patch-meta text-faint" id="patch-meta">Cliquez sur « Charger les correctifs » pour afficher les mises à jour en attente.</div>
+
+        <div class="scroll-y sticky-head" style="max-height:none">
+          <table>
+            <thead>
+              <tr>
+                <th class="cb-col"><input type="checkbox" id="patch-cb-all" title="Tout sélectionner"></th>
+                <th>KB</th>
+                <th>Titre</th>
+                <th>Sévérité</th>
+                <th class="num">Taille (Mo)</th>
+                <th>Redémarrage</th>
+              </tr>
+            </thead>
+            <tbody id="patch-body">
+              <tr><td colspan="6" class="empty-cell">Cliquez sur « Charger les correctifs ».</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <pre id="patch-output" class="cmd-output hidden"></pre>
       </div>
     </div>
 

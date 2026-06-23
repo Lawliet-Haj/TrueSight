@@ -79,17 +79,25 @@
     if (el) el.textContent = txt;
   }
 
+  function rowPendingPatches(r) {
+    return !!(r.security && typeof r.security.pending_updates === "number" && r.security.pending_updates > 0);
+  }
+
   function renderKpis(rows) {
-    var online = 0, offline = 0, alert = 0;
+    var online = 0, offline = 0, alert = 0, patch = 0;
     rows.forEach(function (r) {
       var st = rowState(r);
       if (st === "off") offline++;
       else { online++; if (st === "alert") alert++; }
+      if (rowPendingPatches(r)) patch++;
     });
     var total = rows.length;
     setText("count-online", online);
     setText("count-offline", offline);
     setText("count-alert", alert);
+    setText("count-patch", patch);
+    setText("kpi-patch-sub", patch === 0 ? "parc à jour"
+      : (patch === 1 ? "1 poste à mettre à jour" : patch + " postes à mettre à jour"));
 
     var availEl = document.getElementById("count-avail");
     if (availEl) {
@@ -121,7 +129,9 @@
     Object.keys(selected).forEach(function (id) { if (!present[id]) delete selected[id]; });
 
     var filtered = rows.filter(function (r) {
-      if (statusFilter !== "all") {
+      if (statusFilter === "patch") {
+        if (!rowPendingPatches(r)) return false;
+      } else if (statusFilter !== "all") {
         var st = rowState(r);
         if (statusFilter === "online" && st === "off") return false;
         if (statusFilter === "offline" && st !== "off") return false;
@@ -305,6 +315,35 @@
         }
       });
     });
+
+    var patchBtn = document.getElementById("bulk-patch");
+    if (patchBtn) {
+      patchBtn.addEventListener("click", async function () {
+        var ids = selectedIds();
+        if (!ids.length) return;
+        var ask = await TS.confirm({
+          title: "Installer les correctifs critiques sur " + ids.length + " poste(s) ?",
+          body: "Installation des correctifs Windows critiques/importants sous le compte SYSTEM. "
+            + "Aucun redémarrage automatique ; un poste peut nécessiter un redémarrage en fin d'installation.",
+          danger: true, confirmLabel: "Installer",
+        });
+        if (!ask.confirmed) return;
+        try {
+          var resp = await fetch("/api/v1/patch/bulk-install", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ agent_ids: ids, mode: "critical" }),
+          });
+          var data = await resp.json().catch(function () { return {}; });
+          if (!resp.ok) { TS.toast(data.error || ("Échec (" + resp.status + ")"), "error"); return; }
+          TS.toast("Correctifs envoyés à " + data.count + " poste(s).", "success");
+          selected = {};
+          render(lastData);
+        } catch (e) {
+          TS.toast("Erreur réseau lors de l'envoi groupé.", "error");
+        }
+      });
+    }
 
     var clear = document.getElementById("bulk-clear");
     if (clear) clear.addEventListener("click", function () { selected = {}; render(lastData); });

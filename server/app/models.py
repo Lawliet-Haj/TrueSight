@@ -245,6 +245,37 @@ class CommandResult(db.Model):
     command = relationship("Command", back_populates="result")
 
 
+class PatchJob(db.Model):
+    """Campagne d'installation de correctifs Windows (table ``patch_jobs``).
+
+    Relie une demande d'installation (par poste ou groupée) à la commande émise
+    dans le pipeline existant (``commands``). Le **statut est dérivé à la lecture**
+    depuis la commande liée et son résultat (``CommandResult.exit_code == 3010``
+    = redémarrage requis) — pas de colonne d'état à maintenir. Conserve
+    l'historique (mode, KB ciblés, auteur, date) pour la fiche poste et l'audit.
+    """
+
+    __tablename__ = "patch_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Lien vers la commande matérialisée. SET NULL : si la commande est purgée,
+    # l'historique de la campagne reste (sans pouvoir relire son résultat).
+    command_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("commands.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=True
+    )
+    # Mode demandé : 'all' | 'critical' | 'selected'.
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    # KB ciblés (uniquement renseigné pour le mode 'selected').
+    kb_list: Mapped[list | None] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow, index=True)
+
+
 class AuditLog(db.Model):
     """Journal d'audit append-only (table ``audit_log``)."""
 

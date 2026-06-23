@@ -271,8 +271,26 @@ def _token_payload(it: InstallToken, emails: dict, sites: dict) -> dict:
         "expires_at": _iso(it.expires_at),
         "revoked": it.revoked,
         "active": _token_active(it),
+        # La commande est ré-affichable si le lien est actif ET que le jeton en
+        # clair est conservé (liens créés depuis cette fonctionnalité).
+        "can_show_command": _token_active(it) and bool(it.token_plain),
         "use_count": it.use_count,
         "last_used_at": _iso(it.last_used_at),
+    }
+
+
+def _install_links(token: str, base: str) -> dict:
+    """Construit l'URL d'installation, le one-liner PowerShell et l'URL du .cmd
+    à partir d'un jeton en clair (partagé entre la création et la ré-affichage)."""
+    install_url = f"{base}/install.ps1?t={token}"
+    one_liner = (
+        'powershell -ExecutionPolicy Bypass -Command '
+        f'"iwr -useb {install_url} | iex"'
+    )
+    return {
+        "install_url": install_url,
+        "one_liner": one_liner,
+        "installer_cmd_url": f"{base}/install/{token}/installer.cmd",
     }
 
 
@@ -345,6 +363,8 @@ def create_install_token():
     token = generate_session_token()
     it = InstallToken(
         token_hash=hash_token(token),
+        # Conservé en clair pour ré-afficher la commande d'un lien actif.
+        token_plain=token,
         label=label,
         site_id=site_id,
         created_by=g.user.id,
@@ -361,21 +381,14 @@ def create_install_token():
     db.session.commit()
 
     base = request.host_url.rstrip("/")
-    install_url = f"{base}/install.ps1?t={token}"
-    one_liner = (
-        'powershell -ExecutionPolicy Bypass -Command '
-        f'"iwr -useb {install_url} | iex"'
-    )
+    links = _install_links(token, base)
     return (
         jsonify({
             "id": str(it.id),
             "token": token,
             "site_name": site_name,
-            "install_url": install_url,
-            "one_liner": one_liner,
-            # Installeur double-cliquable (.cmd) servi par ce lien.
-            "installer_cmd_url": f"{base}/install/{token}/installer.cmd",
             "expires_at": _iso(expires_at),
+            **links,
         }),
         201,
     )
@@ -393,12 +406,54 @@ def revoke_install_token(token_id):
     if it is None:
         return jsonify({"error": "lien introuvable"}), 404
     it.revoked = True
+    # Hygiène : on n'a plus à conserver le jeton en clair d'un lien révoqué.
+    it.token_plain = None
     write_audit(
         action="install.token.revoke", user_id=g.user.id,
         details={"token_id": str(it.id)}, commit=False,
     )
     db.session.commit()
     return jsonify({"ok": True}), 200
+
+
+@bp.get("/install-tokens/<token_id>/command")
+@admin_required
+def install_token_command(token_id):
+    """Ré-affiche la commande d'installation d'un lien ACTIF (lecture sensible, auditée).
+
+    Le jeton en clair n'est conservé que pour les liens actifs créés depuis cette
+    fonctionnalité ; sinon 409 (générer un nouveau lien)."""
+    try:
+        tid = uuid.UUID(str(token_id))
+    except (ValueError, TypeError):
+        return jsonify({"error": "id invalide"}), 400
+    it = db.session.get(InstallToken, tid)
+    if it is None:
+        return jsonify({"error": "lien introuvable"}), 404
+    if not _token_active(it):
+        return jsonify({"error": "lien inactif (révoqué ou expiré)"}), 409
+    if not it.token_plain:
+        return jsonify({
+            "error": "commande indisponible pour ce lien (créé avant cette fonctionnalité). "
+                     "Générez un nouveau lien."
+        }), 409
+
+    write_audit(
+        action="install.token.view", user_id=g.user.id,
+        details={"token_id": str(it.id)}, commit=True,
+    )
+    base = request.host_url.rstrip("/")
+    site_name = None
+    if it.site_id:
+        site = db.session.get(Site, it.site_id)
+        site_name = site.name if site else None
+    return jsonify({
+        "id": str(it.id),
+        "label": it.label,
+        "site_name": site_name,
+        "expires_at": _iso(it.expires_at),
+        **_install_links(it.token_plain, base),
+    }), 200
 
 
 # --------------------------------------------------------------------------

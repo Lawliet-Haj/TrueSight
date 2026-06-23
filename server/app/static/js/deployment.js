@@ -39,6 +39,28 @@
   var linkResult = document.getElementById("link-result");
   var linkOneliner = document.getElementById("link-oneliner");
 
+  // Affiche/rafraîchit le bloc résultat (one-liner + .cmd + expiration), utilisé
+  // à la création ET par « Voir la commande » sur un lien existant.
+  function showLinkResult(d) {
+    if (linkOneliner) linkOneliner.textContent = d.one_liner || "";
+    var dl = document.getElementById("link-download");
+    if (dl) {
+      if (d.installer_cmd_url) { dl.href = d.installer_cmd_url; dl.classList.remove("hidden"); }
+      else { dl.classList.add("hidden"); }
+    }
+    var siteTxt = d.site_name ? (" Les postes installés rejoindront « " + d.site_name + " ».") : "";
+    var expEl = document.getElementById("link-expire");
+    if (expEl) {
+      expEl.textContent =
+        (d.expires_at ? ("Ce lien expire le " + fmtDate(d.expires_at) + ".")
+                      : "Ce lien n'expire pas — pensez à le révoquer après le déploiement.") + siteTxt;
+    }
+    if (linkResult) {
+      linkResult.classList.remove("hidden");
+      linkResult.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
   function renderLinks(tokens) {
     if (!tokens.length) {
       linksBody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucun lien généré.</td></tr>';
@@ -48,6 +70,9 @@
       var state = t.revoked
         ? '<span class="badge off">révoqué</span>'
         : (t.active ? '<span class="badge ok">actif</span>' : '<span class="badge off">expiré</span>');
+      var show = t.can_show_command
+        ? '<button type="button" class="btn xs" data-action="show-link" data-id="' + esc(t.id) + '">Voir la commande</button>'
+        : "";
       var revoke = (!t.revoked && t.active)
         ? '<button type="button" class="btn xs danger" data-action="revoke-link" data-id="' + esc(t.id) + '">Révoquer</button>'
         : "";
@@ -59,7 +84,7 @@
         "<td>" + (t.expires_at ? fmtDate(t.expires_at) : "sans limite") + "</td>" +
         '<td class="num mono">' + (t.use_count || 0) + "</td>" +
         "<td>" + state + "</td>" +
-        '<td><div class="act">' + revoke + "</div></td>" +
+        '<td><div class="act">' + show + revoke + "</div></td>" +
         "</tr>";
     }).join("");
   }
@@ -107,17 +132,7 @@
         });
         var d = await jsonOf(r);
         if (!r.ok) { setMsg(m, d.error || "Échec.", false); return; }
-        linkOneliner.textContent = d.one_liner || "";
-        var dl = document.getElementById("link-download");
-        if (dl) {
-          if (d.installer_cmd_url) { dl.href = d.installer_cmd_url; dl.classList.remove("hidden"); }
-          else { dl.classList.add("hidden"); }
-        }
-        var siteTxt = d.site_name ? (" Les postes installés rejoindront « " + d.site_name + " ».") : "";
-        document.getElementById("link-expire").textContent =
-          (d.expires_at ? ("Ce lien expire le " + fmtDate(d.expires_at) + ".")
-                        : "Ce lien n'expire pas — pensez à le révoquer après le déploiement.") + siteTxt;
-        linkResult.classList.remove("hidden");
+        showLinkResult(d);
         linkForm.reset();
         document.getElementById("link-ttl").value = "7";
         setMsg(m, "Lien généré.", true);
@@ -141,6 +156,18 @@
   }
 
   linksBody.addEventListener("click", async function (e) {
+    var showBtn = e.target.closest('[data-action="show-link"]');
+    if (showBtn) {
+      try {
+        var rs = await fetch("/api/v1/install-tokens/" + showBtn.getAttribute("data-id") + "/command",
+                             { headers: { Accept: "application/json" } });
+        var ds = await jsonOf(rs);
+        if (!rs.ok) { TS.toast(ds.error || "Commande indisponible.", "error"); return; }
+        showLinkResult(ds);
+      } catch (_) { TS.toast("Erreur réseau.", "error"); }
+      return;
+    }
+
     var btn = e.target.closest('[data-action="revoke-link"]');
     if (!btn) return;
     var ask = await TS.confirm({

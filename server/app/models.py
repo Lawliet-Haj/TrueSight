@@ -357,6 +357,11 @@ class InstallToken(db.Model):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    # Jeton EN CLAIR, conservé pour pouvoir ré-afficher la commande d'installation
+    # d'un lien actif (le hash ne le permet pas). Effacé à la révocation ; jamais
+    # exposé en masse (révélé à la demande via un endpoint audité). NULL pour les
+    # liens créés avant cette fonctionnalité.
+    token_plain: Mapped[str | None] = mapped_column(Text)
     label: Mapped[str | None] = mapped_column(Text)
     # Emplacement pré-affecté : les postes installés via ce lien rejoignent ce site.
     site_id: Mapped[uuid.UUID | None] = mapped_column(

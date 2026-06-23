@@ -1659,6 +1659,49 @@ def test_install_cmd_download(client, admin_session):
 
 
 # --------------------------------------------------------------------------
+# Lien d'installation : ré-afficher la commande d'un lien actif
+# --------------------------------------------------------------------------
+def test_install_token_show_command(client, admin_session):
+    """La commande d'un lien actif est ré-affichable (one-liner + .cmd) et auditée."""
+    created = admin_session.post("/api/v1/install-tokens", json={"label": "revoir"}).get_json()
+    tid, token = created["id"], created["token"]
+
+    # La liste signale que la commande est ré-affichable.
+    rows = admin_session.get("/api/v1/install-tokens").get_json()
+    row = [r for r in rows if r["id"] == tid][0]
+    assert row["can_show_command"] is True
+
+    # Ré-affichage : le one-liner contient le jeton en clair.
+    cmd = admin_session.get(f"/api/v1/install-tokens/{tid}/command")
+    assert cmd.status_code == 200, cmd.get_data(as_text=True)
+    body = cmd.get_json()
+    assert token in body["one_liner"]
+    assert body["installer_cmd_url"].endswith(f"/install/{token}/installer.cmd")
+
+    # Audit de la lecture sensible.
+    audit = admin_session.get("/api/v1/audit?limit=50").get_json()
+    assert "install.token.view" in [e["action"] for e in audit]
+
+
+def test_install_token_command_gone_after_revoke(client, admin_session):
+    """Après révocation : la commande n'est plus disponible (409) et le jeton clair est purgé."""
+    created = admin_session.post("/api/v1/install-tokens", json={"label": "r2"}).get_json()
+    tid = created["id"]
+    assert admin_session.delete(f"/api/v1/install-tokens/{tid}").status_code == 200
+
+    assert admin_session.get(f"/api/v1/install-tokens/{tid}/command").status_code == 409
+    rows = admin_session.get("/api/v1/install-tokens").get_json()
+    row = [r for r in rows if r["id"] == tid][0]
+    assert row["can_show_command"] is False
+
+
+def test_install_token_command_requires_login(client):
+    """Sans session, la commande n'est pas révélée."""
+    assert client.get("/api/v1/install-tokens/00000000-0000-0000-0000-000000000000/command",
+                      headers={"Accept": "application/json"}).status_code == 401
+
+
+# --------------------------------------------------------------------------
 # Préférences UI — ordre des onglets de la fiche poste
 # --------------------------------------------------------------------------
 def test_settings_preferences_default(client, admin_session):

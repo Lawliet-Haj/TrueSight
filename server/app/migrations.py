@@ -33,6 +33,8 @@ def ensure_schema():
         "ALTER TABLE commands ADD COLUMN IF NOT EXISTS redact_after_run boolean NOT NULL DEFAULT false",
         # Préférences UI par utilisateur (ordre des onglets de la fiche poste…).
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences jsonb",
+        # Jeton d'installation en clair (re-affichage de la commande d'un lien actif).
+        "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS token_plain text",
     ]
     for stmt in statements:
         try:

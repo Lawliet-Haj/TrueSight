@@ -800,6 +800,42 @@ def quick_action(agent_id):
 
 
 # --------------------------------------------------------------------------
+# POST /agents/<id>/remote-file-audit — trace un transfert de fichier (admin)
+#
+# Le transfert lui-même circule par le relais (hors API Flask) ; cet endpoint
+# n'enregistre QUE l'événement d'audit côté serveur (qui a transféré quoi, où).
+# --------------------------------------------------------------------------
+@bp.post("/agents/<agent_id>/remote-file-audit")
+@admin_required
+def remote_file_audit(agent_id):
+    """Journalise un transfert de fichier d'une session de bureau à distance.
+
+    Body : ``{direction:'down'|'up', name, size, path}``. Aucun contenu de fichier
+    ne transite ici — uniquement les métadonnées pour l'audit.
+    """
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    if db.session.get(Agent, aid) is None:
+        return jsonify({"error": "agent introuvable"}), 404
+    data = request.get_json(silent=True) or {}
+    direction = "up" if data.get("direction") == "up" else "down"
+    name = str(data.get("name") or "")[:255]
+    path = str(data.get("path") or "")[:512]
+    try:
+        size = int(data.get("size")) if data.get("size") is not None else None
+    except (TypeError, ValueError):
+        size = None
+    write_audit(
+        action="remote.file",
+        user_id=g.user.id,
+        target_agent=aid,
+        details={"direction": direction, "name": name, "size": size, "path": path},
+    )
+    return jsonify({"ok": True}), 200
+
+
+# --------------------------------------------------------------------------
 # POST /agents/<id>/tags — étiquettes du poste (admin)
 # --------------------------------------------------------------------------
 def _normalize_tags(raw):

@@ -1702,6 +1702,38 @@ def test_install_token_command_requires_login(client):
 
 
 # --------------------------------------------------------------------------
+# Transfert de fichiers (bureau à distance) — audit serveur + UI
+# --------------------------------------------------------------------------
+def test_remote_file_audit(client, admin_session):
+    """Le transfert de fichier est journalisé (audit) avec sa direction et son nom."""
+    agent_id, _ = _enroll(client, "MACHINE-FILES")
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/remote-file-audit",
+        json={"direction": "down", "name": "rapport.pdf", "size": 1234, "path": "C:\\\\Users\\\\x\\\\rapport.pdf"},
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    audit = admin_session.get("/api/v1/audit?limit=50").get_json()
+    entry = [e for e in audit if e["action"] == "remote.file"]
+    assert entry, "audit remote.file manquant"
+    assert entry[0]["details"]["direction"] == "down"
+    assert entry[0]["details"]["name"] == "rapport.pdf"
+
+
+def test_remote_file_audit_requires_admin(client):
+    """Sans session admin, l'audit de transfert est refusé."""
+    assert client.post("/api/v1/agents/00000000-0000-0000-0000-000000000000/remote-file-audit",
+                       json={"direction": "up"}).status_code == 401
+
+
+def test_agent_detail_has_files_panel(client, admin_session):
+    """La fiche poste (admin) embarque le bouton et le panneau Fichiers du bureau à distance."""
+    agent_id, _ = _enroll(client, "MACHINE-FILESUI")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    for marker in ("remote-files", "remote-files-panel", "rf-list", "rf-upload"):
+        assert marker in html, f"marqueur panneau Fichiers manquant : {marker}"
+
+
+# --------------------------------------------------------------------------
 # Préférences UI — ordre des onglets de la fiche poste
 # --------------------------------------------------------------------------
 def test_settings_preferences_default(client, admin_session):

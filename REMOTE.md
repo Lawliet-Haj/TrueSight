@@ -67,6 +67,24 @@ JSON compact ou binaire :
 - `keydown`/`keyup` (code touche + modificateurs), saisie unicode
 - contrôle : `set_quality`, `request_keyframe`, `set_monitor` (multi-écran)
 
+### Types de trames binaires (octet 1 de l'en-tête)
+- `0x00` trame pleine (keyframe) · `0x02` trame tuilée (delta) · `0x10` audio PCM (8 o)
+- `0x20` **chunk de fichier (download, agent → viewer)** — en-tête 11 o :
+  `[version u8=0x01][type u8=0x20][transfer_id u32 LE][seq u32 LE][flags u8]` + octets bruts.
+  `flags bit0 = dernier chunk`. Chunk ≤ 256 Kio (sous la limite relais de 16 Mio).
+
+### Transfert de fichiers (in-session, JSON viewer → agent)
+Réutilise le relais pass-through (aucune modif relais). S'exécute dans le compagnon
+(session utilisateur) → droits de l'utilisateur connecté ; **refusé en non-assisté**.
+- `fs_roots` → agent répond `fs_roots {list:[{label,path}]}`
+- `fs_list {path}` → `fs_listing {path, parent, entries:[{name,is_dir,size,mtime}]}`
+- `fs_download {id, path}` → `fs_download_start {id,name,size}` puis chunks `0x20` (dernier = flag)
+- `fs_upload_start {id,name,dir,size}` → `fs_upload_ready {id}` ; puis
+  `fs_upload_chunk {id,seq,data(base64),last}` (l'upload est base64 car le viewer
+  n'émet que du texte) → à `last`, écriture atomique `.tspart` → nom final, `fs_done {dir:'up'}`
+- `fs_cancel {id}` ; erreurs : `fs_error {id, code}` (`not_found|denied|too_big|bad_path|busy|io|unattended|cancelled`)
+- Audit serveur : le viewer notifie `POST /agents/<id>/remote-file-audit` (action `remote.file`).
+
 ---
 
 ## 5. Côté agent (Windows)

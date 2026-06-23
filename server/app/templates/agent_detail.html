@@ -143,12 +143,33 @@
                   title="Écran de confidentialité : le poste affiche du noir pour les personnes présentes, mais vous voyez l'écran réel."><svg><use href="#i-moon"/></svg>Écran noir</button>
           <button class="btn mini" id="remote-audio" type="button" disabled
                   title="Écouter le son du poste (ce qui sort des haut-parleurs). Requiert une session utilisateur ouverte."><svg><use href="#i-sound"/></svg>Son</button>
+          <button class="btn mini" id="remote-files" type="button" disabled
+                  title="Explorer, télécharger et envoyer des fichiers (droits de l'utilisateur connecté). Requiert une session utilisateur ouverte."><svg><use href="#i-folder"/></svg>Fichiers</button>
           <button class="btn mini" id="remote-lockexit" type="button" disabled
                   title="Verrouiller la session Windows du poste à la fin de la prise de main."><svg><use href="#i-power"/></svg>Lock à la sortie</button>
           <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
           <button class="btn" id="remote-shot" type="button" disabled title="Enregistrer une capture (PNG)"><svg><use href="#i-camera"/></svg>Capturer</button>
           <button class="btn go" id="remote-start" type="button"><svg><use href="#i-play"/></svg>Prendre la main</button>
           <button class="btn danger hidden" id="remote-stop" type="button"><svg><use href="#i-stop"/></svg>Fin de session</button>
+        </div>
+
+        <!-- Panneau Fichiers (explorateur + transfert) — affiché via le bouton « Fichiers » -->
+        <div class="rfiles hidden" id="remote-files-panel">
+          <div class="rfiles-bar">
+            <button class="btn xs" id="rf-up" type="button" title="Remonter d'un dossier">↑</button>
+            <span class="rf-path mono" id="rf-path" title="Dossier courant">—</span>
+            <span class="grow"></span>
+            <label class="btn xs" id="rf-upload-label" title="Envoyer un ou plusieurs fichiers vers ce dossier">
+              <svg><use href="#i-folder"/></svg>Téléverser
+              <input type="file" id="rf-upload" multiple hidden>
+            </label>
+            <button class="btn xs" id="rf-refresh" type="button" title="Rafraîchir"><svg><use href="#i-refresh"/></svg></button>
+          </div>
+          <div class="rfiles-roots" id="rf-roots"></div>
+          <div class="rfiles-list scroll-y" id="rf-list">
+            <div class="dl-loading">Choisissez un emplacement pour explorer le poste.</div>
+          </div>
+          <div class="rfiles-status cmd-status" id="rf-status"></div>
         </div>
       </div>
     </div>

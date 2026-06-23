@@ -53,6 +53,25 @@ TILE_SUBHEADER_SIZE = 12
 # Puis : échantillons PCM 16 bits signés (little-endian), entrelacés si stéréo.
 MSG_TYPE_AUDIO = 0x10
 AUDIO_HEADER_SIZE = 8
+
+# Trame FICHIER (transfert de fichiers, download agent → viewer). En-tête 11 octets :
+#   octet 0 : version (0x01)
+#   octet 1 : type (0x20 = chunk de fichier)
+#   octets 2-5 : id de transfert (uint32 LE)
+#   octets 6-9 : numéro de séquence du chunk (uint32 LE, à partir de 0)
+#   octet 10 : drapeaux (uint8 ; bit0 = dernier chunk)
+# Puis : octets bruts du fichier (le payload).
+# L'UPLOAD (viewer → agent) passe en JSON base64 (le viewer n'envoie que du texte ;
+# cf. session._recv_loop), donc seul le DOWNLOAD utilise cette trame binaire.
+MSG_TYPE_FILE_CHUNK = 0x20
+FILE_CHUNK_HEADER_SIZE = 11
+FILE_CHUNK_FLAG_LAST = 0x01
+# Taille d'un chunk de download (octets bruts) — bien sous MAX_MESSAGE_BYTES (16 Mio)
+# du relais. 256 Kio : bon compromis débit / micro-jitter vidéo (verrou d'envoi partagé).
+FILE_CHUNK_SIZE = 256 * 1024
+# Garde-fou applicatif : taille max d'un fichier transféré (download ET upload).
+MAX_FILE_BYTES = 1024 * 1024 * 1024  # 1 Gio
+
 # Taille de tuile par défaut (carré). Compromis : assez gros pour limiter le
 # surcoût d'en-têtes JPEG, assez petit pour ne renvoyer que de petites régions.
 DEFAULT_TILE_SIZE = 256
@@ -64,5 +83,12 @@ __all__ = [
     "MSG_TYPE_TILED_FRAME",
     "TILED_HEADER_SIZE",
     "TILE_SUBHEADER_SIZE",
+    "MSG_TYPE_AUDIO",
+    "AUDIO_HEADER_SIZE",
+    "MSG_TYPE_FILE_CHUNK",
+    "FILE_CHUNK_HEADER_SIZE",
+    "FILE_CHUNK_FLAG_LAST",
+    "FILE_CHUNK_SIZE",
+    "MAX_FILE_BYTES",
     "DEFAULT_TILE_SIZE",
 ]

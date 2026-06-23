@@ -22,6 +22,7 @@ Cette classe est utilisée :
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -78,6 +79,10 @@ class RemoteSession:
         self._audio = None                    # AudioCapture ou None
         self._audio_thread: threading.Thread | None = None
         self._audio_on = False
+        # Transfert de fichiers (pendant la session) :
+        self._file_send_thread: threading.Thread | None = None  # download en cours
+        self._file_cancel: set = set()        # ids de download annulés
+        self._uploads: dict = {}              # id -> {fh, tmp, final, received}
 
     # -- Cycle de vie ---------------------------------------------------------
     def stop(self) -> None:
@@ -470,6 +475,163 @@ class RemoteSession:
                 pass
             _logger.info("Flux audio arrêté.")
 
+    # -- Transfert de fichiers (download binaire / upload base64) -------------
+    def _fs_send_roots(self) -> None:
+        """Emplacements de départ (profil + lecteurs) pour l'explorateur du viewer."""
+        if self._desktop_follow:
+            self._send_text({"t": "fs_error", "id": 0, "code": "unattended"})
+            return
+        from . import fileio
+        self._send_text({"t": "fs_roots", "list": fileio.list_roots()})
+
+    def _fs_list(self, data: dict) -> None:
+        """Liste un dossier du poste et renvoie son contenu au viewer."""
+        if self._desktop_follow:
+            self._send_text({"t": "fs_error", "id": 0, "code": "unattended"})
+            return
+        from . import fileio
+        res = fileio.list_dir(data.get("path") or "")
+        if "error" in res:
+            self._send_text({"t": "fs_error", "id": 0, "code": res["error"],
+                             "path": data.get("path")})
+            return
+        self._send_text({"t": "fs_listing", "path": res["path"],
+                         "parent": res["parent"], "entries": res["entries"]})
+
+    def _fs_download(self, data: dict) -> None:
+        """Démarre l'envoi d'un fichier (agent → viewer) en trames binaires 0x20."""
+        tid = _to_int(data.get("id"))
+        if self._desktop_follow:
+            self._send_text({"t": "fs_error", "id": tid, "code": "unattended"})
+            return
+        if self._file_send_thread is not None and self._file_send_thread.is_alive():
+            self._send_text({"t": "fs_error", "id": tid, "code": "busy"})
+            return
+        from . import fileio
+        fh, name, size, err = fileio.open_download(data.get("path") or "")
+        if err:
+            self._send_text({"t": "fs_error", "id": tid, "code": err})
+            return
+        self._file_cancel.discard(tid)
+        self._send_text({"t": "fs_download_start", "id": tid, "name": name, "size": size})
+        self._file_send_thread = threading.Thread(
+            target=self._file_send_loop, args=(tid, fh, name, size),
+            name="truesight-remote-file", daemon=True,
+        )
+        self._file_send_thread.start()
+
+    def _file_send_loop(self, tid: int, fh, name: str, size: int) -> None:
+        """Lit le fichier par chunks et l'envoie en trames 0x20 (dernier = flag)."""
+        from . import fileio
+        seq = 0
+        sent = 0
+        sent_last = False
+        try:
+            for block in fileio.read_chunks(fh):
+                if self._should_stop() or tid in self._file_cancel:
+                    break
+                sent += len(block)
+                last = bool(size) and sent >= size
+                if not self._send_binary(fileio.build_file_chunk_frame(tid, seq, block, last)):
+                    break
+                seq += 1
+                if last:
+                    sent_last = True
+                    break
+            # Fichier vide ou taille mal estimée : trame finale vide pour clore.
+            if not sent_last and not self._should_stop() and tid not in self._file_cancel:
+                self._send_binary(fileio.build_file_chunk_frame(tid, seq, b"", True))
+            self._send_text({"t": "fs_done", "id": tid, "dir": "down", "name": name})
+        except Exception as exc:  # noqa: BLE001 - jamais fatal.
+            _logger.info("Download interrompu (%s) : %s", name, exc)
+            self._send_text({"t": "fs_error", "id": tid, "code": "io"})
+        finally:
+            try:
+                fh.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._file_cancel.discard(tid)
+
+    def _fs_upload_start(self, data: dict) -> None:
+        """Prépare la réception d'un fichier (viewer → agent) : ouvre un .tspart."""
+        tid = _to_int(data.get("id"))
+        if self._desktop_follow:
+            self._send_text({"t": "fs_error", "id": tid, "code": "unattended"})
+            return
+        from . import fileio
+        fh, tmp_path, final_path, err = fileio.open_upload(
+            data.get("dir") or "", data.get("name") or "", data.get("size"))
+        if err:
+            self._send_text({"t": "fs_error", "id": tid, "code": err})
+            return
+        self._uploads[tid] = {"fh": fh, "tmp": tmp_path, "final": final_path, "received": 0}
+        self._send_text({"t": "fs_upload_ready", "id": tid})
+
+    def _fs_upload_chunk(self, data: dict) -> None:
+        """Reçoit un chunk d'upload (base64), l'écrit, et finalise au dernier."""
+        from . import MAX_FILE_BYTES
+        from . import fileio
+        tid = _to_int(data.get("id"))
+        up = self._uploads.get(tid)
+        if up is None:
+            return
+        try:
+            raw = base64.b64decode(data.get("data") or "")
+        except Exception:  # noqa: BLE001
+            self._abort_upload(tid, "io")
+            return
+        up["received"] += len(raw)
+        if up["received"] > MAX_FILE_BYTES:
+            self._abort_upload(tid, "too_big")
+            return
+        try:
+            up["fh"].write(raw)
+        except OSError:
+            self._abort_upload(tid, "io")
+            return
+        if data.get("last"):
+            try:
+                up["fh"].close()
+            except Exception:  # noqa: BLE001
+                pass
+            ok = fileio.finalize_upload(up["tmp"], up["final"])
+            self._uploads.pop(tid, None)
+            if ok:
+                self._send_text({"t": "fs_done", "id": tid, "dir": "up",
+                                 "name": os.path.basename(up["final"])})
+            else:
+                self._send_text({"t": "fs_error", "id": tid, "code": "io"})
+
+    def _abort_upload(self, tid: int, code: str) -> None:
+        """Annule un upload : ferme + supprime le .tspart, prévient le viewer."""
+        from . import fileio
+        up = self._uploads.pop(tid, None)
+        if up is not None:
+            try:
+                up["fh"].close()
+            except Exception:  # noqa: BLE001
+                pass
+            fileio._cleanup(up["tmp"])
+        self._send_text({"t": "fs_error", "id": tid, "code": code})
+
+    def _fs_cancel(self, data: dict) -> None:
+        """Annule un transfert en cours (download ou upload)."""
+        tid = _to_int(data.get("id"))
+        self._file_cancel.add(tid)
+        if tid in self._uploads:
+            self._abort_upload(tid, "cancelled")
+
+    def _fs_cleanup(self) -> None:
+        """Nettoie les uploads partiels à la fin de la session."""
+        from . import fileio
+        for _tid, up in list(self._uploads.items()):
+            try:
+                up["fh"].close()
+            except Exception:  # noqa: BLE001
+                pass
+            fileio._cleanup(up["tmp"])
+        self._uploads.clear()
+
     # -- Boucle de réception des entrées (principal) --------------------------
     def _recv_loop(self) -> None:
         """Reçoit les messages texte JSON (viewer → agent) et les applique."""
@@ -546,6 +708,25 @@ class RemoteSession:
             return
         if msg_type == "audio":
             self._set_audio(bool(data.get("on")))
+            return
+        # Transfert de fichiers (pendant la session de bureau à distance).
+        if msg_type == "fs_roots":
+            self._fs_send_roots()
+            return
+        if msg_type == "fs_list":
+            self._fs_list(data)
+            return
+        if msg_type == "fs_download":
+            self._fs_download(data)
+            return
+        if msg_type == "fs_upload_start":
+            self._fs_upload_start(data)
+            return
+        if msg_type == "fs_upload_chunk":
+            self._fs_upload_chunk(data)
+            return
+        if msg_type == "fs_cancel":
+            self._fs_cancel(data)
             return
         # Sinon : entrée souris/clavier effective.
         if self._desktop_follow:
@@ -628,6 +809,9 @@ class RemoteSession:
             except Exception:  # noqa: BLE001
                 pass
             self._audio = None
+        # Transferts de fichiers : annule le download en cours et supprime les
+        # uploads partiels (.tspart) pour ne pas laisser de résidus.
+        self._fs_cleanup()
         # Verrouillage du poste à la déconnexion (option viewer).
         if self._lock_on_disconnect:
             try:
@@ -641,7 +825,8 @@ class RemoteSession:
                 ws.close()
             except Exception:  # noqa: BLE001
                 pass
-        for thread in (self._send_thread, self._cursor_thread, self._audio_thread):
+        for thread in (self._send_thread, self._cursor_thread, self._audio_thread,
+                       self._file_send_thread):
             if thread is not None:
                 try:
                     thread.join(timeout=5)
@@ -669,6 +854,14 @@ def run(token: str, ws_url: str, verify_tls: bool = True, desktop_follow: bool =
     except Exception as exc:  # noqa: BLE001 - filet ultime.
         _logger.error("Session de bureau à distance en échec : %s", exc)
         return 1
+
+
+def _to_int(value) -> int:
+    """Convertit en entier de façon tolérante (id de transfert), ou 0."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _current_user_label() -> str:

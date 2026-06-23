@@ -43,6 +43,14 @@
   var elPrivacy = document.getElementById("remote-privacy");
   var elLockExit = document.getElementById("remote-lockexit");
   var elAudio = document.getElementById("remote-audio");
+  var elFiles = document.getElementById("remote-files");
+  var elFilesPanel = document.getElementById("remote-files-panel");
+  var elRfUp = document.getElementById("rf-up");
+  var elRfPath = document.getElementById("rf-path");
+  var elRfRoots = document.getElementById("rf-roots");
+  var elRfList = document.getElementById("rf-list");
+  var elRfStatus = document.getElementById("rf-status");
+  var elRfUpload = document.getElementById("rf-upload");
   if (!elStart || !elCanvas) return;
 
   var ctx = elCanvas.getContext("2d", { alpha: false });
@@ -85,6 +93,24 @@
   var audioGain = null;
   var audioPlayTime = 0;          // prochain instant de lecture planifié (s)
   var AUDIO_JITTER = 0.18;        // tampon initial anti-coupure (s)
+
+  // --- Transfert de fichiers (explorateur in-session) ---
+  var filesOpen = false;
+  var fsXferId = 0;               // compteur d'id de transfert (u32)
+  var fsCurrentPath = null;       // dossier courant côté poste
+  var fsParentPath = null;        // parent (bouton « remonter »)
+  var fsDownloads = {};           // id -> { name, size, received, chunks: [] }
+  var fsUploadQueue = [];         // fichiers en attente d'envoi
+  var fsActiveUpload = null;      // { id, file, name } en cours
+  var FS_UP_CHUNK = 192 * 1024;   // taille d'un chunk d'upload (octets bruts)
+  var FS_BUF_MAX = 4 * 1024 * 1024; // seuil de backpressure (bufferedAmount)
+  var FS_ERR = {
+    not_found: "Introuvable.", denied: "Accès refusé.",
+    too_big: "Fichier trop volumineux (max 1 Go).", bad_path: "Chemin non autorisé.",
+    busy: "Un transfert est déjà en cours.", io: "Erreur de lecture/écriture.",
+    unattended: "Indisponible à l'écran de connexion (aucune session ouverte).",
+    cancelled: "Transfert annulé.",
+  };
 
   // ---------------------------------------------------------------------------
   // Utilitaires UI
@@ -139,6 +165,7 @@
       setToggle(elLockExit, false);
       setToggle(elAudio, false);
       stopAudioPlayback();
+      fsResetState();
     }
   }
 
@@ -165,7 +192,7 @@
 
   // Active/désactive les boutons de contrôle exclusif (session ouverte requise).
   function setExclusiveButtons(enabled) {
-    [elLockInput, elSas, elPrivacy, elLockExit, elAudio].forEach(function (b) {
+    [elLockInput, elSas, elPrivacy, elLockExit, elAudio, elFiles].forEach(function (b) {
       if (b) b.disabled = !enabled;
     });
   }
@@ -293,7 +320,37 @@
     if (frameType === 0x00) handleFullFrame(dv, buffer);       // trame pleine (keyframe)
     else if (frameType === 0x02) handleTiledFrame(dv, buffer); // trame tuilée (delta)
     else if (frameType === 0x10) handleAudioFrame(dv, buffer); // son système (PCM)
+    else if (frameType === 0x20) handleFileChunk(dv, buffer);  // chunk de download
     // autres types : ignorés (compat ascendante).
+  }
+
+  // Chunk de DOWNLOAD : [version][type=0x20][id u32][seq u32][flags u8] + octets.
+  // On accumule par id ; au dernier chunk (flag bit0), on assemble et télécharge.
+  function handleFileChunk(dv, buffer) {
+    if (buffer.byteLength < 11) return;
+    var id = dv.getUint32(2, true);
+    var flags = dv.getUint8(10);
+    var payload = new Uint8Array(buffer, 11);
+    var d = fsDownloads[id];
+    if (!d) return; // transfert inconnu / annulé
+    if (payload.length) { d.chunks.push(payload); d.received += payload.length; }
+    if (d.size) fsStatus("Téléchargement de « " + d.name + " » — " + Math.round(d.received / d.size * 100) + " %");
+    if (flags & 0x01) {
+      try {
+        var blob = new Blob(d.chunks, { type: "application/octet-stream" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = d.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { /* ignore */ } }, 15000);
+        fsStatus("« " + d.name + " » téléchargé (" + fsHumanSize(d.received) + ").");
+      } catch (e) {
+        fsStatus("Échec de l'assemblage du fichier.");
+      }
+      delete fsDownloads[id];
+    }
   }
 
   // Trame AUDIO : [version][type=0x10][rate u32][channels u8][flags u8] + PCM int16 mono.
@@ -452,6 +509,32 @@
       if (!msg.ok && window.TS && TS.toast) {
         TS.toast("Écoute audio indisponible (session ouverte requise sur le poste).", "error");
       }
+    // --- Transfert de fichiers ---
+    } else if (msg.t === "fs_roots") {
+      fsRenderRoots(msg.list || []);
+    } else if (msg.t === "fs_listing") {
+      fsRenderListing(msg);
+    } else if (msg.t === "fs_download_start") {
+      fsDownloads[msg.id] = { name: msg.name || "fichier", size: msg.size || 0, received: 0, chunks: [] };
+      fsStatus("Téléchargement de « " + (msg.name || "fichier") + " »…");
+    } else if (msg.t === "fs_upload_ready") {
+      fsSendUploadChunks(msg.id);
+    } else if (msg.t === "fs_done") {
+      if (msg.dir === "up") {
+        fsStatus("« " + (msg.name || "fichier") + " » envoyé.");
+        fsActiveUpload = null;
+        fsStartNextUpload();
+      }
+    } else if (msg.t === "fs_error") {
+      var em = FS_ERR[msg.code] || ("Erreur (" + (msg.code || "?") + ")");
+      fsStatus(em);
+      if (window.TS && TS.toast) TS.toast("Fichiers : " + em, "error");
+      // Si l'erreur concerne l'upload courant, on libère la file.
+      if (fsActiveUpload && (msg.id === fsActiveUpload.id || msg.code === "busy" || msg.code === "unattended")) {
+        fsActiveUpload = null;
+        fsStartNextUpload();
+      }
+      if (msg.id && fsDownloads[msg.id]) delete fsDownloads[msg.id];
     }
   }
 
@@ -757,6 +840,187 @@
     setToggle(elAudio, audioOn);
     sendInput({ t: "audio", on: audioOn });
   });
+
+  // ---------------------------------------------------------------------------
+  // Transfert de fichiers (explorateur in-session)
+  // ---------------------------------------------------------------------------
+  function fsNextId() {
+    fsXferId = (fsXferId + 1) >>> 0;
+    if (fsXferId === 0) fsXferId = 1;
+    return fsXferId;
+  }
+  function fsStatus(text) { if (elRfStatus) elRfStatus.textContent = text || ""; }
+  function fsEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fsHumanSize(b) {
+    if (b == null) return "";
+    if (b < 1024) return b + " o";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(0) + " Ko";
+    if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + " Mo";
+    return (b / 1024 / 1024 / 1024).toFixed(2) + " Go";
+  }
+  function fsJoin(dir, name) {
+    if (!dir) return name;
+    return dir.charAt(dir.length - 1) === "\\" ? dir + name : dir + "\\" + name;
+  }
+  function fsSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function u8ToB64(u8) {
+    var CH = 0x8000, s = "";
+    for (var i = 0; i < u8.length; i += CH) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    }
+    return btoa(s);
+  }
+  function fsAudit(direction, name, size, path) {
+    try {
+      fetch("/api/v1/agents/" + AGENT_ID + "/remote-file-audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ direction: direction, name: name, size: size, path: path }),
+      });
+    } catch (e) { /* audit best-effort */ }
+  }
+
+  function fsList(path) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    sendInput({ t: "fs_list", path: path });
+  }
+  function fsDownload(path, name) {
+    sendInput({ t: "fs_download", id: fsNextId(), path: path });
+    fsStatus("Téléchargement de « " + name + " »…");
+    fsAudit("down", name, null, path);
+  }
+
+  function fsRenderRoots(list) {
+    if (!elRfRoots) return;
+    elRfRoots.innerHTML = (list || []).map(function (r) {
+      return '<button type="button" class="btn xs rf-root" data-path="' + fsEsc(r.path) + '">' + fsEsc(r.label) + "</button>";
+    }).join("");
+  }
+  function fsRenderListing(msg) {
+    fsCurrentPath = msg.path || null;
+    fsParentPath = msg.parent || null;
+    if (elRfPath) { elRfPath.textContent = fsCurrentPath || "—"; elRfPath.title = fsCurrentPath || ""; }
+    if (elRfUp) elRfUp.disabled = !fsParentPath;
+    var entries = msg.entries || [];
+    if (!elRfList) return;
+    if (!entries.length) {
+      elRfList.innerHTML = '<div class="dl-loading">Dossier vide.</div>';
+      return;
+    }
+    elRfList.innerHTML = entries.map(function (e) {
+      var icon = e.is_dir ? "#i-folder" : "#i-box";
+      var meta = e.is_dir ? (e.mtime || "") : (fsHumanSize(e.size) + (e.mtime ? " · " + e.mtime : ""));
+      return '<div class="rf-row' + (e.is_dir ? " dir" : "") + '" data-name="' + fsEsc(e.name) + '" data-isdir="' + (e.is_dir ? "1" : "0") + '">' +
+        '<svg><use href="' + icon + '"/></svg>' +
+        '<span class="rf-name">' + fsEsc(e.name) + "</span>" +
+        '<span class="rf-meta">' + fsEsc(meta) + "</span></div>";
+    }).join("");
+  }
+
+  function fsQueueUploads(fileList) {
+    if (!fsCurrentPath) { fsStatus("Choisissez d'abord un dossier de destination."); return; }
+    for (var i = 0; i < fileList.length; i++) fsUploadQueue.push(fileList[i]);
+    if (!fsActiveUpload) fsStartNextUpload();
+  }
+  function fsStartNextUpload() {
+    if (fsActiveUpload) return;
+    var file = fsUploadQueue.shift();
+    if (!file) { if (fsCurrentPath) fsList(fsCurrentPath); return; }  // file vide → refresh
+    var id = fsNextId();
+    fsActiveUpload = { id: id, file: file, name: file.name };
+    sendInput({ t: "fs_upload_start", id: id, name: file.name, dir: fsCurrentPath, size: file.size });
+    fsStatus("Préparation de « " + file.name + " »…");
+    fsAudit("up", file.name, file.size, fsCurrentPath);
+  }
+  async function fsSendUploadChunks(id) {
+    var up = fsActiveUpload;
+    if (!up || up.id !== id) return;
+    var file = up.file, offset = 0, seq = 0;
+    try {
+      if (file.size === 0) {
+        sendInput({ t: "fs_upload_chunk", id: id, seq: 0, data: "", last: true });
+        return;
+      }
+      while (offset < file.size) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        // Backpressure : on attend que le tampon d'envoi se vide.
+        while (ws && ws.bufferedAmount > FS_BUF_MAX) { await fsSleep(30); }
+        var end = Math.min(offset + FS_UP_CHUNK, file.size);
+        var buf = await file.slice(offset, end).arrayBuffer();
+        var last = end >= file.size;
+        sendInput({ t: "fs_upload_chunk", id: id, seq: seq, data: u8ToB64(new Uint8Array(buf)), last: last });
+        offset = end; seq++;
+        fsStatus("Envoi de « " + up.name + " » — " + Math.round(offset / file.size * 100) + " %");
+      }
+    } catch (e) {
+      fsStatus("Échec de l'envoi de « " + up.name + " ».");
+      fsActiveUpload = null;
+      fsStartNextUpload();
+    }
+  }
+
+  function fsTogglePanel(open) {
+    filesOpen = (open === undefined) ? !filesOpen : open;
+    if (elFilesPanel) elFilesPanel.classList.toggle("hidden", !filesOpen);
+    setToggle(elFiles, filesOpen);
+    if (filesOpen && !fsCurrentPath) sendInput({ t: "fs_roots" });
+  }
+  function fsResetState() {
+    filesOpen = false;
+    fsCurrentPath = null; fsParentPath = null;
+    fsDownloads = {}; fsUploadQueue = []; fsActiveUpload = null;
+    if (elFilesPanel) elFilesPanel.classList.add("hidden");
+    setToggle(elFiles, false);
+    if (elRfList) elRfList.innerHTML = '<div class="dl-loading">Choisissez un emplacement pour explorer le poste.</div>';
+    if (elRfRoots) elRfRoots.innerHTML = "";
+    if (elRfPath) elRfPath.textContent = "—";
+    if (elRfUp) elRfUp.disabled = true;
+    fsStatus("");
+  }
+
+  if (elFiles) elFiles.addEventListener("click", function () {
+    if (elFiles.disabled) return;
+    fsTogglePanel();
+  });
+  if (elRfUp) elRfUp.addEventListener("click", function () { if (fsParentPath) fsList(fsParentPath); });
+  var elRfRefresh = document.getElementById("rf-refresh");
+  if (elRfRefresh) elRfRefresh.addEventListener("click", function () { if (fsCurrentPath) fsList(fsCurrentPath); });
+  if (elRfRoots) elRfRoots.addEventListener("click", function (e) {
+    var b = e.target.closest(".rf-root");
+    if (b) fsList(b.getAttribute("data-path"));
+  });
+  if (elRfList) elRfList.addEventListener("click", function (e) {
+    var row = e.target.closest(".rf-row");
+    if (!row) return;
+    var name = row.getAttribute("data-name");
+    var full = fsJoin(fsCurrentPath, name);
+    if (row.getAttribute("data-isdir") === "1") fsList(full);
+    else fsDownload(full, name);
+  });
+  if (elRfUpload) elRfUpload.addEventListener("change", function () {
+    if (this.files && this.files.length) fsQueueUploads(this.files);
+    this.value = "";
+  });
+  if (elFilesPanel) {
+    elFilesPanel.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      elFilesPanel.classList.add("drop");
+    });
+    elFilesPanel.addEventListener("dragleave", function (e) {
+      if (e.target === elFilesPanel) elFilesPanel.classList.remove("drop");
+    });
+    elFilesPanel.addEventListener("drop", function (e) {
+      e.preventDefault();
+      elFilesPanel.classList.remove("drop");
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        fsQueueUploads(e.dataTransfer.files);
+      }
+    });
+  }
 
   // Ferme proprement la session si l'onglet est quitté.
   window.addEventListener("beforeunload", function () {

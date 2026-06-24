@@ -90,7 +90,14 @@ try {
             Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
         }
         try { Stop-ScheduledTask -TaskName "TrueSight Companion" -ErrorAction SilentlyContinue } catch {}
-        & taskkill.exe /F /T /IM "truesight-agent.exe" 2>&1 | Out-Null
+        # taskkill ecrit sur stderr + sort en 128 quand AUCUN process ne correspond ;
+        # sous $ErrorActionPreference='Stop' cela AVORTE le script. On ne l'appelle
+        # donc que si un process existe, et on neutralise toute erreur residuelle.
+        try {
+            if (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue) {
+                & taskkill.exe /F /T /IM "truesight-agent.exe" 2>&1 | Out-Null
+            }
+        } catch {}
         for ($j = 0; $j -lt 40; $j++) {
             if (-not (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue)) { return $true }
             Start-Sleep -Milliseconds 500

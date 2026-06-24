@@ -175,13 +175,15 @@ def collect_services() -> list:
     ``[]`` en cas d'échec ; jamais bloquant. Liste bornée à ``_MAX_SERVICES``.
     """
     cmd = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
         "Get-CimInstance Win32_Service | "
         "Select-Object Name,DisplayName,State,StartMode | ConvertTo-Json -Compress"
     )
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-            capture_output=True, text=True, timeout=45, creationflags=_CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=45, creationflags=_CREATE_NO_WINDOW,
         )
         raw = (proc.stdout or "").strip()
         if not raw:
@@ -220,6 +222,7 @@ def collect_services() -> list:
 def _collect_defender() -> dict:
     """État de Windows Defender via ``Get-MpComputerStatus`` (PowerShell)."""
     cmd = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
         "Get-MpComputerStatus | Select-Object AntivirusEnabled,"
         "RealTimeProtectionEnabled,AMServiceEnabled,AntivirusSignatureAge,"
         "AntispywareSignatureAge,QuickScanAge | ConvertTo-Json -Compress"
@@ -227,7 +230,8 @@ def _collect_defender() -> dict:
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-            capture_output=True, text=True, timeout=45, creationflags=_CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=45, creationflags=_CREATE_NO_WINDOW,
         )
         raw = (proc.stdout or "").strip()
         if not raw:

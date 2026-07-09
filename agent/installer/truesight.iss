@@ -19,6 +19,13 @@
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
+; Jeton d'enrolement pre-embarque (optionnel), injecte a la COMPILATION via
+; ISCC /DDefaultToken=<jeton>. Vide par defaut -> aucun secret dans le depot ;
+; l'assistant demande alors le jeton normalement. Quand il est fourni, il pre-
+; remplit le champ jeton et la page de saisie est sautee (install quasi sans clic).
+#ifndef DefaultToken
+  #define DefaultToken ""
+#endif
 
 [Setup]
 AppId={{A2F4C1E8-7B3D-4E9A-9C21-5D6F8B0A1E23}
@@ -85,7 +92,17 @@ begin
   ServerPage.Add('URL du serveur (https://...)', False);
   ServerPage.Add('Jeton d''enrôlement', False);
   ServerPage.Values[0] := ExpandConstant('{param:SERVERURL|https://srv778935.hstgr.cloud}');
-  ServerPage.Values[1] := ExpandConstant('{param:TOKEN|}');
+  ServerPage.Values[1] := ExpandConstant('{param:TOKEN|{#DefaultToken}}');
+end;
+
+{ Saute la page de saisie quand l'URL ET le jeton sont deja renseignes (jeton
+  embarque a la compilation, ou passe en /SERVERURL= /TOKEN=) -> le double-clic
+  enchaine directement sur l'installation, sans rien a saisir. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if PageID = ServerPage.ID then
+    Result := (Trim(ServerPage.Values[0]) <> '') and (Trim(ServerPage.Values[1]) <> '');
 end;
 
 function GetServerUrl(Param: String): String;

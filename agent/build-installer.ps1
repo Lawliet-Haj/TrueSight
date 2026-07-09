@@ -13,7 +13,12 @@
 #   .\build-installer.ps1 -Iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 # ============================================================================
 param(
-    [string]$Iscc
+    [string]$Iscc,
+    # Jeton d'enrôlement à PRÉ-EMBARQUER dans le .exe (optionnel). Fourni ici, il
+    # est injecté à la compilation (ISCC /DDefaultToken=) : le .exe s'installe alors
+    # en double-clic sans rien saisir. Laisser vide = assistant demande le jeton.
+    # Le jeton n'est jamais écrit dans le dépôt : il ne vit que le temps du build.
+    [string]$Token
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,7 +69,13 @@ Write-Host "ISCC : $Iscc" -ForegroundColor Yellow
 
 # 4. Compilation.
 $iss = Join-Path $scriptDir "installer\truesight.iss"
-& $Iscc "/DAppVersion=$version" $iss
+$isccArgs = @("/DAppVersion=$version")
+if ($Token) {
+    $isccArgs += "/DDefaultToken=$Token"
+    Write-Host "Jeton d'enrôlement PRÉ-EMBARQUÉ : installation en double-clic sans saisie." -ForegroundColor Yellow
+}
+$isccArgs += $iss
+& $Iscc @isccArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Échec de la compilation Inno Setup (code $LASTEXITCODE)." -ForegroundColor Red
     exit 1
@@ -75,7 +86,12 @@ if (Test-Path $out) {
     $sizeMb = [math]::Round((Get-Item $out).Length / 1MB, 1)
     Write-Host "=== Installeur prêt ===" -ForegroundColor Green
     Write-Host "Fichier : $out ($sizeMb Mo)" -ForegroundColor Green
-    Write-Host "Manuel  : double-clic (assistant URL + jeton)." -ForegroundColor Cyan
+    if ($Token) {
+        Write-Host "Jeton embarqué : double-clic = installation automatique (aucune saisie)." -ForegroundColor Cyan
+    } else {
+        Write-Host "Manuel  : double-clic (assistant URL + jeton)." -ForegroundColor Cyan
+        Write-Host "Embarquer le jeton : .\build-installer.ps1 -Token <jeton>" -ForegroundColor Cyan
+    }
     Write-Host "Parc    : TrueSightAgent-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVERURL=https://srv778935.hstgr.cloud /TOKEN=<jeton>" -ForegroundColor Cyan
 } else {
     Write-Host "=== Échec : installeur introuvable ===" -ForegroundColor Red

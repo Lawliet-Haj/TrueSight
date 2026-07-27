@@ -325,6 +325,9 @@ textarea.input{
 .rbar.is-live .rec{color:var(--ok)}
 .rbar.is-live .rec i{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:beat 1.3s infinite}
 .rbar .name{font-family:var(--font-mono);font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Phase de connexion / reconnexion : informatif (ambre), distinct de .remote-error. */
+.rbar .rphase{font-family:var(--font-mono);font-size:10.5px;color:var(--warn);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.rbar .rphase:empty{display:none}
 .rbar .stat{margin-left:auto;display:flex;gap:8px;font-family:var(--font-mono);font-size:10px;color:var(--faint);white-space:nowrap}
 .rbar .stat b{color:var(--signal);font-weight:500}
 .rbar .stat .sep{color:var(--faint)}

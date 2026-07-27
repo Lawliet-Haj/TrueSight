@@ -5,7 +5,9 @@ Il collecte l'inventaire matériel/logiciel, envoie des métriques (heartbeat),
 récupère les commandes en attente et renvoie leurs résultats.
 """
 
-# Version de l'agent. 1.4.1 : décodage UTF-8 des sorties PowerShell des collecteurs
+# Version de l'agent. 1.4.2 : encodage JPEG accéléré — turbojpeg.dll (libjpeg-turbo)
+# EMBARQUÉE dans le paquet (avant : repli Pillow 5-10× plus lent → latence et CPU
+# inutiles sur le bureau à distance). 1.4.1 : décodage UTF-8 des sorties PowerShell des collecteurs
 # (services + Defender) — corrige un UnicodeDecodeError (cp1252) sur les noms de
 # services accentués. 1.4.0 : collecte de l'état des services Windows au heartbeat
 # (supervision + auto-remédiation côté serveur). 1.3.2 : préférence IPv4 pour les connexions
@@ -18,7 +20,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -35,6 +35,7 @@
   var elMonitor = document.getElementById("remote-monitor");
   var elMonitors = document.getElementById("remote-monitors");
   var elError = document.getElementById("remote-error");
+  var elPhase = document.getElementById("remote-phase");
   var elMode = document.getElementById("remote-mode");
   // Surcouche curseur + boutons de contrôle exclusif (lot navigation).
   var elCursor = document.getElementById("remote-cursor");
@@ -62,6 +63,22 @@
   var currentMonitor = 0;
   var canvasW = elCanvas.width;
   var canvasH = elCanvas.height;
+
+  // --- Robustesse de session ---
+  // La liaison peut tomber pour des raisons banales (Wi-Fi, veille, reboot du
+  // poste, relais recyclé). Plutôt que de rendre la main à l'utilisateur, on
+  // reconnecte tout seul : le jeton de session est à usage unique, donc on
+  // redemande une NOUVELLE session au serveur à chaque tentative.
+  var userStopped = false;         // arrêt volontaire → aucune reconnexion
+  var reconnectAttempt = 0;        // 0 = connexion initiale
+  var reconnectTimer = null;
+  var noFrameTimer = null;         // garde « relais connecté mais aucune image »
+  var gotFrameThisConn = false;    // ≥ 1 trame reçue sur CETTE connexion
+  var MAX_RECONNECT = 5;
+  var NO_FRAME_TIMEOUT_MS = 20000;    // connexion initiale : retour d'info rapide
+  // En RECONNEXION on patiente plus longtemps : le poste peut être en train de
+  // redémarrer (reprise après reboot), ce qui dépasse largement 20 s.
+  var NO_FRAME_RECONNECT_MS = 45000;
 
   // --- Compteurs fps / latence ---
   var frameCount = 0;
@@ -124,6 +141,107 @@
     if (!elError) return;
     elError.textContent = "";
     elError.classList.remove("show");
+  }
+
+  // Progression de connexion (informatif, PAS une erreur) : l'utilisateur voit à
+  // quelle étape on en est plutôt que de fixer un écran noir muet.
+  function setPhase(msg) {
+    if (elPhase) elPhase.textContent = msg || "";
+  }
+
+  // Traduit un code de fermeture WebSocket en langage compréhensible.
+  function closeReason(code) {
+    if (code === 1006) return "liaison interrompue";
+    if (code === 1001) return "poste ou navigateur mis en veille";
+    if (code === 1011) return "erreur du relais";
+    if (code === 1012 || code === 1013) return "relais indisponible";
+    return "code " + code;
+  }
+
+  function clearNoFrameTimer() {
+    if (noFrameTimer) { clearTimeout(noFrameTimer); noFrameTimer = null; }
+  }
+
+  // Première trame reçue : la liaison est réellement opérationnelle.
+  function noteFrameReceived() {
+    if (gotFrameThisConn) return;
+    gotFrameThisConn = true;
+    clearNoFrameTimer();
+    reconnectAttempt = 0;   // la session est saine : on repart d'un budget neuf
+    setPhase("");
+    clearError();
+    // Après une reconnexion, la classe has-stream est déjà là (image figée
+    // conservée) : handleFullFrame ne repasserait donc pas l'état à « live ».
+    setLiveState("live");
+  }
+
+  // Coupe le TRANSPORT sans réinitialiser l'UI : on garde la dernière image
+  // figée et les boutons en état « session active » pendant une reconnexion.
+  function teardownTransport() {
+    stopFpsCounter();
+    stopPing();
+    clearNoFrameTimer();
+    if (ws) {
+      try { ws.onclose = null; ws.onerror = null; ws.onmessage = null; } catch (e) { /* ignore */ }
+      try { ws.close(); } catch (e) { /* ignore */ }
+    }
+    ws = null;
+    if (elFps) elFps.textContent = "0";
+  }
+
+  // Reconnexion différée avec backoff exponentiel (1, 2, 4, 8, 8 s).
+  function scheduleReconnect(code) {
+    reconnectAttempt += 1;
+    var delay = Math.min(8000, 1000 * Math.pow(2, reconnectAttempt - 1));
+    setLiveState("connecting");
+    setPhase("Connexion perdue (" + closeReason(code) + ") — reconnexion dans "
+      + Math.round(delay / 1000) + " s… (" + reconnectAttempt + "/" + MAX_RECONNECT + ")");
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (userStopped) return;
+      startSession(true);
+    }, delay);
+  }
+
+  // Le relais est connecté mais l'agent n'envoie aucune image : on interroge
+  // l'état du poste pour donner une CAUSE probable et une ACTION, au lieu de
+  // laisser l'écran noir indéfiniment (symptôme historique le plus déroutant).
+  async function diagnoseNoFrame() {
+    noFrameTimer = null;
+    if (gotFrameThisConn || userStopped) return;
+
+    // En reconnexion : le poste redémarre peut-être. On ne renonce pas tant qu'il
+    // reste du budget — on repart pour un tour en l'annonçant clairement.
+    if (reconnectAttempt > 0 && reconnectAttempt < MAX_RECONNECT) {
+      setPhase("Poste pas encore revenu (redémarrage ?) — nouvelle tentative… ("
+        + reconnectAttempt + "/" + MAX_RECONNECT + ")");
+      teardownTransport();
+      scheduleReconnect(1006);
+      return;
+    }
+
+    var hint = "Le poste n'a envoyé aucune image.";
+    try {
+      var r = await fetch("/api/v1/agents/" + AGENT_ID, { headers: { Accept: "application/json" } });
+      if (r.ok) {
+        var d = await r.json();
+        if (d && d.status === "offline") {
+          hint = "Le poste est hors ligne : il n'a pas reçu la demande. "
+               + "Vérifiez qu'il est allumé et connecté au réseau.";
+        } else {
+          hint = "Le poste est en ligne mais n'a pas ouvert le flux. Causes probables : "
+               + "aucune session Windows ouverte (le compagnon ne tourne pas), "
+               + "ou le poste n'atteint pas le relais (réseau / pare-feu).";
+        }
+      }
+    } catch (e) { /* diagnostic au mieux : on garde le message générique */ }
+    setPhase("");
+    showError(hint);
+    // Socket ouverte mais muette : inutile de boucler en reconnexion.
+    userStopped = true;
+    teardownTransport();
+    teardown();
   }
 
   function setLiveState(state) {
@@ -228,11 +346,20 @@
   // ---------------------------------------------------------------------------
   // Démarrage de session (signalisation)
   // ---------------------------------------------------------------------------
-  async function startSession() {
-    clearError();
-    elStart.disabled = true;
-    elStart.innerHTML = '<span class="spin"></span>Ouverture…';
+  // ``isRetry`` : appel issu de la reconnexion automatique (on ne réinitialise
+  // ni le compteur de tentatives ni l'état des boutons).
+  async function startSession(isRetry) {
+    if (!isRetry) {
+      userStopped = false;
+      reconnectAttempt = 0;
+      clearError();
+      elStart.disabled = true;
+      elStart.innerHTML = '<span class="spin"></span>Ouverture…';
+    }
     setLiveState("connecting");
+    setPhase(isRetry
+      ? "Reconnexion… (" + reconnectAttempt + "/" + MAX_RECONNECT + ")"
+      : "Ouverture de la session…");
 
     var data;
     try {
@@ -248,6 +375,12 @@
         throw new Error(data && data.error ? data.error : "HTTP " + resp.status);
       }
     } catch (e) {
+      // Échec de signalisation : en reconnexion, on retente tant qu'il reste du budget.
+      if (isRetry && !userStopped && reconnectAttempt < MAX_RECONNECT) {
+        scheduleReconnect(1006);
+        return;
+      }
+      setPhase("");
       showError("Impossible d'ouvrir la session : " + (e.message || e));
       setLiveState("off");
       setButtonsForActive(false);
@@ -257,12 +390,16 @@
     sessionId = data.session_id || null;
     var wsUrl = data.ws_url;
     if (!wsUrl) {
+      setPhase("");
       showError("Réponse serveur incomplète (ws_url manquant).");
       setLiveState("off");
       setButtonsForActive(false);
       return;
     }
 
+    // L'ordre est déposé côté serveur ; l'agent le récupère à son prochain
+    // sondage (≤ 8 s) puis se connecte au relais.
+    setPhase("Ordre transmis au poste — en attente de sa connexion (jusqu'à 8 s)…");
     openSocket(wsUrl);
   }
 
@@ -280,6 +417,13 @@
     ws.onopen = function () {
       setButtonsForActive(true);
       setLiveState("connecting"); // passe à "live" à la première trame reçue
+      gotFrameThisConn = false;
+      setPhase("Relais connecté — en attente de la première image…");
+      // Garde-fou : si l'agent ne se connecte jamais (poste éteint, aucune session
+      // ouverte, relais inatteignable), on diagnostique au lieu d'attendre à vide.
+      clearNoFrameTimer();
+      noFrameTimer = setTimeout(diagnoseNoFrame,
+        reconnectAttempt > 0 ? NO_FRAME_RECONNECT_MS : NO_FRAME_TIMEOUT_MS);
       bindInputs();
       startFpsCounter();
       startPing();
@@ -297,13 +441,26 @@
     };
 
     ws.onerror = function () {
-      showError("Erreur de connexion au relais.");
+      // Toujours suivi de onclose : c'est lui qui décide (reconnexion ou abandon).
+      // Afficher une erreur ici parasiterait le message de reconnexion.
     };
 
     ws.onclose = function (ev) {
+      var code = ev ? ev.code : 0;
+      var normal = (code === 1000 || code === 1005);
+      clearNoFrameTimer();
+
+      // Coupure inattendue → on reconnecte automatiquement (budget limité).
+      if (!userStopped && !normal && reconnectAttempt < MAX_RECONNECT) {
+        teardownTransport();
+        scheduleReconnect(code);
+        return;
+      }
+
       teardown();
-      if (ev && ev.code !== 1000 && ev.code !== 1005) {
-        showError("Session terminée (code " + ev.code + (ev.reason ? " — " + ev.reason : "") + ").");
+      if (!userStopped && !normal) {
+        showError("Session interrompue (" + closeReason(code) + ") après "
+          + MAX_RECONNECT + " tentatives de reconnexion. Réessayez « Prendre la main ».");
       }
     };
   }
@@ -317,6 +474,9 @@
     var version = dv.getUint8(0);
     var frameType = dv.getUint8(1);
     if (version !== 0x01) return;
+    // Une image d'écran = la liaison est réellement opérationnelle (annule la
+    // garde « pas d'image » et remet à zéro le budget de reconnexion).
+    if (frameType === 0x00 || frameType === 0x02) noteFrameReceived();
     if (frameType === 0x00) handleFullFrame(dv, buffer);       // trame pleine (keyframe)
     else if (frameType === 0x02) handleTiledFrame(dv, buffer); // trame tuilée (delta)
     else if (frameType === 0x10) handleAudioFrame(dv, buffer); // son système (PCM)
@@ -728,6 +888,10 @@
   // Arrêt / nettoyage
   // ---------------------------------------------------------------------------
   function stopSession() {
+    // Arrêt VOLONTAIRE : interdit la reconnexion automatique.
+    userStopped = true;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    clearNoFrameTimer();
     if (ws) {
       try { ws.close(1000, "viewer_end"); } catch (e) { /* ignore */ }
     } else {
@@ -736,6 +900,10 @@
   }
 
   function teardown() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    clearNoFrameTimer();
+    setPhase("");
+    gotFrameThisConn = false;
     stopFpsCounter();
     stopPing();
     ws = null;
@@ -760,7 +928,10 @@
   // ---------------------------------------------------------------------------
   // Branchements boutons
   // ---------------------------------------------------------------------------
-  elStart.addEventListener("click", startSession);
+  // Wrapper OBLIGATOIRE : branché directement, l'événement de clic serait passé
+  // comme argument `isRetry` (objet ⇒ truthy) et le démarrage manuel serait pris
+  // pour une reconnexion (boutons et compteur non réinitialisés).
+  elStart.addEventListener("click", function () { startSession(false); });
   elStop.addEventListener("click", stopSession);
 
   elControl.addEventListener("click", function () {

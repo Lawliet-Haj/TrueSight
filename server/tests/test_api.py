@@ -1882,6 +1882,20 @@ def test_remediation_rejects_injection_name(client, admin_session, app):
         assert db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 0
 
 
+def test_remote_viewer_has_reconnect_and_diagnostics(client, admin_session):
+    """Le viewer expose l'indicateur de phase, la reconnexion auto et le
+    diagnostic « pas d'image » (garde anti-régression de l'écran noir muet)."""
+    agent_id, _ = _enroll(client, "MACHINE-RMT")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    assert "remote-phase" in html, "indicateur de phase absent du gabarit"
+    js = admin_session.get("/static/js/remote.js").get_data(as_text=True)
+    for marker in ("scheduleReconnect", "diagnoseNoFrame", "noteFrameReceived",
+                   "MAX_RECONNECT", "teardownTransport"):
+        assert marker in js, f"marqueur de robustesse manquant : {marker}"
+    # Le clic manuel doit passer par un wrapper (sinon l'événement = isRetry truthy).
+    assert "startSession(false)" in js
+
+
 def test_services_tab_in_catalog(client, admin_session):
     """L'onglet 'services' est dans le catalogue canonique (UI Réglages)."""
     tabs = admin_session.get("/api/v1/settings/preferences").get_json()["tabs"]

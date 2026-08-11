@@ -152,6 +152,8 @@
                   title="Écouter le son du poste (ce qui sort des haut-parleurs). Requiert une session utilisateur ouverte."><svg><use href="#i-sound"/></svg>Son</button>
           <button class="btn mini" id="remote-files" type="button" disabled
                   title="Explorer, télécharger et envoyer des fichiers (droits de l'utilisateur connecté). Requiert une session utilisateur ouverte."><svg><use href="#i-folder"/></svg>Fichiers</button>
+          <button class="btn mini" id="remote-clip" type="button" disabled
+                  title="Presse-papiers partagé (texte) : envoyer du texte vers le poste ou récupérer le sien. Requiert une session utilisateur ouverte."><svg><use href="#i-copy"/></svg>Presse-papiers</button>
           <button class="btn mini" id="remote-lockexit" type="button" disabled
                   title="Verrouiller la session Windows du poste à la fin de la prise de main."><svg><use href="#i-power"/></svg>Lock à la sortie</button>
           <button class="btn" id="remote-fullscreen" type="button" disabled><svg><use href="#i-expand"/></svg>Plein écran</button>
@@ -177,6 +179,25 @@
             <div class="dl-loading">Choisissez un emplacement pour explorer le poste.</div>
           </div>
           <div class="rfiles-status cmd-status" id="rf-status"></div>
+        </div>
+
+        <!-- Panneau Presse-papiers (texte) — affiché via le bouton « Presse-papiers ».
+             Le champ de saisie est volontairement au centre du flux : coller (Ctrl+V)
+             fonctionne TOUJOURS, alors que la lecture automatique du presse-papiers
+             est refusée par certains navigateurs (Firefox). -->
+        <div class="rclip hidden" id="remote-clip-panel">
+          <div class="rclip-bar">
+            <button class="btn xs" id="rc-pull" type="button"
+                    title="Lire le presse-papiers du poste et le copier chez moi">↓ Récupérer du poste</button>
+            <button class="btn xs go" id="rc-push" type="button"
+                    title="Écrire le texte ci-dessous dans le presse-papiers du poste">↑ Envoyer au poste</button>
+            <button class="btn xs" id="rc-mine" type="button"
+                    title="Remplir avec mon presse-papiers (si le navigateur l'autorise)">Coller le mien</button>
+            <span class="grow"></span>
+            <span class="rclip-status cmd-status" id="rc-status"></span>
+          </div>
+          <textarea id="rc-text" class="input rclip-text" rows="4" spellcheck="false"
+                    placeholder="Collez ici (Ctrl+V) le texte à envoyer au poste, ou cliquez « Récupérer du poste »."></textarea>
         </div>
       </div>
     </div>

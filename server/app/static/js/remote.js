@@ -52,6 +52,14 @@
   var elRfList = document.getElementById("rf-list");
   var elRfStatus = document.getElementById("rf-status");
   var elRfUpload = document.getElementById("rf-upload");
+  // Presse-papiers partagé (texte).
+  var elClip = document.getElementById("remote-clip");
+  var elClipPanel = document.getElementById("remote-clip-panel");
+  var elRcPull = document.getElementById("rc-pull");
+  var elRcPush = document.getElementById("rc-push");
+  var elRcMine = document.getElementById("rc-mine");
+  var elRcText = document.getElementById("rc-text");
+  var elRcStatus = document.getElementById("rc-status");
   if (!elStart || !elCanvas) return;
 
   var ctx = elCanvas.getContext("2d", { alpha: false });
@@ -127,6 +135,14 @@
     busy: "Un transfert est déjà en cours.", io: "Erreur de lecture/écriture.",
     unattended: "Indisponible à l'écran de connexion (aucune session ouverte).",
     cancelled: "Transfert annulé.",
+  };
+
+  // --- Presse-papiers partagé (texte) ---
+  var clipOpen = false;
+  var CLIP_ERR = {
+    unattended: "Indisponible à l'écran de connexion (aucune session ouverte).",
+    unavailable: "Presse-papiers du poste inaccessible (verrouillé par une application ?).",
+    bad_payload: "Contenu invalide.",
   };
 
   // ---------------------------------------------------------------------------
@@ -284,6 +300,7 @@
       setToggle(elAudio, false);
       stopAudioPlayback();
       fsResetState();
+      clipResetState();
     }
   }
 
@@ -310,7 +327,7 @@
 
   // Active/désactive les boutons de contrôle exclusif (session ouverte requise).
   function setExclusiveButtons(enabled) {
-    [elLockInput, elSas, elPrivacy, elLockExit, elAudio, elFiles].forEach(function (b) {
+    [elLockInput, elSas, elPrivacy, elLockExit, elAudio, elFiles, elClip].forEach(function (b) {
       if (b) b.disabled = !enabled;
     });
   }
@@ -695,7 +712,122 @@
         fsStartNextUpload();
       }
       if (msg.id && fsDownloads[msg.id]) delete fsDownloads[msg.id];
+    } else if (msg.t === "clip") {
+      // Presse-papiers du poste reçu : on le montre ET on tente de le copier
+      // localement (writeText est autorisé sur geste utilisateur, ce qui est le cas).
+      // Le panneau doit être visible : le repli execCommand("copy") ne peut pas
+      // sélectionner un champ masqué.
+      if (!clipOpen && elClipPanel) {
+        clipOpen = true;
+        elClipPanel.classList.remove("hidden");
+        setToggle(elClip, true);
+      }
+      if (elRcText) elRcText.value = msg.text || "";
+      var n = (msg.text || "").length;
+      if (!n) {
+        clipStatus("Le presse-papiers du poste est vide (ou ne contient pas de texte).");
+      } else {
+        copyToLocalClipboard(msg.text);
+      }
+    } else if (msg.t === "clip_ok") {
+      clipStatus("Envoyé au poste (" + (msg.n || 0) + " caractères).");
+    } else if (msg.t === "clip_error") {
+      var cm = CLIP_ERR[msg.code] || ("Erreur (" + (msg.code || "?") + ")");
+      clipStatus(cm);
+      if (window.TS && TS.toast) TS.toast("Presse-papiers : " + cm, "error");
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Presse-papiers partagé (texte)
+  // ---------------------------------------------------------------------------
+  function clipStatus(msg) {
+    if (elRcStatus) elRcStatus.textContent = msg || "";
+  }
+
+  // Copie vers le presse-papiers LOCAL. navigator.clipboard exige un contexte
+  // sécurisé (https) ; on garde un repli execCommand + sélection du textarea.
+  function copyToLocalClipboard(text) {
+    function fallback() {
+      if (!elRcText) return false;
+      try {
+        elRcText.focus();
+        elRcText.select();
+        var ok = document.execCommand && document.execCommand("copy");
+        return !!ok;
+      } catch (e) { return false; }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        clipStatus("Presse-papiers du poste copié chez vous (" + text.length + " caractères).");
+      }).catch(function () {
+        clipStatus(fallback()
+          ? "Copié chez vous (" + text.length + " caractères)."
+          : "Texte récupéré ci-dessous — copiez-le manuellement (Ctrl+C).");
+      });
+      return;
+    }
+    clipStatus(fallback()
+      ? "Copié chez vous (" + text.length + " caractères)."
+      : "Texte récupéré ci-dessous — copiez-le manuellement (Ctrl+C).");
+  }
+
+  function setupClipboard() {
+    if (!elClip || !elClipPanel) return;
+
+    elClip.addEventListener("click", function () {
+      clipOpen = !clipOpen;
+      elClipPanel.classList.toggle("hidden", !clipOpen);
+      setToggle(elClip, clipOpen);
+      if (clipOpen) {
+        clipStatus("");
+        if (elRcText) elRcText.focus();
+      }
+    });
+
+    // ↓ Récupérer : demande le presse-papiers du poste (réponse : message "clip").
+    if (elRcPull) elRcPull.addEventListener("click", function () {
+      if (!ws || ws.readyState !== WebSocket.OPEN) { clipStatus("Aucune session active."); return; }
+      clipStatus("Lecture du presse-papiers du poste…");
+      sendInput({ t: "clip_get" });
+    });
+
+    // ↑ Envoyer : écrit le contenu du champ dans le presse-papiers du poste.
+    if (elRcPush) elRcPush.addEventListener("click", function () {
+      if (!ws || ws.readyState !== WebSocket.OPEN) { clipStatus("Aucune session active."); return; }
+      var txt = elRcText ? elRcText.value : "";
+      if (!txt) { clipStatus("Rien à envoyer : le champ est vide."); return; }
+      clipStatus("Envoi…");
+      sendInput({ t: "clip_set", text: txt });
+    });
+
+    // « Coller le mien » : confort quand le navigateur autorise la LECTURE du
+    // presse-papiers (Chrome/Edge sur geste utilisateur). Firefox la refuse :
+    // dans ce cas on invite simplement à coller à la main (Ctrl+V), ce qui
+    // fonctionne toujours — d'où le champ de saisie au centre du panneau.
+    if (elRcMine) elRcMine.addEventListener("click", function () {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        clipStatus("Votre navigateur n'autorise pas la lecture automatique : collez dans le champ (Ctrl+V).");
+        if (elRcText) elRcText.focus();
+        return;
+      }
+      navigator.clipboard.readText().then(function (t) {
+        if (elRcText) elRcText.value = t || "";
+        clipStatus(t ? "Votre presse-papiers est prêt à être envoyé." : "Votre presse-papiers est vide.");
+      }).catch(function () {
+        clipStatus("Lecture refusée par le navigateur : collez dans le champ (Ctrl+V).");
+        if (elRcText) elRcText.focus();
+      });
+    });
+  }
+
+  // Referme et vide le panneau (fin de session : ne pas laisser de texte traîner).
+  function clipResetState() {
+    clipOpen = false;
+    if (elClipPanel) elClipPanel.classList.add("hidden");
+    setToggle(elClip, false);
+    if (elRcText) elRcText.value = "";
+    clipStatus("");
   }
 
   function renderMonitorButtons(list) {
@@ -1011,6 +1143,9 @@
     setToggle(elAudio, audioOn);
     sendInput({ t: "audio", on: audioOn });
   });
+
+  // Presse-papiers partagé : branchement des boutons du panneau.
+  setupClipboard();
 
   // ---------------------------------------------------------------------------
   // Transfert de fichiers (explorateur in-session)

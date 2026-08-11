@@ -1896,6 +1896,17 @@ def test_remote_viewer_has_reconnect_and_diagnostics(client, admin_session):
     assert "startSession(false)" in js
 
 
+def test_remote_viewer_has_clipboard(client, admin_session):
+    """Le presse-papiers partagé (texte) est exposé : bouton, panneau, protocole."""
+    agent_id, _ = _enroll(client, "MACHINE-CLIP")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    for marker in ("remote-clip", "remote-clip-panel", "rc-text", "rc-pull", "rc-push"):
+        assert marker in html, f"marqueur presse-papiers manquant : {marker}"
+    js = admin_session.get("/static/js/remote.js").get_data(as_text=True)
+    for marker in ('"clip_get"', '"clip_set"', "CLIP_ERR", "copyToLocalClipboard"):
+        assert marker in js, f"marqueur presse-papiers manquant dans le viewer : {marker}"
+
+
 def test_services_tab_in_catalog(client, admin_session):
     """L'onglet 'services' est dans le catalogue canonique (UI Réglages)."""
     tabs = admin_session.get("/api/v1/settings/preferences").get_json()["tabs"]

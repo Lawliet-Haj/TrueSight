@@ -348,6 +348,13 @@ textarea.input{
 .rscreen .rcursor svg{display:block}
 
 /* Panneau Fichiers (explorateur + transfert) sous la barre d'outils. */
+/* Panneau presse-papiers partagé (texte) — même facture que .rfiles. */
+.rclip{border-top:1px solid var(--line);background:var(--bg-2);padding:11px 14px;display:flex;flex-direction:column;gap:9px}
+.rclip.hidden{display:none}
+.rclip-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rclip-bar .grow{flex:1}
+.rclip-status{font-size:11.5px;white-space:nowrap}
+.rclip-text{width:100%;resize:vertical;min-height:70px;font-family:var(--font-mono);font-size:12px;line-height:1.5}
 .rfiles{border-top:1px solid var(--line);background:var(--bg-2);padding:11px 14px;display:flex;flex-direction:column;gap:9px}
 .rfiles.hidden{display:none}
 .rfiles.drop{outline:2px dashed var(--signal);outline-offset:-4px}

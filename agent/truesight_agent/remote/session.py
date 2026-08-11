@@ -493,6 +493,35 @@ class RemoteSession:
                 pass
             _logger.info("Flux audio arrêté.")
 
+    # -- Presse-papiers partagé (texte) ---------------------------------------
+    def _clip_send(self) -> None:
+        """Renvoie le presse-papiers du poste au viewer (texte uniquement)."""
+        if self._desktop_follow:
+            # Écran de connexion : aucune session utilisateur, donc aucun presse-papiers.
+            self._send_text({"t": "clip_error", "code": "unattended"})
+            return
+        from . import clipboard as clipboard_mod
+        text = clipboard_mod.get_text()
+        if text is None:
+            self._send_text({"t": "clip_error", "code": "unavailable"})
+            return
+        self._send_text({"t": "clip", "text": text})
+
+    def _clip_apply(self, data: dict) -> None:
+        """Écrit dans le presse-papiers du poste le texte envoyé par le viewer."""
+        if self._desktop_follow:
+            self._send_text({"t": "clip_error", "code": "unattended"})
+            return
+        text = data.get("text")
+        if not isinstance(text, str):
+            self._send_text({"t": "clip_error", "code": "bad_payload"})
+            return
+        from . import clipboard as clipboard_mod
+        if clipboard_mod.set_text(text):
+            self._send_text({"t": "clip_ok", "n": len(text)})
+        else:
+            self._send_text({"t": "clip_error", "code": "unavailable"})
+
     # -- Transfert de fichiers (download binaire / upload base64) -------------
     def _fs_send_roots(self) -> None:
         """Emplacements de départ (profil + lecteurs) pour l'explorateur du viewer."""
@@ -745,6 +774,13 @@ class RemoteSession:
             return
         if msg_type == "fs_cancel":
             self._fs_cancel(data)
+            return
+        # Presse-papiers partagé (texte) — confort de dépannage.
+        if msg_type == "clip_get":
+            self._clip_send()
+            return
+        if msg_type == "clip_set":
+            self._clip_apply(data)
             return
         # Sinon : entrée souris/clavier effective.
         if self._desktop_follow:

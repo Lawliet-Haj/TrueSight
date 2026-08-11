@@ -77,6 +77,10 @@ $hiddenImports = @(
     "win32pipe",
     "win32file",
     "winerror",
+    # --- Presse-papiers partagé du bureau à distance (remote/clipboard.py) ---
+    # Importé paresseusement dans une fonction : on le déclare explicitement pour
+    # ne pas dépendre de l'analyse statique de PyInstaller (cf. incident winpty).
+    "win32clipboard",
     # --- Encodage JPEG accéléré (optionnel) : PyTurboJPEG + numpy ---
     "turbojpeg",
     "numpy"

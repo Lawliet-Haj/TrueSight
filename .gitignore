@@ -21,5 +21,11 @@ dist/
 # --- État runtime de l'agent (contient agent_id + agent_token) ----------------
 state.json
 
+# --- Signature de code --------------------------------------------------------
+# La CLE PRIVEE ne doit jamais entrer dans le dépôt. Le .cer (public) peut y
+# rester : c'est lui qu'on déploie par GPO sur le parc (cf. agent/SIGNING.md).
+*.pfx
+*.p12
+
 # --- Journaux -----------------------------------------------------------------
 *.log

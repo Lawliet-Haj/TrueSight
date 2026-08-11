@@ -14,6 +14,15 @@
 #   .\build.ps1
 # ============================================================================
 
+param(
+    # Signature Authenticode (optionnelle) : empreinte d'un certificat du magasin,
+    # ou chemin d'un .pfx. Sans cela, le binaire reste non signé (« éditeur
+    # inconnu » à l'installation). Cf. make-signing-cert.ps1 et SIGNING.md.
+    [string]$CertThumbprint,
+    [string]$PfxPath,
+    [System.Security.SecureString]$PfxPassword
+)
+
 # Arrête le script à la première erreur.
 $ErrorActionPreference = "Stop"
 
@@ -155,6 +164,24 @@ if (-not (Test-Path $exePath)) {
 Write-Host "=== Build réussi (onedir) ===" -ForegroundColor Green
 Write-Host "Dossier applicatif : $appDir" -ForegroundColor Green
 Write-Host "Exécutable : $exePath" -ForegroundColor Green
+
+# 5bis. Signature Authenticode de l'exécutable — AVANT l'empaquetage, sinon le
+#       zip (et son SHA-256) porteraient un binaire non signé.
+if ($CertThumbprint -or $PfxPath) {
+    $signScript = Join-Path $scriptDir "sign.ps1"
+    $signParams = @{ Path = $exePath }
+    if ($CertThumbprint) { $signParams["CertThumbprint"] = $CertThumbprint }
+    if ($PfxPath)        { $signParams["PfxPath"] = $PfxPath }
+    if ($PfxPassword)    { $signParams["PfxPassword"] = $PfxPassword }
+    & $signScript @signParams
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "=== Build interrompu : signature échouée ===" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "Binaire NON signé (« éditeur inconnu » à l'installation)." -ForegroundColor Yellow
+    Write-Host "Pour signer : .\build.ps1 -CertThumbprint <empreinte>  (cf. SIGNING.md)" -ForegroundColor DarkGray
+}
 
 # 6. Empaquetage : version.txt + zip versionné + empreinte SHA-256.
 #    Le zip (contenant le dossier truesight-agent\) se téléverse tel quel dans le

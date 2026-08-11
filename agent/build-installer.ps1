@@ -18,7 +18,12 @@ param(
     # est injecté à la compilation (ISCC /DDefaultToken=) : le .exe s'installe alors
     # en double-clic sans rien saisir. Laisser vide = assistant demande le jeton.
     # Le jeton n'est jamais écrit dans le dépôt : il ne vit que le temps du build.
-    [string]$Token
+    [string]$Token,
+    # Signature Authenticode (optionnelle) : transmise au build de l'agent ET
+    # appliquée au setup.exe produit. Cf. make-signing-cert.ps1 / SIGNING.md.
+    [string]$CertThumbprint,
+    [string]$PfxPath,
+    [System.Security.SecureString]$PfxPassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,9 +40,37 @@ Write-Host "Version : $version" -ForegroundColor Yellow
 
 # 2. Build onedir présent ? (sinon on le produit).
 $appExe = Join-Path $scriptDir "dist\truesight-agent\truesight-agent.exe"
+$appVer = Join-Path $scriptDir "dist\truesight-agent\version.txt"
+
+# On ne se contente PAS de vérifier la présence du dossier onedir : un dossier
+# laissé par un build précédent produirait un installeur incohérent (nommé
+# $version mais contenant une AUTRE version), et l'agent embarqué ne serait pas
+# signé alors qu'on demande une signature. Dans ces deux cas : on rebuild.
+$needBuild = $false
 if (-not (Test-Path $appExe)) {
-    Write-Host "Build onedir absent : lancement de build.ps1..." -ForegroundColor Yellow
-    & (Join-Path $scriptDir "build.ps1")
+    $needBuild = $true
+} else {
+    $onDisk = if (Test-Path $appVer) { (Get-Content $appVer -Raw).Trim() } else { "" }
+    if ($onDisk -ne $version) {
+        Write-Host "Onedir present en version '$onDisk' au lieu de '$version' : rebuild." -ForegroundColor Yellow
+        $needBuild = $true
+    } elseif ($CertThumbprint -or $PfxPath) {
+        $sigAgent = Get-AuthenticodeSignature -FilePath $appExe
+        if (-not $sigAgent.SignerCertificate) {
+            Write-Host "Onedir present mais agent NON signe : rebuild pour le signer." -ForegroundColor Yellow
+            $needBuild = $true
+        }
+    }
+}
+
+if ($needBuild) {
+    Write-Host "Lancement de build.ps1..." -ForegroundColor Yellow
+    # On transmet la signature : l'agent embarqué doit être signé lui aussi.
+    $buildParams = @{}
+    if ($CertThumbprint) { $buildParams["CertThumbprint"] = $CertThumbprint }
+    if ($PfxPath)        { $buildParams["PfxPath"] = $PfxPath }
+    if ($PfxPassword)    { $buildParams["PfxPassword"] = $PfxPassword }
+    & (Join-Path $scriptDir "build.ps1") @buildParams
     if (-not (Test-Path $appExe)) {
         Write-Host "Build onedir introuvable après build.ps1." -ForegroundColor Red
         exit 1
@@ -82,6 +115,27 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $out = Join-Path $scriptDir "dist\TrueSightAgent-Setup-$version.exe"
+
+# 4bis. Signature du setup.exe (le fichier que l'utilisateur double-clique : c'est
+#       LUI qui déclenche l'avertissement « éditeur inconnu »).
+if (Test-Path $out) {
+    if ($CertThumbprint -or $PfxPath) {
+        $signScript = Join-Path $scriptDir "sign.ps1"
+        $signParams = @{ Path = $out }
+        if ($CertThumbprint) { $signParams["CertThumbprint"] = $CertThumbprint }
+        if ($PfxPath)        { $signParams["PfxPath"] = $PfxPath }
+        if ($PfxPassword)    { $signParams["PfxPassword"] = $PfxPassword }
+        & $signScript @signParams
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== Installeur produit mais NON signé (échec de signature) ===" -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        Write-Host "Installeur NON signé (« éditeur inconnu »)." -ForegroundColor Yellow
+        Write-Host "Pour signer : -CertThumbprint <empreinte>  (cf. SIGNING.md)" -ForegroundColor DarkGray
+    }
+}
+
 if (Test-Path $out) {
     $sizeMb = [math]::Round((Get-Item $out).Length / 1MB, 1)
     Write-Host "=== Installeur prêt ===" -ForegroundColor Green

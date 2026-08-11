@@ -49,7 +49,21 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,  # évite les connexions mortes (VPS, longues inactivités)
         "pool_recycle": 1800,
+        # Le long-polling fait vivre beaucoup de threads en parallèle. Ils rendent
+        # leur connexion AVANT d'attendre (cf. api_agent.get_commands), donc le pool
+        # reste petit ; on garde tout de même de la marge pour les rafales.
+        "pool_size": 10,
+        "max_overflow": 20,
     }
+
+    # --- Long-polling des commandes -------------------------------------
+    # Durée maximale pendant laquelle le serveur garde ouverte la requête de
+    # sondage d'un agent quand il n'y a rien à faire. L'agent est relâché dès
+    # qu'une commande ou une session distante apparaît (cf. wake.py) → prise en
+    # main quasi instantanée au lieu d'attendre le prochain sondage.
+    # **0 = désactivé** : coupe-circuit d'exploitation (réponse immédiate, comme
+    # avant) sans avoir à redéployer les agents.
+    COMMANDS_LONGPOLL_MAX_SECONDS = _get_int("COMMANDS_LONGPOLL_MAX_SECONDS", 25)
 
     # --- Sécurité / sessions --------------------------------------------
     # SECRET_KEY est obligatoire ; valeur de repli uniquement pour le dev/tests.
@@ -181,6 +195,9 @@ class TestConfig(Config):
     ENABLE_BACKGROUND_TASKS = False
     N8N_WEBHOOK_URL = ""
     TRUST_PROXY = False
+    # Plafond d'attente très court en test : un ?wait= mal borné ne peut pas
+    # figer la suite pendant 25 s.
+    COMMANDS_LONGPOLL_MAX_SECONDS = 2
     # Copilote IA désactivé par défaut en test (déterminisme : ignore un
     # OPENAI_API_KEY éventuellement présent dans l'environnement de la CI).
     OPENAI_API_KEY = ""

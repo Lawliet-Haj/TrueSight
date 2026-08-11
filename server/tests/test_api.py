@@ -1882,6 +1882,88 @@ def test_remediation_rejects_injection_name(client, admin_session, app):
         assert db.session.query(Command).filter_by(agent_id=_uuid.UUID(agent_id)).count() == 0
 
 
+# --------------------------------------------------------------------------
+# Long-polling des commandes (réveil immédiat de l'agent)
+# --------------------------------------------------------------------------
+def test_longpoll_absent_wait_is_immediate(client, admin_session):
+    """Sans ?wait=, la réponse est immédiate : comportement historique intact
+    (les agents antérieurs ne doivent subir aucun changement)."""
+    import time as _t
+    agent_id, token = _enroll(client, "MACHINE-LP1")
+    t0 = _t.monotonic()
+    r = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token))
+    assert r.status_code == 200
+    assert r.get_json()["commands"] == []
+    assert _t.monotonic() - t0 < 0.5
+
+
+def test_longpoll_waits_then_returns_empty(client, admin_session):
+    """Avec ?wait=, sans travail, la requête est tenue puis rendue à vide."""
+    import time as _t
+    agent_id, token = _enroll(client, "MACHINE-LP2")
+    t0 = _t.monotonic()
+    r = client.get(f"/api/v1/agents/{agent_id}/commands?wait=1", headers=_auth(token))
+    elapsed = _t.monotonic() - t0
+    assert r.status_code == 200
+    assert r.get_json()["commands"] == []
+    assert elapsed >= 0.9, f"le serveur n'a pas attendu (={elapsed:.2f}s)"
+
+
+def test_longpoll_kill_switch_returns_immediately(client, admin_session, app):
+    """COMMANDS_LONGPOLL_MAX_SECONDS=0 → coupe-circuit : réponse immédiate même
+    avec ?wait= (retour au sondage sans redéployer les agents)."""
+    import time as _t
+    agent_id, token = _enroll(client, "MACHINE-LP3")
+    old = app.config["COMMANDS_LONGPOLL_MAX_SECONDS"]
+    app.config["COMMANDS_LONGPOLL_MAX_SECONDS"] = 0
+    try:
+        t0 = _t.monotonic()
+        r = client.get(f"/api/v1/agents/{agent_id}/commands?wait=5", headers=_auth(token))
+        assert r.status_code == 200
+        assert _t.monotonic() - t0 < 0.5
+    finally:
+        app.config["COMMANDS_LONGPOLL_MAX_SECONDS"] = old
+
+
+def test_wake_hook_fires_on_command_and_remote_session(client, admin_session, app):
+    """Le hook after_commit réveille l'agent pour TOUT chemin de création :
+    c'est ce qui rend la prise en main quasi instantanée."""
+    from app import wake
+    agent_id, _token = _enroll(client, "MACHINE-LP4")
+
+    # Une commande créée par l'admin doit positionner l'événement de l'agent.
+    ev = wake.arm(agent_id)
+    assert not ev.is_set()
+    r = admin_session.post(
+        f"/api/v1/agents/{agent_id}/commands",
+        json={"shell": "cmd", "command_text": "echo hello"},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert ev.is_set(), "commande créée mais agent non réveillé"
+
+    # Idem pour une demande de bureau à distance (même hook, modèle différent).
+    ev2 = wake.arm(agent_id)
+    assert not ev2.is_set()
+    rs = admin_session.post(f"/api/v1/agents/{agent_id}/remote-session", json={})
+    assert rs.status_code == 201, rs.get_data(as_text=True)
+    assert ev2.is_set(), "session distante créée mais agent non réveillé"
+
+
+def test_longpoll_returns_pending_work_without_waiting(client, admin_session):
+    """Si du travail existe DÉJÀ, ?wait= ne retarde pas la réponse."""
+    import time as _t
+    agent_id, token = _enroll(client, "MACHINE-LP5")
+    admin_session.post(
+        f"/api/v1/agents/{agent_id}/commands",
+        json={"shell": "cmd", "command_text": "echo x"},
+    )
+    t0 = _t.monotonic()
+    r = client.get(f"/api/v1/agents/{agent_id}/commands?wait=5", headers=_auth(token))
+    assert r.status_code == 200
+    assert len(r.get_json()["commands"]) == 1
+    assert _t.monotonic() - t0 < 0.5
+
+
 def test_remote_viewer_has_reconnect_and_diagnostics(client, admin_session):
     """Le viewer expose l'indicateur de phase, la reconnexion auto et le
     diagnostic « pas d'image » (garde anti-régression de l'écran noir muet)."""

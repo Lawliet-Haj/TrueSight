@@ -5,7 +5,10 @@ Il collecte l'inventaire matériel/logiciel, envoie des métriques (heartbeat),
 récupère les commandes en attente et renvoie leurs résultats.
 """
 
-# Version de l'agent. 1.4.3 : presse-papiers partagé (texte) pendant le bureau à
+# Version de l'agent. 1.4.4 : long-polling des commandes (le serveur relâche
+# l'agent dès qu'il y a du travail → prise en main quasi immédiate ; repli
+# automatique sur le sondage simple si un intermédiaire coupe les requêtes longues).
+# 1.4.3 : presse-papiers partagé (texte) pendant le bureau à
 # distance — lecture/écriture du presse-papiers du poste (CF_UNICODETEXT).
 # 1.4.2 : encodage JPEG accéléré — turbojpeg.dll (libjpeg-turbo)
 # EMBARQUÉE dans le paquet (avant : repli Pillow 5-10× plus lent → latence et CPU
@@ -22,7 +25,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.4.3"
+__version__ = "1.4.4"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -131,6 +131,7 @@ class ApiClient:
         params: dict | None = None,
         authed: bool = True,
         max_retries: int | None = None,
+        timeout: Any = None,
     ) -> ApiResult:
         """Exécute une requête HTTP avec retry/backoff.
 
@@ -153,7 +154,7 @@ class ApiClient:
                     url=url,
                     json=json_body,
                     params=params,
-                    timeout=self.timeout,
+                    timeout=self.timeout if timeout is None else timeout,
                     verify=self.verify_tls,
                 )
             except requests.exceptions.RequestException as exc:
@@ -352,10 +353,29 @@ class ApiClient:
             json_body=body,
         )
 
-    def get_commands(self) -> ApiResult:
-        """GET /api/v1/agents/{agent_id}/commands → {commands:[...]}."""
+    def get_commands(self, wait_seconds: int = 0) -> ApiResult:
+        """GET /api/v1/agents/{agent_id}/commands → {commands:[...]}.
+
+        ``wait_seconds`` > 0 active le **long-polling** : le serveur garde la
+        requête ouverte jusqu'à ce délai et la relâche dès qu'il y a du travail
+        (prise en main quasi immédiate). Le délai de lecture HTTP doit dépasser
+        l'attente demandée, sinon le client couperait la requête lui-même.
+        Un serveur plus ancien (ou avec le coupe-circuit actif) ignore simplement
+        le paramètre et répond tout de suite : aucun risque de régression.
+        """
         if not self._agent_id:
             return ApiResult(False, error="poll commandes sans agent_id.")
+        if wait_seconds and wait_seconds > 0:
+            connect_timeout = 10
+            return self._request(
+                "GET",
+                f"/agents/{self._agent_id}/commands",
+                params={"wait": int(wait_seconds)},
+                timeout=(connect_timeout, int(wait_seconds) + 15),
+                # Pas d'acharnement : en cas d'échec, la boucle repassera de
+                # toute façon (et retombera sur le sondage simple).
+                max_retries=0,
+            )
         return self._request(
             "GET",
             f"/agents/{self._agent_id}/commands",

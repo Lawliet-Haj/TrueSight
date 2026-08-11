@@ -90,6 +90,11 @@ def create_app(config_object: type | None = None) -> Flask:
         seed.ensure_admin()
         seed.ensure_alert_rules()
 
+    # --- Réveil immédiat des agents (long-polling des commandes) ---
+    from . import wake
+
+    wake.install_hooks(db)
+
     # --- Thread de fond (alertes + purge) ---
     from . import tasks
 

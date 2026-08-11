@@ -10,6 +10,7 @@ from threading import Lock
 
 from flask import Blueprint, current_app, g, jsonify, request
 
+from . import wake
 from .extensions import db
 from .models import (
     Agent,
@@ -421,13 +422,9 @@ def inventory(agent_id):
 # --------------------------------------------------------------------------
 # 2.4 GET /agents/{agent_id}/commands
 # --------------------------------------------------------------------------
-@bp.get("/agents/<agent_id>/commands")
-@agent_required
-def get_commands(agent_id):
-    """Récupère les commandes ``pending`` de l'agent et les passe à ``dispatched``."""
-    agent: Agent = g.agent
+def _collect_agent_work(agent: Agent) -> tuple[list, dict | None]:
+    """Commandes ``pending`` (passées à ``dispatched``) + session distante en attente."""
     now = utcnow()
-
     pending = (
         db.session.query(Command)
         .filter(Command.agent_id == agent.id, Command.status == "pending")
@@ -452,6 +449,59 @@ def get_commands(agent_id):
 
     # Signalisation bureau à distance : présent si une session est en attente.
     remote_session = _remote_session_for_agent(agent, "/ws/remote/agent")
+    return out, remote_session
+
+
+def _requested_wait_seconds() -> float:
+    """Durée d'attente demandée par l'agent (``?wait=``), bornée par la config.
+
+    Absent / invalide / ``0`` → 0 : réponse immédiate, c'est-à-dire **exactement**
+    le comportement historique (les agents antérieurs ne sont pas affectés).
+    """
+    cap = float(current_app.config.get("COMMANDS_LONGPOLL_MAX_SECONDS", 25) or 0)
+    if cap <= 0:
+        return 0.0  # coupe-circuit d'exploitation
+    raw = request.args.get("wait")
+    if not raw:
+        return 0.0
+    try:
+        asked = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(asked, cap))
+
+
+@bp.get("/agents/<agent_id>/commands")
+@agent_required
+def get_commands(agent_id):
+    """Récupère les commandes ``pending`` de l'agent et les passe à ``dispatched``.
+
+    Avec ``?wait=<secondes>`` (long-polling) : si rien n'est à faire, la requête
+    est maintenue ouverte jusqu'à ``wait`` secondes et **relâchée dès** qu'une
+    commande ou une demande de bureau à distance apparaît (cf. ``wake.py``) →
+    prise en main quasi immédiate au lieu d'attendre le sondage suivant.
+    """
+    agent: Agent = g.agent
+    aid = agent.id
+    wait_seconds = _requested_wait_seconds()
+
+    # ARMER AVANT DE LIRE : sinon une commande créée entre la lecture et la mise
+    # en attente positionnerait l'événement… que l'on viendrait d'effacer.
+    event = wake.arm(aid) if wait_seconds > 0 else None
+
+    out, remote_session = _collect_agent_work(agent)
+
+    if event is not None and not out and not remote_session:
+        # Rien à faire : on RELÂCHE la connexion base avant de dormir, sinon
+        # chaque agent en attente immobiliserait une connexion du pool.
+        db.session.remove()
+        if wake.wait(event, wait_seconds):
+            # Réveillé : l'agent a rejoint la session ; on relit une seule fois.
+            agent = db.session.get(Agent, aid)
+            if agent is None:  # supprimé pendant l'attente : cas limite
+                return jsonify({"commands": [], "remote_session": None}), 200
+            out, remote_session = _collect_agent_work(agent)
+
     return jsonify({"commands": out, "remote_session": remote_session}), 200
 
 

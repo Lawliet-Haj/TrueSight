@@ -330,26 +330,66 @@ class AgentRunner:
         _logger.info("Boucle heartbeat arrêtée.")
 
     # -- Boucle commandes -----------------------------------------------------
+    # Long-polling : on demande au serveur de garder la requête ouverte le temps
+    # indiqué et de nous relâcher DÈS qu'il y a du travail → prise en main quasi
+    # immédiate au lieu d'attendre le sondage suivant.
+    # 15 s (et non davantage) pour que l'arrêt du service reste réactif : une
+    # requête en vol n'est pas interrompue par le signal d'arrêt, et l'installeur
+    # n'attend l'arrêt que ~20 s.
+    _LONGPOLL_SECONDS = 15
+    # Repli : certains intermédiaires réseau coupent les requêtes longues. Après
+    # quelques échecs, on revient au sondage simple pendant un moment, puis on
+    # retente — l'agent reste fonctionnel dans tous les cas.
+    _LONGPOLL_FAIL_LIMIT = 3
+    _LONGPOLL_COOLDOWN_S = 300
+
     def _commands_loop(self) -> None:
-        _logger.info("Boucle commandes démarrée (poll %ss).", self.config.command_poll_interval)
+        _logger.info("Boucle commandes démarrée (long-polling %ss, repli poll %ss).",
+                     self._LONGPOLL_SECONDS, self.config.command_poll_interval)
+        longpoll_fails = 0
+        longpoll_off_until = 0.0
+
         while not self._stop_event.is_set():
+            use_longpoll = time.monotonic() >= longpoll_off_until
+            wait_s = self._LONGPOLL_SECONDS if use_longpoll else 0
+            did_work = False
+            started = time.monotonic()
             try:
-                result = self.client.get_commands()
+                result = self.client.get_commands(wait_seconds=wait_s)
                 if result.ok and isinstance(result.data, dict):
+                    longpoll_fails = 0
                     # Signalisation bureau à distance (champ remote_session) :
                     # la réponse GET commands le porte aussi (CONTRAT REMOTE).
-                    self._maybe_start_remote_session(result.data.get("remote_session"))
+                    remote_session = result.data.get("remote_session")
                     pending = result.data.get("commands") or []
+                    did_work = bool(remote_session) or bool(pending)
+                    self._maybe_start_remote_session(remote_session)
                     for command in pending:
                         if self._stop_event.is_set():
                             break
                         self._run_one_command(command)
                 elif not result.ok:
                     _logger.debug("Poll commandes en échec : %s", result.error)
+                    if use_longpoll:
+                        longpoll_fails += 1
+                        if longpoll_fails >= self._LONGPOLL_FAIL_LIMIT:
+                            longpoll_fails = 0
+                            longpoll_off_until = time.monotonic() + self._LONGPOLL_COOLDOWN_S
+                            _logger.warning(
+                                "Long-polling en échec répété : repli sur le sondage simple "
+                                "pendant %ss.", self._LONGPOLL_COOLDOWN_S)
             except AuthError:
                 self._handle_auth_error()
             except Exception as exc:  # noqa: BLE001
                 _logger.error("Erreur dans la boucle commandes : %s", exc)
+
+            # Le serveur a-t-il RÉELLEMENT attendu ? S'il répond instantanément
+            # sans rien à faire (serveur ancien, ou coupe-circuit activé), enchaîner
+            # sans pause transformerait la boucle en martèlement : on repasse alors
+            # par la pause de sondage habituelle.
+            server_waited = (time.monotonic() - started) >= 2.0
+            if did_work or (use_longpoll and server_waited):
+                continue
             if self._sleep(self.config.command_poll_interval):
                 break
         _logger.info("Boucle commandes arrêtée.")

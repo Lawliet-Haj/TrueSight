@@ -36,14 +36,21 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 
-# Lancement : 1 worker, 8 threads.
+# Lancement : 1 worker, 128 threads.
+# --threads 128 (et non 8) : avec le LONG-POLLING des commandes, chaque agent en
+# attente occupe un thread pendant ~25 s. Il faut donc au moins autant de threads
+# que d'agents simultanés (~100) + marge pour le dashboard. Ces threads dorment
+# sur un threading.Event (aucun CPU, aucune connexion base retenue — cf.
+# api_agent.get_commands qui rend la session avant d'attendre).
 # IMPORTANT : un seul worker est volontaire. Le bootstrap (create_all + seed) et
 # le thread de fond unique (alertes + purge) vivent DANS le processus applicatif ;
 # plusieurs workers dupliqueraient ces boucles (alertes/n8n en double) et
-# provoqueraient une course au seed. Pour ~100 agents (~3 req/s), 1 worker + 8
-# threads est largement suffisant. Ne pas augmenter --workers sans déplacer le
-# bootstrap/thread de fond vers un verrou inter-processus (cf. SPEC §7).
+# provoqueraient une course au seed. Le worker unique est AUSSI ce qui rend le
+# réveil immédiat des agents possible (table d'événements en mémoire, cf. wake.py).
+# Ne pas augmenter --workers sans déplacer le bootstrap/thread de fond vers un
+# verrou inter-processus (cf. SPEC §7) ; le long-polling, lui, retomberait
+# proprement sur le simple sondage périodique.
 # --timeout 300 : marge pour le téléversement d'un paquet d'agent (~50-120 Mo)
 # depuis le dashboard (Réglages > Déploiement). Le worker gthread reste réactif.
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "1", "--threads", "8", \
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "1", "--threads", "128", \
      "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]

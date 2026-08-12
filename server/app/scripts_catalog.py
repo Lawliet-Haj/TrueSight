@@ -45,6 +45,32 @@ SCRIPTS = [
      "command_text": "if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { 'Redemarrage REQUIS' } else { 'Aucun redemarrage en attente' }",
      "timeout": 30},
 
+    # --- Agent TrueSight (diagnostic à distance, sans aller sur le poste) ---
+    {"key": "agent-version", "label": "Version de l'agent installée", "category": "Agent",
+     "shell": "powershell",
+     "command_text": (
+         "$v = Get-Content 'C:\\Program Files\\TrueSight\\version.txt' -ErrorAction SilentlyContinue; "
+         "$s = Get-Service TrueSightAgent -ErrorAction SilentlyContinue; "
+         "'version=' + $(if ($v) { $v.Trim() } else { 'inconnue' }) + "
+         "'  service=' + $(if ($s) { \"$($s.Status)/$($s.StartType)\" } else { 'absent' })"
+     ),
+     "timeout": 30},
+    {"key": "agent-update-log", "label": "Journal de mise à jour de l'agent", "category": "Agent",
+     "shell": "powershell",
+     "command_text": (
+         "$p = 'C:\\ProgramData\\TrueSight\\truesight-update.log'; "
+         "if (Test-Path $p) { Get-Content $p -Tail 40 } "
+         "else { 'Aucun journal : aucune bascule de mise a jour n a jamais ete tentee sur ce poste.' }"
+     ),
+     "timeout": 30},
+    {"key": "agent-log", "label": "Journal de l'agent (30 dernières lignes)", "category": "Agent",
+     "shell": "powershell",
+     "command_text": (
+         "$p = 'C:\\ProgramData\\TrueSight\\truesight-agent.log'; "
+         "if (Test-Path $p) { Get-Content $p -Tail 30 } else { 'Journal introuvable.' }"
+     ),
+     "timeout": 30},
+
     # --- Impression ---
     {"key": "restart-spooler", "label": "Redémarrer le spouleur d'impression", "category": "Impression",
      "shell": "powershell", "command_text": "Restart-Service -Name Spooler -Force; 'Spouleur redemarre'",

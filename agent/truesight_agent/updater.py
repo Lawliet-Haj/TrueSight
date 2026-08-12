@@ -101,51 +101,104 @@ _APPLY_SCRIPT = r'''param(
 $ErrorActionPreference = "SilentlyContinue"
 function Log($m) { try { Add-Content -Path $LogFile -Value ((Get-Date).ToString("s") + "  " + $m) } catch {} }
 
-Log "Bascule de mise a jour : $NewDir -> $AppDir"
+Log "=== Bascule de mise a jour : $NewDir -> $AppDir"
 Start-Sleep -Seconds 2
 
-# 1. Arret du service + attente de la fin du processus.
-Stop-Service -Name $ServiceName -Force
-$deadline = (Get-Date).AddSeconds(40)
-while ((Get-Service -Name $ServiceName).Status -ne "Stopped" -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+# Arret COMPLET de l'agent. Reprend les correctifs valides sur l'installeur :
+#  - DESACTIVER le service avant de l'arreter, sinon son action de reprise sur
+#    echec (sc failure ... restart/5000) le RELANCE en pleine bascule et
+#    reverrouille _internal\*.pyd ;
+#  - taskkill /F /T plutot que Stop-Process : ce dernier echoue en silence sur
+#    l'hote de service en etat "stop-pending" ;
+#  - ATTENDRE la disparition effective des processus (handles liberes).
+function Stop-AllAgent {
+    & sc.exe config $ServiceName start= disabled | Out-Null
+    Stop-Service -Name $ServiceName -Force
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Service -Name $ServiceName).Status -ne "Stopped" -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    try { Stop-ScheduledTask -TaskName "TrueSight Companion" } catch {}
+    if (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue) {
+        & taskkill.exe /F /T /IM "truesight-agent.exe" | Out-Null
+    }
+    for ($i = 0; $i -lt 40; $i++) {
+        if (-not (Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue)) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    Log "ATTENTION : des processus truesight-agent subsistent"
+    return $false
+}
 
-# 2. Arret du compagnon (libere _internal\*.pyd dans les sessions utilisateur).
-try { Stop-ScheduledTask -TaskName "TrueSight Companion" } catch {}
-Get-Process -Name "truesight-agent" -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
+Log "1. Arret du service et des processus"
+[void](Stop-AllAgent)
 
-# 3. Sauvegarde de l'app courante.
+# 2. Sauvegarde de l'app courante (permet le rollback).
 if (Test-Path $BackupDir) { Remove-Item -Recurse -Force $BackupDir }
-try { Move-Item -Path $AppDir -Destination $BackupDir -Force; Log "Sauvegarde OK" }
-catch { Log "Sauvegarde impossible : $($_.Exception.Message)" }
+Move-Item -Path $AppDir -Destination $BackupDir -Force
+if (Test-Path $BackupDir) { Log "2. Sauvegarde OK" } else { Log "2. Sauvegarde IMPOSSIBLE (fichiers verrouilles ?)" }
 
-# 4. Deploiement de la nouvelle version.
-New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-Copy-Item -Path (Join-Path $NewDir '*') -Destination $AppDir -Recurse -Force
-Log "Copie de la nouvelle version effectuee"
-
-# 5. Recree le wrapper compagnon (chemin inchange) puis redemarre le service.
+# 3. Deploiement, avec re-essais : un fichier peut rester verrouille un instant
+#    apres la fin du processus, ou etre tenu par l'antivirus.
 $exe = Join-Path $AppDir "truesight-agent.exe"
+$copied = $false
+for ($attempt = 1; $attempt -le 4; $attempt++) {
+    New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+    Copy-Item -Path (Join-Path $NewDir '*') -Destination $AppDir -Recurse -Force
+    if (Test-Path $exe) { $copied = $true; break }
+    Log "3. Copie tentative $attempt echouee, nouvel essai"
+    [void](Stop-AllAgent)
+    Start-Sleep -Seconds 3
+}
+
+if (-not $copied) {
+    # Rien n'a pu etre deploye : on remet l'ancienne version en service.
+    Log "3. ECHEC de la copie -> restauration de la version precedente"
+    if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
+    if (Test-Path $BackupDir) { Move-Item -Path $BackupDir -Destination $AppDir -Force }
+    & sc.exe config $ServiceName start= auto | Out-Null
+    Start-Service -Name $ServiceName
+    Log "=== Bascule abandonnee (version precedente restauree)"
+    exit 1
+}
+Log "3. Copie de la nouvelle version effectuee"
+
+# 4. Recree le wrapper compagnon (chemin inchange).
 $vbs = Join-Path $AppDir "companion.vbs"
 Set-Content -Path $vbs -Value ('CreateObject("WScript.Shell").Run """' + $exe + '"" companion", 0, False') -Encoding ASCII
 
-Start-Service -Name $ServiceName
-Start-Sleep -Seconds 6
-$svc = Get-Service -Name $ServiceName
-if (-not $svc -or $svc.Status -ne "Running") {
-    Log "Le service ne redemarre pas (etat: $(if($svc){$svc.Status}else{'absent'})) -> ROLLBACK"
+# 5. Redemarrage AVEC RE-ESSAIS. Juste apres une manipulation de service, le SCM
+#    refuse souvent le 1er Start-Service : sans ces essais, on concluait a tort
+#    a un echec et on faisait un ROLLBACK : la mise a jour ne prenait JAMAIS.
+& sc.exe config $ServiceName start= auto | Out-Null
+$started = $false
+for ($i = 1; $i -le 6; $i++) {
+    Start-Service -Name $ServiceName
+    Start-Sleep -Seconds 3
+    $svc = Get-Service -Name $ServiceName
+    if ($svc -and $svc.Status -eq "Running") { $started = $true; break }
+    Log "5. Demarrage tentative $i : etat $(if($svc){$svc.Status}else{'absent'})"
+}
+
+if (-not $started) {
+    Log "5. Le service ne redemarre pas -> ROLLBACK"
     Remove-Item -Recurse -Force $AppDir
     Move-Item -Path $BackupDir -Destination $AppDir -Force
-    Start-Service -Name $ServiceName
-    Log "Rollback effectue"
+    & sc.exe config $ServiceName start= auto | Out-Null
+    for ($i = 1; $i -le 6; $i++) {
+        Start-Service -Name $ServiceName
+        Start-Sleep -Seconds 3
+        if ((Get-Service -Name $ServiceName).Status -eq "Running") { break }
+    }
+    Log "=== Rollback effectue (ancienne version en service)"
 } else {
-    Log "Service redemarre en $($svc.Status). Nettoyage de la sauvegarde."
+    Log "5. Service redemarre. Nettoyage de la sauvegarde."
     Remove-Item -Recurse -Force $BackupDir
+    Log "=== Bascule REUSSIE"
 }
 
 # 6. Relance la tache compagnon pour les sessions ouvertes.
 try { Start-ScheduledTask -TaskName "TrueSight Companion" } catch {}
-Log "Bascule terminee."
 '''
 
 
@@ -225,7 +278,12 @@ def apply_update(client, update_info: dict) -> bool:
     log_file = os.path.join(cfg.get_data_dir(), "truesight-update.log")
     script_path = os.path.join(update_root, "apply-update.ps1")
     try:
-        with open(script_path, "w", encoding="utf-8") as fh:
+        # utf-8-sig = UTF-8 AVEC BOM : indispensable ici. Le script est lancé par
+        # « powershell.exe -File » (PowerShell 5.1), qui lit un fichier UTF-8
+        # SANS BOM comme du cp1252 : le moindre caractère accentué corromprait
+        # alors l'analyse du script et la bascule échouerait avant de commencer.
+        # Le BOM rend le script correct quel que soit son contenu.
+        with open(script_path, "w", encoding="utf-8-sig") as fh:
             fh.write(_APPLY_SCRIPT)
     except OSError as exc:
         _logger.error("Écriture du script de bascule impossible : %s", exc)

@@ -5,7 +5,14 @@ Il collecte l'inventaire matériel/logiciel, envoie des métriques (heartbeat),
 récupère les commandes en attente et renvoie leurs résultats.
 """
 
-# Version de l'agent. 1.4.4 : long-polling des commandes (le serveur relâche
+# Version de l'agent. 1.4.5 : CORRECTIF AUTO-UPDATE — le script de bascule ne
+# recevait pas les garde-fous validés sur l'installeur : Start-Service sans
+# ré-essais (le SCM refuse souvent le 1er démarrage) faisait conclure à un échec
+# et déclenchait un ROLLBACK silencieux, donc la mise à jour ne prenait jamais.
+# Ajout : service désactivé avant arrêt (l'action de reprise le relançait en
+# pleine bascule), taskkill /F /T, attente des processus, copie et démarrage
+# ré-essayés, journal explicite, script écrit avec BOM UTF-8.
+# 1.4.4 : long-polling des commandes (le serveur relâche
 # l'agent dès qu'il y a du travail → prise en main quasi immédiate ; repli
 # automatique sur le sondage simple si un intermédiaire coupe les requêtes longues).
 # 1.4.3 : presse-papiers partagé (texte) pendant le bureau à
@@ -25,7 +32,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.4.4"
+__version__ = "1.4.5"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -2,7 +2,10 @@
 
 Un unique thread daemon :
 - toutes les 60 s : évalue les règles d'alerte (offline, disk_low, cpu_high, ram_high) ;
-- une fois par jour : purge les métriques plus anciennes que ``METRICS_RETENTION_DAYS``.
+- une fois par jour : purge les métriques plus anciennes que ``METRICS_RETENTION_DAYS`` ;
+- toutes les ``WATCHDOG_PING_INTERVAL_SECONDS`` : émet un signal de vie vers une
+  veille externe (cf. ``_ping_watchdog``) — seul moyen d'être alerté quand le
+  superviseur lui-même est tombé.
 
 Tout s'exécute dans un ``app.app_context()`` et n'interrompt jamais la boucle en
 cas d'erreur (journalisation + continuation).
@@ -48,14 +51,20 @@ def start_background(app):
 def _run_loop(app):
     """Boucle principale : alertes toutes les 60 s, purge 1×/jour."""
     last_purge = 0.0
+    last_ping = 0.0
     while True:
         cycle_start = time.monotonic()
 
         # --- Évaluation des alertes ---
+        # On retient si le cycle a réussi : c'est ce qui autorise le signal de
+        # vie ci-dessous. Un serveur dont la base ne répond plus NE DOIT PAS
+        # continuer à se déclarer en bonne santé.
+        cycle_ok = True
         try:
             with app.app_context():
                 evaluate_all(app)
         except Exception:  # pragma: no cover - robustesse
+            cycle_ok = False
             _logger.exception("Erreur durant l'évaluation des alertes")
 
         # --- Purge quotidienne des métriques ---
@@ -69,9 +78,35 @@ def _run_loop(app):
                 _logger.exception("Erreur durant la purge des métriques")
                 last_purge = now  # évite de boucler en erreur immédiate
 
+        # --- Signal de vie vers la veille externe ---
+        now = time.monotonic()
+        interval = app.config.get("WATCHDOG_PING_INTERVAL_SECONDS", 300)
+        if cycle_ok and (now - last_ping >= interval):
+            _ping_watchdog(app)
+            last_ping = now
+
         # --- Attente jusqu'au prochain cycle ---
         elapsed = time.monotonic() - cycle_start
         time.sleep(max(1.0, _LOOP_INTERVAL_SECONDS - elapsed))
+
+
+def _ping_watchdog(app):
+    """Signale à un service tiers que TrueSight est vivant ET fonctionnel.
+
+    Best-effort : une veille injoignable ne doit JAMAIS perturber le serveur —
+    on journalise en debug et on continue. L'absence de signal est justement
+    l'information utile côté service tiers.
+    """
+    url = (app.config.get("WATCHDOG_PING_URL") or "").strip()
+    if not url:
+        return
+    try:
+        import requests
+
+        requests.get(url, timeout=5)
+        _logger.debug("Signal de vie envoyé à la veille externe.")
+    except Exception as exc:  # noqa: BLE001 - jamais bloquant.
+        _logger.debug("Signal de vie non transmis (%s).", exc)
 
 
 def _purge_metrics(app):

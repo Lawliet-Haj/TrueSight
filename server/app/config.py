@@ -56,6 +56,17 @@ class Config:
         "max_overflow": 20,
     }
 
+    # --- Veille externe ("homme mort") ------------------------------------
+    # URL à appeler périodiquement pour dire "je vais bien" (healthchecks.io,
+    # Better Stack, cron-monitor…). Le signal n'est émis QUE si le cycle de fond
+    # a réussi, donc il prouve que l'application ET la base répondent.
+    # Si TrueSight s'arrête — ou si tout le VPS tombe — les appels cessent et
+    # c'est le service TIERS qui alerte. C'est le seul moyen d'être prévenu
+    # quand le superviseur lui-même est mort : ses propres alertes ne partiraient
+    # évidemment plus. Vide = désactivé.
+    WATCHDOG_PING_URL = os.environ.get("WATCHDOG_PING_URL", "").strip()
+    WATCHDOG_PING_INTERVAL_SECONDS = _get_int("WATCHDOG_PING_INTERVAL_SECONDS", 300)
+
     # --- Long-polling des commandes -------------------------------------
     # Durée maximale pendant laquelle le serveur garde ouverte la requête de
     # sondage d'un agent quand il n'y a rien à faire. L'agent est relâché dès

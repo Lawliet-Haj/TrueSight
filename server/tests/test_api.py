@@ -2061,3 +2061,153 @@ def test_agent_detail_embeds_tab_order(client, admin_session):
     html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
     assert "data-tab-order=" in html
     assert "hardware" in html
+
+# --------------------------------------------------------------------------
+# Veille externe ("homme mort") — signal de vie sortant
+# --------------------------------------------------------------------------
+def test_watchdog_ping_disabled_by_default(app, monkeypatch):
+    """Sans URL configurée, aucun appel réseau n'est tenté."""
+    import requests
+    from app import tasks
+
+    called = []
+    monkeypatch.setattr(requests, "get", lambda *a, **k: called.append(a))
+    app.config["WATCHDOG_PING_URL"] = ""
+    tasks._ping_watchdog(app)
+    assert called == []
+
+
+def test_watchdog_ping_calls_url(app, monkeypatch):
+    """Avec une URL, le signal de vie est émis (avec un délai borné)."""
+    import requests
+    from app import tasks
+
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        seen["timeout"] = kwargs.get("timeout")
+        return None
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    app.config["WATCHDOG_PING_URL"] = "https://hc-ping.example/abc"
+    tasks._ping_watchdog(app)
+    assert seen["url"] == "https://hc-ping.example/abc"
+    assert seen["timeout"] and seen["timeout"] <= 10
+
+
+def test_watchdog_ping_never_raises(app, monkeypatch):
+    """Une veille injoignable ne doit JAMAIS perturber la boucle de fond."""
+    import requests
+    from app import tasks
+
+    def boom(*a, **k):
+        raise requests.exceptions.ConnectionError("injoignable")
+
+    monkeypatch.setattr(requests, "get", boom)
+    app.config["WATCHDOG_PING_URL"] = "https://hc-ping.example/abc"
+    tasks._ping_watchdog(app)  # ne doit pas lever
+
+# --------------------------------------------------------------------------
+# Wake-on-LAN : réveil via un poste relais du même emplacement
+# --------------------------------------------------------------------------
+def _wol_setup(client, admin_session, app, *, with_mac=True, with_site=True,
+               peer_online=True):
+    """Prépare une cible (éteinte) et un poste relais du même emplacement."""
+    import uuid as _uuid
+    from datetime import timedelta
+    from app.extensions import db
+    from app.models import Agent, utcnow
+
+    target_id, ttok = _enroll(client, "MACHINE-CIBLE")
+    peer_id, ptok = _enroll(client, "MACHINE-RELAIS")
+
+    if with_mac:
+        client.post(f"/api/v1/agents/{target_id}/inventory",
+                    json={"hardware": {"mac_addresses": ["aa-bb-cc-dd-ee-01"]}, "software": []},
+                    headers=_auth(ttok))
+
+    if with_site:
+        site_id = admin_session.post("/api/v1/sites", json={"name": "Agence Nord"}).get_json()["id"]
+        for a in (target_id, peer_id):
+            admin_session.post(f"/api/v1/agents/{a}/site", json={"site_id": site_id})
+
+    if peer_online:
+        client.post(f"/api/v1/agents/{peer_id}/heartbeat", json={"metrics": {}}, headers=_auth(ptok))
+
+    # La CIBLE doit être vue comme hors ligne : on vieillit son dernier contact.
+    with app.app_context():
+        t = db.session.get(Agent, _uuid.UUID(target_id))
+        t.last_seen_at = utcnow() - timedelta(hours=4)
+        if not peer_online:
+            p = db.session.get(Agent, _uuid.UUID(peer_id))
+            p.last_seen_at = utcnow() - timedelta(hours=4)
+        db.session.commit()
+
+    return target_id, peer_id
+
+
+def test_wake_queues_command_on_relay(client, admin_session, app):
+    """Le réveil crée une commande sur le RELAIS (la cible est éteinte)."""
+    import uuid as _uuid
+    from app.extensions import db
+    from app.models import Command
+
+    target_id, peer_id = _wol_setup(client, admin_session, app)
+    r = admin_session.post(f"/api/v1/agents/{target_id}/wake", json={})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["macs"] == ["AA:BB:CC:DD:EE:01"]   # normalisée
+    # Le libellé du relais est informatif ; ce qui compte est vérifié
+    # ci-dessous : la commande part bien sur le poste RELAIS.
+    assert isinstance(body["relay"], str) and body["relay"]
+
+    with app.app_context():
+        cmd = db.session.get(Command, _uuid.UUID(body["command_id"]))
+        # La commande part sur le relais, PAS sur la cible.
+        assert str(cmd.agent_id) == peer_id
+        assert cmd.shell == "powershell"
+        assert "AA:BB:CC:DD:EE:01" in cmd.command_text
+        assert "New-Object byte[] 102" in cmd.command_text
+
+
+def test_wake_refuses_without_mac(client, admin_session, app):
+    """Sans adresse MAC connue, refus explicite (409) plutôt qu'un envoi inutile."""
+    target_id, _ = _wol_setup(client, admin_session, app, with_mac=False)
+    r = admin_session.post(f"/api/v1/agents/{target_id}/wake", json={})
+    assert r.status_code == 409
+    assert "MAC" in r.get_json()["error"]
+
+
+def test_wake_refuses_without_site(client, admin_session, app):
+    """Sans emplacement, on ne sait pas qui partage le réseau local : refus."""
+    target_id, _ = _wol_setup(client, admin_session, app, with_site=False)
+    r = admin_session.post(f"/api/v1/agents/{target_id}/wake", json={})
+    assert r.status_code == 409
+    assert "emplacement" in r.get_json()["error"]
+
+
+def test_wake_refuses_without_online_relay(client, admin_session, app):
+    """Aucun poste allumé sur le site : rien ne peut émettre le paquet."""
+    target_id, _ = _wol_setup(client, admin_session, app, peer_online=False)
+    r = admin_session.post(f"/api/v1/agents/{target_id}/wake", json={})
+    assert r.status_code == 409
+    assert "en ligne" in r.get_json()["error"]
+
+
+def test_wake_requires_admin(client, app):
+    """Le réveil est une action d'administration."""
+    agent_id, _ = _enroll(client, "MACHINE-WOL-ANON")
+    assert client.post(f"/api/v1/agents/{agent_id}/wake", json={}).status_code == 401
+
+def test_wake_button_present_in_ui(client, admin_session):
+    """Le bouton Réveiller est exposé et câblé sur le bon endpoint."""
+    agent_id, _ = _enroll(client, "MACHINE-WOL-UI")
+    html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
+    assert 'id="qa-wake"' in html
+    js = admin_session.get("/static/js/agent_detail.js").get_data(as_text=True)
+    assert '"/wake"' in js or "/wake" in js
+    # Le bouton n'a pas de data-action : la boucle generique doit l'ignorer,
+    # sinon un clic partirait sur /quick-action avec une action indefinie.
+    assert "if (!action) return;" in js
+

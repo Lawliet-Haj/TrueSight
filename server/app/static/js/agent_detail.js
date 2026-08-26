@@ -583,6 +583,9 @@
     buttons.forEach(function (b) {
       b.addEventListener("click", function () {
         var action = b.getAttribute("data-action");
+        // Le bouton « Réveiller » n'a pas de data-action : il vise un autre
+        // endpoint (le réveil part sur un poste RELAIS, pas sur la cible).
+        if (!action) return;
         if (action === "message") {
           if (msgBox) msgBox.classList.toggle("hidden");
           if (msgInput && msgBox && !msgBox.classList.contains("hidden")) msgInput.focus();
@@ -590,6 +593,43 @@
         }
         runQuickAction(action);
       });
+    });
+
+    // --- Réveil (Wake-on-LAN) ---
+    // Le paquet magique ne peut pas venir du serveur : il est émis par un poste
+    // allumé du même emplacement. Les refus du serveur (pas de MAC, pas
+    // d'emplacement, aucun relais allumé) sont affichés tels quels — ils disent
+    // quoi corriger.
+    var wakeBtn = document.getElementById("qa-wake");
+    if (wakeBtn) wakeBtn.addEventListener("click", async function () {
+      var ask = await TS.confirm({
+        title: "Réveiller ce poste ?",
+        body: "Un autre poste allumé du même emplacement enverra le signal de réveil sur le réseau local.",
+        confirmLabel: "Réveiller",
+      });
+      if (!ask.confirmed) return;
+      if (statusEl) statusEl.textContent = "Envoi du signal de réveil…";
+      if (outputEl) outputEl.classList.add("hidden");
+      try {
+        var resp = await fetch("/api/v1/agents/" + AGENT_ID + "/wake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({}),
+        });
+        var data = await resp.json();
+        if (!resp.ok) {
+          if (statusEl) statusEl.textContent = data.error || ("Erreur " + resp.status);
+          if (window.TS && TS.toast) TS.toast(data.error || "Réveil impossible.", "error");
+          return;
+        }
+        if (statusEl) {
+          statusEl.textContent = "Signal envoyé via « " + (data.relay || "un poste du site")
+            + " » (" + (data.macs || []).join(", ") + "). Le poste met ~30 s à revenir.";
+        }
+        if (data.command_id) pollCommand(data.command_id, null, outputEl);
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Erreur réseau lors de l'envoi.";
+      }
     });
 
     if (msgSend) {

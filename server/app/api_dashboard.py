@@ -15,6 +15,7 @@ import pyotp
 import qrcode
 from flask import Blueprint, current_app, g, jsonify, request, session
 
+from . import wol
 from .extensions import db
 from .health import PROBLEM_LABELS, agent_health, is_online
 from .models import (
@@ -738,6 +739,98 @@ def _clean_message_text(value: str) -> str:
     cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", cleaned)
     cleaned = cleaned.strip()
     return cleaned[:240]
+
+
+@bp.post("/agents/<agent_id>/wake")
+@admin_required
+def wake_agent(agent_id):
+    """Réveille un poste éteint (Wake-on-LAN) via un poste RELAIS du même site.
+
+    Un serveur distant ne peut pas réveiller une machine : le paquet magique doit
+    être émis sur le réseau LOCAL du poste. On confie donc l'émission à un autre
+    agent, allumé, situé au même **emplacement** — l'emplacement est ce qui
+    garantit le partage d'un réseau local.
+
+    Renvoie 201 ``{command_id, relay, macs}``. Les refus sont explicites (409) :
+    chacun indique quoi corriger.
+    """
+    aid = _parse_uuid(agent_id)
+    if aid is None:
+        return jsonify({"error": "agent_id invalide"}), 400
+    target = db.session.get(Agent, aid)
+    if target is None:
+        return jsonify({"error": "agent introuvable"}), 404
+
+    # 1. Adresses MAC de la cible (collectées par l'inventaire matériel).
+    hw = db.session.get(HardwareInventory, aid)
+    macs = wol.normalize_macs(hw.mac_addresses if hw else None)
+    if not macs:
+        return jsonify({
+            "error": "aucune adresse MAC connue pour ce poste : impossible de le réveiller. "
+                     "L'inventaire matériel doit avoir été collecté au moins une fois."
+        }), 409
+
+    # 2. L'emplacement est indispensable : sans lui, on ne sait pas quel poste
+    #    partage le réseau local de la cible.
+    if not target.site_id:
+        return jsonify({
+            "error": "aucun emplacement affecté à ce poste : impossible de choisir un relais "
+                     "sur son réseau local. Affectez-lui un emplacement."
+        }), 409
+
+    # 3. Choix du relais : un autre poste EN LIGNE du même emplacement.
+    threshold = current_app.config["OFFLINE_THRESHOLD_SECONDS"]
+    relay = None
+    candidates = (
+        db.session.query(Agent)
+        .filter(Agent.site_id == target.site_id, Agent.id != aid, Agent.is_active.is_(True))
+        .order_by(Agent.last_seen_at.desc())
+        .all()
+    )
+    for cand in candidates:
+        if _is_online(cand, threshold):
+            relay = cand
+            break
+
+    if relay is None:
+        return jsonify({
+            "error": "aucun poste en ligne sur cet emplacement pour relayer le réveil. "
+                     "Il faut au moins une machine allumée sur le même réseau."
+        }), 409
+
+    # 4. La commande part sur le RELAIS, pas sur la cible (qui est éteinte).
+    shell, command_text, timeout_seconds = wol.build_wake_command(macs)
+    cmd = Command(
+        agent_id=relay.id,
+        created_by=g.user.id,
+        shell=shell,
+        command_text=command_text,
+        status="pending",
+        timeout_seconds=timeout_seconds,
+        created_at=utcnow(),
+    )
+    db.session.add(cmd)
+    db.session.flush()
+
+    write_audit(
+        action="agent.wake",
+        user_id=g.user.id,
+        target_agent=aid,
+        details={
+            "command_id": str(cmd.id),
+            "relay_agent": str(relay.id),
+            "relay_hostname": relay.hostname,
+            "macs": macs,
+        },
+        commit=False,
+    )
+    db.session.commit()
+
+    return jsonify({
+        "command_id": str(cmd.id),
+        "relay": relay.display_name or relay.hostname or str(relay.id),
+        "macs": macs,
+    }), 201
 
 
 @bp.post("/agents/<agent_id>/quick-action")

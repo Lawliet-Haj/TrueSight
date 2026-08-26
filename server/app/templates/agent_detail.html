@@ -253,6 +253,11 @@
             <button class="btn quick" id="qa-restart" type="button" data-action="restart"><svg><use href="#i-power"/></svg>Redémarrer</button>
             <button class="btn quick" id="qa-logoff" type="button" data-action="logoff"><svg><use href="#i-unplug"/></svg>Déconnecter</button>
             <button class="btn quick" id="qa-message" type="button" data-action="message"><svg><use href="#i-message"/></svg>Message</button>
+            <!-- Reveil (Wake-on-LAN) : passe par un poste allume du meme
+                 emplacement, seul capable d'emettre le paquet magique sur
+                 le reseau local de la cible. -->
+            <button class="btn quick" id="qa-wake" type="button"
+                    title="Réveiller ce poste éteint via un autre poste allumé du même emplacement (Wake-on-LAN)"><svg><use href="#i-power"/></svg>Réveiller</button>
           </div>
           <div class="quick-msg hidden" id="qa-message-box">
             <input type="text" id="qa-message-text" class="input" placeholder="Message à afficher sur le poste…">

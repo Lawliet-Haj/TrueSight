@@ -166,6 +166,64 @@ lance `build.ps1` au besoin, puis compile `installer\truesight.iss`.
 > 3. **GPO startup-script** (§3.B, `gpo-install.ps1`) — copie onedir depuis un partage.
 > L'**auto-update** (§6) prend ensuite le relais pour toutes les montées de version.
 
+## 9. Déploiement de masse RECOMMANDÉ — installeur signé + GPO
+
+C'est la voie la plus simple pour un parc : **un seul fichier** à publier, signé,
+portant déjà l'URL du serveur et le jeton d'enrôlement.
+
+### 9.1 Préparer
+
+```powershell
+# Sur le poste de build (une fois par version)
+.uild-installer.ps1 -Token <jeton d'enrôlement> -CertThumbprint <empreinte>
+```
+
+Copier `dist\TrueSightAgent-Setup-<version>.exe` sur un partage lisible par
+**« Ordinateurs du domaine »** (compte ORDINATEUR, pas utilisateur) :
+
+```
+\SERVEUR\Partage\TrueSight\TrueSightAgent-Setup-1.4.5.exe
+```
+
+### 9.2 Déployer par GPO
+
+`deploy-fleet.ps1` est un script de **démarrage machine** idempotent : il
+n'agit que si l'agent est absent ou périmé, et se contente de démarrer le
+service s'il est simplement arrêté.
+
+GPO → `Configuration ordinateur` → `Stratégies` → `Paramètres Windows` →
+`Scripts (démarrage/arrêt)` → **Démarrage** → Ajouter :
+
+| Champ | Valeur |
+|---|---|
+| Script | `deploy-fleet.ps1` (copié dans le dossier de la GPO) |
+| Paramètres | `-SetupPath \SERVEUR\Partage\TrueSight\TrueSightAgent-Setup-1.4.5.exe -Version 1.4.5` |
+
+Ajouter `-Site "Nom du site"` pour affecter automatiquement l'emplacement dans
+le dashboard.
+
+Le script copie l'installeur **en local avant de l'exécuter** : si le réseau
+tombe en pleine installation, le poste ne reste pas avec un installeur amputé.
+Journal : `C:\Windows\Temp	ruesight-deploy.log`.
+
+### 9.3 Faire reconnaître l'éditeur (supprime « éditeur inconnu »)
+
+Déployer `signing	ruesight-codesign.cer` par GPO dans **« Éditeurs approuvés »**
+ET **« Autorités de certification racines de confiance »** — cf. [SIGNING.md](SIGNING.md).
+
+### 9.4 Vérifier le parc depuis le dashboard
+
+Bibliothèque de scripts, catégorie **Agent** (utilisable en action groupée) :
+
+- **Version de l'agent installée** — qui est à jour, qui ne l'est pas ;
+- **Journal de mise à jour de l'agent** — pourquoi une bascule a échoué ;
+- **Journal de l'agent**.
+
+> ⚠️ Les agents antérieurs à **1.4.5** portent un auto-update défectueux
+> (rollback silencieux) : ils ne peuvent pas se mettre à jour seuls. La première
+> bascule vers 1.4.5 doit passer par l'installeur (GPO ci-dessus). Ensuite
+> l'auto-update fonctionne.
+
 ## Points à valider / à venir
 - **Bureau à distance en session 0** : le service (SYSTEM) relance un *helper* dans
   la session interactive (`remote/launcher.py`, `CreateProcessAsUser`) ou pilote le

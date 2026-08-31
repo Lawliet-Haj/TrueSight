@@ -224,6 +224,63 @@ Bibliothèque de scripts, catégorie **Agent** (utilisable en action groupée) :
 > bascule vers 1.4.5 doit passer par l'installeur (GPO ci-dessus). Ensuite
 > l'auto-update fonctionne.
 
+## 10. Deploiement de masse VIA NINJAONE (bascule)
+
+Ninja est deja installe sur tout le parc : c'est le vehicule le plus rapide pour
+poser TrueSight partout **avant son expiration**. Aucun partage reseau, aucune
+GPO a preparer.
+
+### 10.1 Prerequis
+
+Un **jeton d'installation** sans expiration (Reglages > Deploiement, ou cree
+cote serveur). Il ne doit **jamais** etre commite : on le renseigne uniquement
+dans Ninja.
+
+### 10.2 Creer le script dans Ninja
+
+`Administration > Library > Scripting > New Script`
+
+| Champ | Valeur |
+|---|---|
+| Name | `TrueSight - Installer / mettre a jour l'agent` |
+| Language | PowerShell |
+| Operating System | Windows |
+| Architecture | All |
+| **Run As** | **System** |
+
+Coller le contenu de [`ninja-deploy.ps1`](ninja-deploy.ps1), puis declarer les
+parametres du script :
+
+```
+-Token <jeton d'installation> -TargetVersion 1.4.5
+```
+
+### 10.3 Executer
+
+`Devices` > selectionner un groupe > `Run` > `Script`. Commencer par **5 postes
+temoins**, verifier, puis passer au reste.
+
+### 10.4 Pourquoi ce script est sur
+
+- **Idempotent** : ne fait rien si l'agent est deja a la version cible ; si le
+  service est seulement arrete, il le demarre sans reinstaller.
+- **Comparaison de version numerique** (`1.4.10` > `1.4.9`, ce qu'une comparaison
+  de texte rate).
+- **Etalement des telechargements** (`-JitterSeconds`, 300 s par defaut) : 100
+  postes x ~37 Mo lances a la meme seconde saturerait le lien du serveur.
+- **`iwr | iex` et non un fichier temporaire** : le bootstrap servi contient des
+  accents et n'a pas de BOM ; ecrit dans un fichier puis lance par
+  `powershell -File`, il serait lu en cp1252 par PowerShell 5.1 et l'analyse
+  casserait. `iex` recoit une chaine deja decodee.
+- **Codes de sortie** : 0 succes, 1 echec, 2 mauvaise configuration -> Ninja
+  affiche l'etat reel par poste, et le journal complet est dans
+  `C:\Windows\Temp	ruesight-ninja-deploy.log`.
+
+### 10.5 Verifier ensuite
+
+Dans TrueSight : bibliotheque de scripts, categorie **Agent** >
+`Version de l'agent installee`, en **action groupee** sur tout le parc.
+
 ## Points à valider / à venir
 - **Bureau à distance en session 0** : le service (SYSTEM) relance un *helper* dans
   la session interactive (`remote/launcher.py`, `CreateProcessAsUser`) ou pilote le

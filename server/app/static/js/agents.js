@@ -1,5 +1,6 @@
 // TrueSight — page Parc : KPIs instrumentés + tableau du parc, rafraîchi toutes les 10 s.
-// Données : GET /api/v1/agents → [{id,hostname,os_version,status,last_seen_at,cpu_pct,ram_used_pct,tags,is_active}]
+// Données : GET /api/v1/agents → [{id,hostname,os_version,status,last_seen_at,cpu_pct,
+//                                 ram_used_pct,logged_in_user,tags,is_active}]
 // Admin : sélection multiple + actions groupées (POST /api/v1/agents/bulk).
 (function () {
   "use strict";
@@ -11,7 +12,7 @@
 
   var pd = document.getElementById("parc-data");
   var IS_ADMIN = !!(pd && pd.getAttribute("data-is-admin") === "1");
-  var COLSPAN = IS_ADMIN ? 9 : 8;
+  var COLSPAN = IS_ADMIN ? 10 : 9;   // +1 : colonne Session
   var selected = {};  // { agent_id: true } — sélection persistée entre rafraîchissements
   var statusFilter = "all";  // all | online | offline | alert
   var sitesById = {};  // { site_id: {name,color} } — pour la résolution / les libellés
@@ -138,7 +139,10 @@
         if (statusFilter === "alert" && st !== "alert") return false;
       }
       if (!filter) return true;
-      var hay = [r.hostname, r.os_version, (r.tags || []).join(" ")].join(" ").toLowerCase();
+      // La session est incluse dans la recherche : taper un prenom dans la barre
+      // du haut suffit a retrouver le poste de la personne.
+      var hay = [r.hostname, r.name, r.logged_in_user, r.os_version,
+                 (r.tags || []).join(" ")].join(" ").toLowerCase();
       return hay.indexOf(filter) !== -1;
     });
 
@@ -163,6 +167,14 @@
         var revoked = r.is_active === false ? '<span class="revoked">révoqué</span>' : "";
         var remoteDisabled = off ? "disabled" : "";
 
+        // 'DOMAINE\prenom.nom' -> 'prenom.nom' pour la lisibilite ; valeur
+        // complete conservee en infobulle.
+        var who = (r.logged_in_user || "").trim();
+        var whoShort = who ? who.split("\\").pop() : "";
+        var sessionCell = who
+          ? '<td><span class="sess" title="' + esc(who) + '">' + esc(whoShort) + "</span></td>"
+          : '<td><span class="muted">—</span></td>';
+
         var site = r.site_name
           ? '<span class="site-chip"><i style="background:' + esc(r.site_color || "#5A6773") + '"></i>' + esc(r.site_name) + "</span>"
           : '<span class="muted">—</span>';
@@ -183,6 +195,7 @@
           '<td><div class="host"><span class="dot ' + esc(hk) + '" title="' + esc(hlabel) + '"></span>' +
             '<div><div class="nm">' + esc(r.name || r.hostname || r.id) + revoked + "</div>" +
             '<div class="us hs-' + esc(hk) + '">' + esc(sub) + "</div></div></div></td>" +
+          sessionCell +
           '<td class="text-dim">' + esc(r.os_version || "—") + "</td>" +
           "<td>" + site + "</td>" +
           "<td>" + gauge(r.cpu_pct, off) + "</td>" +

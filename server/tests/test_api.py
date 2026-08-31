@@ -1383,7 +1383,8 @@ def test_export_agents_csv(client, admin_session):
     assert r.mimetype == "text/csv"
     assert "attachment" in r.headers.get("Content-Disposition", "")
     body = r.get_data(as_text=True)
-    assert "Nom;Hote;Emplacement" in body
+    # La colonne Session est intercalee entre Hote et Emplacement.
+    assert "Nom;Hote;Session;Emplacement" in body
     assert "PC-TEST-01" in body
 
 
@@ -2210,4 +2211,64 @@ def test_wake_button_present_in_ui(client, admin_session):
     # Le bouton n'a pas de data-action : la boucle generique doit l'ignorer,
     # sinon un clic partirait sur /quick-action avec une action indefinie.
     assert "if (!action) return;" in js
+
+# --------------------------------------------------------------------------
+# Colonne « Session » du parc : dernière session utilisateur + filtre
+# --------------------------------------------------------------------------
+def test_agents_list_exposes_logged_in_user(client, admin_session):
+    """La liste du parc expose la dernière session connue (sans requête en plus :
+    elle vient de la dernière métrique, déjà chargée)."""
+    agent_id, token = _enroll(client, "MACHINE-SESS")
+    client.post(f"/api/v1/agents/{agent_id}/heartbeat",
+                json={"metrics": {"cpu_pct": 5, "logged_in_user": r"MEDICOFI\jdupont"}},
+                headers=_auth(token))
+    rows = admin_session.get("/api/v1/agents").get_json()
+    row = next(r for r in rows if r["id"] == agent_id)
+    assert row["logged_in_user"] == r"MEDICOFI\jdupont"
+
+
+def test_agents_list_filters_by_session(client, admin_session):
+    """?user= filtre en sous-chaîne insensible à la casse ; 'none' ne garde que
+    les postes sans session ouverte."""
+    a_id, a_tok = _enroll(client, "MACHINE-SESS-A")
+    b_id, b_tok = _enroll(client, "MACHINE-SESS-B")
+    client.post(f"/api/v1/agents/{a_id}/heartbeat",
+                json={"metrics": {"logged_in_user": r"MEDICOFI\alice"}}, headers=_auth(a_tok))
+    client.post(f"/api/v1/agents/{b_id}/heartbeat",
+                json={"metrics": {"logged_in_user": ""}}, headers=_auth(b_tok))
+
+    # Recherche par prénom, casse indifférente.
+    ids = [r["id"] for r in admin_session.get("/api/v1/agents?user=ALICE").get_json()]
+    assert a_id in ids and b_id not in ids
+
+    # 'none' = postes sans session.
+    ids = [r["id"] for r in admin_session.get("/api/v1/agents?user=none").get_json()]
+    assert b_id in ids and a_id not in ids
+
+    # Sans filtre, les deux sont présents.
+    ids = [r["id"] for r in admin_session.get("/api/v1/agents").get_json()]
+    assert a_id in ids and b_id in ids
+
+
+def test_csv_export_has_session_column_and_filter(client, admin_session):
+    """L'export CSV porte la colonne Session et respecte le même filtre, sinon le
+    fichier ne correspondrait pas à ce qui est affiché."""
+    agent_id, token = _enroll(client, "MACHINE-SESS-CSV")
+    client.post(f"/api/v1/agents/{agent_id}/heartbeat",
+                json={"metrics": {"logged_in_user": r"MEDICOFI\bob"}}, headers=_auth(token))
+    csv_all = admin_session.get("/api/v1/agents/export.csv").get_data(as_text=True)
+    assert "Session" in csv_all.splitlines()[0]
+    assert "bob" in csv_all
+    # Filtre appliqué à l'export.
+    csv_other = admin_session.get("/api/v1/agents/export.csv?user=zzz-inexistant").get_data(as_text=True)
+    assert "bob" not in csv_other
+
+
+def test_agents_page_has_session_column(client, admin_session):
+    """La page du parc affiche la colonne et la recherche la prend en compte."""
+    html = admin_session.get("/agents").get_data(as_text=True)
+    assert "<th>Session</th>" in html
+    js = admin_session.get("/static/js/agents.js").get_data(as_text=True)
+    assert "r.logged_in_user" in js
+    assert "sessionCell" in js
 

@@ -175,6 +175,22 @@ def _agent_display_name(agent: Agent) -> str:
     return agent.display_name or agent.hostname or str(agent.id)
 
 
+def _session_filter_excludes(metric, needle: str) -> bool:
+    r"""True si le poste doit être ÉCARTÉ par le filtre de session utilisateur.
+
+    ``needle`` est cherché en sous-chaîne, insensible à la casse (l'agent renvoie
+    typiquement ``DOMAINE\prenom.nom``, on veut donc pouvoir chercher juste le
+    prénom). La valeur spéciale ``none`` ne garde que les postes SANS session
+    ouverte — utile pour repérer les machines libres.
+    """
+    if not needle:
+        return False
+    user = ((metric.logged_in_user if metric else None) or "").strip()
+    if needle.lower() == "none":
+        return bool(user)
+    return needle.lower() not in user.lower()
+
+
 @bp.get("/agents")
 @login_required
 def list_agents():
@@ -187,6 +203,8 @@ def list_agents():
     site_filter = (request.args.get("site") or "").strip()
     health_filter = (request.args.get("health") or "").strip()
     security_filter = (request.args.get("security") or "").strip()
+    # Filtre sur la dernière session utilisateur connue (``?user=``).
+    session_filter = (request.args.get("user") or "").strip()
 
     agents = db.session.query(Agent).order_by(Agent.hostname.asc()).all()
     sites = _sites_map()
@@ -210,6 +228,8 @@ def list_agents():
             if df.get("enabled") is not False:
                 continue
         metric = _latest_metric(agent.id)
+        if _session_filter_excludes(metric, session_filter):
+            continue
         health, reasons = agent_health(
             agent, metric, alert_map.get(agent.id, set()), current_app.config, _sec_dict(sec)
         )
@@ -227,6 +247,9 @@ def list_agents():
                 "last_seen_at": _iso_utc(agent.last_seen_at),
                 "cpu_pct": _num(metric.cpu_pct) if metric else None,
                 "ram_used_pct": _num(metric.ram_used_pct) if metric else None,
+                # Dernière session connue (vient de la dernière métrique, donc
+                # aucune requête supplémentaire).
+                "logged_in_user": (metric.logged_in_user if metric else None) or None,
                 "tags": agent.tags or [],
                 "is_active": agent.is_active,
                 "site_id": str(agent.site_id) if agent.site_id else None,
@@ -254,6 +277,7 @@ def export_agents_csv():
     site_filter = (request.args.get("site") or "").strip()
     health_filter = (request.args.get("health") or "").strip()
     security_filter = (request.args.get("security") or "").strip()
+    session_filter = (request.args.get("user") or "").strip()
 
     agents = db.session.query(Agent).order_by(Agent.hostname.asc()).all()
     sites = _sites_map()
@@ -263,7 +287,7 @@ def export_agents_csv():
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([
-        "Nom", "Hote", "Emplacement", "Etat", "Sante", "Raisons", "Systeme",
+        "Nom", "Hote", "Session", "Emplacement", "Etat", "Sante", "Raisons", "Systeme",
         "CPU %", "RAM %", "MAJ en attente", "Antivirus", "Etiquettes", "Derniere activite",
     ])
 
@@ -283,6 +307,8 @@ def export_agents_csv():
             if df.get("enabled") is not False:
                 continue
         metric = _latest_metric(agent.id)
+        if _session_filter_excludes(metric, session_filter):
+            continue
         health, reasons = agent_health(
             agent, metric, alert_map.get(agent.id, set()), current_app.config, _sec_dict(sec)
         )
@@ -299,6 +325,7 @@ def export_agents_csv():
         writer.writerow([
             _agent_display_name(agent),
             agent.hostname or "",
+            (metric.logged_in_user if metric else None) or "",
             site.name if site else "",
             "En ligne" if _is_online(agent, threshold) else "Hors ligne",
             _HEALTH_FR.get(health, health),

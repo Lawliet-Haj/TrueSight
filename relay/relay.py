@@ -52,6 +52,18 @@ PAIRING_TTL_SECONDS = 120
 # Taille max d'un message accepté (protège contre une trame aberrante).
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
+# Keepalive WebSocket. On garde un ping FRÉQUENT (détecter un pair vraiment mort)
+# avec une tolérance LARGE sur le pong.
+#
+# Pourquoi la tolérance doit être large : côté agent, l'envoi d'une trame prend le
+# verrou d'écriture de la WebSocket, et le pong doit prendre ce MÊME verrou. Sur un
+# poste dont l'upload est saturé (une trame plein écran fait ~200 Ko, cf. mesures),
+# l'écriture peut durer longtemps et le pong sort en retard. Avec l'ancienne valeur
+# (20 s), le relais concluait « pair mort » et coupait une session pourtant vivante —
+# et l'incident était INVISIBLE : la lib journalise ce timeout en DEBUG seulement.
+PING_INTERVAL_SECONDS = 20
+PING_TIMEOUT_SECONDS = 60
+
 
 def _dsn_from_env() -> str:
     """Construit le DSN psycopg à partir de DATABASE_URL.
@@ -231,7 +243,25 @@ async def _register(session_id: str, role: str, ws) -> Session | None:
     return sess
 
 
-async def _teardown(session_id: str, sess: Session, role: str) -> None:
+def _close_label(ws) -> str:
+    """Décrit la fermeture d'une WebSocket : « code=1011 motif='keepalive ping timeout' ».
+
+    Indispensable au diagnostic : le code dit QUI a coupé et POURQUOI.
+      - 1000/1001            : fermeture normale (l'utilisateur a quitté)
+      - 1006                 : coupure réseau brutale (pas de trame de close)
+      - 1011 + keepalive…    : le RELAIS a coupé, pong non reçu à temps
+      - 4408/4409/4401       : nos propres refus (non apparié, rôle pris, jeton)
+    """
+    code = getattr(ws, "close_code", None)
+    reason = (getattr(ws, "close_reason", None) or "").strip()
+    if code is None:
+        return "code=?"
+    if reason:
+        return f"code={code} motif='{reason}'"
+    return f"code={code}"
+
+
+async def _teardown(session_id: str, sess: Session, role: str, ws=None) -> None:
     """Démantèle la session à la déconnexion d'un participant : ferme l'autre + ended."""
     other = None
     async with sess.lock:
@@ -253,7 +283,10 @@ async def _teardown(session_id: str, sess: Session, role: str) -> None:
             _sessions.pop(session_id, None)
 
     await _db_mark_ended(session_id)
-    logger.info("Session %s terminée (déconnexion %s)", session_id, role)
+    logger.info(
+        "Session %s terminée (déconnexion %s, %s)",
+        session_id, role, _close_label(ws),
+    )
 
 
 async def _relay_loop(ws, peer_getter):
@@ -350,7 +383,7 @@ async def handle_connection(ws):
         logger.exception("Erreur dans la boucle de relais (session %s, %s)", session_id, role)
     finally:
         watchdog.cancel()
-        await _teardown(session_id, sess, role)
+        await _teardown(session_id, sess, role, ws)
 
 
 async def main():
@@ -370,8 +403,8 @@ async def main():
         LISTEN_HOST,
         LISTEN_PORT,
         max_size=MAX_MESSAGE_BYTES,
-        ping_interval=20,
-        ping_timeout=20,
+        ping_interval=PING_INTERVAL_SECONDS,
+        ping_timeout=PING_TIMEOUT_SECONDS,
     ):
         await stop.wait()
     logger.info("Relais TrueSight Remote arrêté")

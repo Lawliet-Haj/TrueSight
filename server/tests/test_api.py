@@ -1099,6 +1099,100 @@ def test_heartbeat_advertises_update(app, client, admin_session, tmp_path):
     assert r2.get_json()["agent_update"] is None
 
 
+def _force_session_state(app, session_id, status, age_seconds=0):
+    """Force le statut (et l'ancienneté) d'une session distante, en base."""
+    import uuid as _u
+    from datetime import timedelta as _td
+
+    from app.models import RemoteSession, utcnow
+
+    with app.app_context():
+        sess = db.session.get(RemoteSession, _u.UUID(str(session_id)))
+        sess.status = status
+        if age_seconds:
+            sess.requested_at = utcnow() - _td(seconds=age_seconds)
+        db.session.commit()
+
+
+def test_update_not_advertised_during_remote_session(app, client, admin_session, tmp_path):
+    """Aucune annonce de MAJ pendant une prise en main : la bascule tuerait la session.
+
+    Le script de mise à jour de l'agent tue tous les process ``truesight-agent.exe``,
+    dont le helper qui porte la session : la prise en main serait coupée net.
+    """
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+    agent_id, token = _enroll(client, "MACHINE-LIVE")
+
+    def _heartbeat():
+        return client.post(
+            f"/api/v1/agents/{agent_id}/heartbeat",
+            json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+            headers=_auth(token),
+        ).get_json()["agent_update"]
+
+    # Sans session : la MAJ est annoncée normalement.
+    assert _heartbeat()["version"] == "1.1.0"
+
+    # Session demandée (appariement en cours) → on diffère.
+    created = admin_session.post(f"/api/v1/agents/{agent_id}/remote-session")
+    session_id = created.get_json()["session_id"]
+    assert _heartbeat() is None
+
+    # Session active (prise en main en cours) → on diffère toujours.
+    _force_session_state(app, session_id, "active")
+    assert _heartbeat() is None
+
+    # Session terminée → la MAJ repart au battement suivant.
+    _force_session_state(app, session_id, "ended")
+    assert _heartbeat()["version"] == "1.1.0"
+
+
+def test_stale_active_session_does_not_freeze_updates(app, client, admin_session, tmp_path):
+    """Une session « active » ORPHELINE (relais tombé) ne gèle pas les MAJ du poste."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+    agent_id, token = _enroll(client, "MACHINE-STALE")
+
+    created = admin_session.post(f"/api/v1/agents/{agent_id}/remote-session")
+    session_id = created.get_json()["session_id"]
+
+    # Restée « active » au-delà du garde-fou (1 h) : on ne la croit plus.
+    from app.api_agent import LIVE_SESSION_MAX_SECONDS
+
+    _force_session_state(app, session_id, "active", age_seconds=LIVE_SESSION_MAX_SECONDS + 60)
+    r = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+        headers=_auth(token),
+    )
+    assert r.get_json()["agent_update"]["version"] == "1.1.0"
+
+
+def test_update_deferred_only_for_the_agent_in_session(app, client, admin_session, tmp_path):
+    """La garde est PAR AGENT : le voisin continue de recevoir ses mises à jour."""
+    app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
+    _publish_release(admin_session, "1.1.0")
+    busy_id, busy_token = _enroll(client, "MACHINE-BUSY")
+    idle_id, idle_token = _enroll(client, "MACHINE-IDLE")
+
+    created = admin_session.post(f"/api/v1/agents/{busy_id}/remote-session")
+    _force_session_state(app, created.get_json()["session_id"], "active")
+
+    busy = client.post(
+        f"/api/v1/agents/{busy_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+        headers=_auth(busy_token),
+    )
+    idle = client.post(
+        f"/api/v1/agents/{idle_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}, "agent_version": "1.0.0"},
+        headers=_auth(idle_token),
+    )
+    assert busy.get_json()["agent_update"] is None
+    assert idle.get_json()["agent_update"]["version"] == "1.1.0"
+
+
 def test_auto_update_can_be_disabled(app, client, admin_session, tmp_path):
     """AGENT_AUTO_UPDATE_ENABLED=False gèle le parc (jamais d'annonce)."""
     app.config["AGENT_RELEASE_DIR"] = str(tmp_path)

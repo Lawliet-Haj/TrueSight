@@ -39,6 +39,12 @@ from .security import (
 # laisse plus de temps pour s'apparier avant d'expirer la session côté signalisation.
 REMOTE_SESSION_TTL_SECONDS = 120
 
+# Au-delà de cette durée, une session encore marquée « active » est considérée
+# comme une ligne ORPHELINE (relais tombé en pleine session : personne ne l'a
+# passée à « ended »). Elle ne doit plus bloquer l'auto-update. Alignée sur le
+# garde-fou de l'agent (_MAX_SESSION_SECONDS = 1 h dans remote/session.py).
+LIVE_SESSION_MAX_SECONDS = 3600
+
 bp = Blueprint("api_agent", __name__, url_prefix="/api/v1")
 
 
@@ -334,15 +340,46 @@ def heartbeat(agent_id):
     )
 
 
+def _agent_has_live_session(agent: Agent) -> bool:
+    """True si une session distante est en cours (ou en cours d'appariement).
+
+    Sert à DIFFÉRER l'auto-update. Le script de bascule de l'agent fait
+    ``taskkill /F /T /IM truesight-agent.exe`` : il tue le service **et** le
+    helper/compagnon qui porte la session en cours. La prise en main est alors
+    coupée net, côté agent, sans aucune trace côté serveur — exactement le
+    symptôme « parfois le bureau à distance coupe tout seul ».
+
+    Bornée par ``LIVE_SESSION_MAX_SECONDS`` : une ligne « active » restée
+    bloquée ne doit pas geler les mises à jour de ce poste indéfiniment.
+    """
+    horizon = utcnow() - timedelta(seconds=LIVE_SESSION_MAX_SECONDS)
+    return (
+        db.session.query(RemoteSession.id)
+        .filter(
+            RemoteSession.agent_id == agent.id,
+            RemoteSession.status.in_(("requested", "active")),
+            RemoteSession.requested_at >= horizon,
+        )
+        .first()
+        is not None
+    )
+
+
 def _agent_update_for(agent: Agent) -> dict | None:
     """Renvoie le manifeste de mise à jour pour un agent, ou None.
 
-    Présent uniquement si l'auto-update est activé ET qu'une release courante,
-    strictement plus récente que la version rapportée par l'agent, existe avec
-    son fichier disponible sur le disque. L'agent télécharge ensuite ``url``
+    Présent uniquement si l'auto-update est activé, qu'AUCUNE prise en main
+    n'est en cours sur ce poste, ET qu'une release courante, strictement plus
+    récente que la version rapportée par l'agent, existe avec son fichier
+    disponible sur le disque. L'agent télécharge ensuite ``url``
     (endpoint ``/agents/<id>/package``, même Bearer).
     """
     if not current_app.config.get("AGENT_AUTO_UPDATE_ENABLED", True):
+        return None
+    # Une prise en main en cours passe AVANT la mise à jour : la bascule tuerait
+    # la session (cf. _agent_has_live_session). On ré-annoncera au battement
+    # suivant, session terminée.
+    if _agent_has_live_session(agent):
         return None
     from .releases import current_release_available, version_gt
 

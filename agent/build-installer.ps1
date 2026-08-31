@@ -19,6 +19,9 @@ param(
     # en double-clic sans rien saisir. Laisser vide = assistant demande le jeton.
     # Le jeton n'est jamais écrit dans le dépôt : il ne vit que le temps du build.
     [string]$Token,
+    # URL du serveur pre-remplie dans l'installeur (double-clic ET mode
+    # silencieux). Change a chaque migration de serveur.
+    [string]$ServerUrl,
     # Signature Authenticode (optionnelle) : transmise au build de l'agent ET
     # appliquée au setup.exe produit. Cf. make-signing-cert.ps1 / SIGNING.md.
     [string]$CertThumbprint,
@@ -103,6 +106,10 @@ Write-Host "ISCC : $Iscc" -ForegroundColor Yellow
 # 4. Compilation.
 $iss = Join-Path $scriptDir "installer\truesight.iss"
 $isccArgs = @("/DAppVersion=$version")
+if ($ServerUrl) {
+    $isccArgs += "/DDefaultServerUrl=$ServerUrl"
+    Write-Host "URL serveur embarquee : $ServerUrl" -ForegroundColor Yellow
+}
 if ($Token) {
     $isccArgs += "/DDefaultToken=$Token"
     Write-Host "Jeton d'enrôlement PRÉ-EMBARQUÉ : installation en double-clic sans saisie." -ForegroundColor Yellow
@@ -146,7 +153,8 @@ if (Test-Path $out) {
         Write-Host "Manuel  : double-clic (assistant URL + jeton)." -ForegroundColor Cyan
         Write-Host "Embarquer le jeton : .\build-installer.ps1 -Token <jeton>" -ForegroundColor Cyan
     }
-    Write-Host "Parc    : TrueSightAgent-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVERURL=https://srv778935.hstgr.cloud /TOKEN=<jeton>" -ForegroundColor Cyan
+    $hintUrl = if ($ServerUrl) { $ServerUrl } else { "https://VOTRE-SERVEUR" }
+    Write-Host "Parc    : TrueSightAgent-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVERURL=$hintUrl /TOKEN=<jeton>" -ForegroundColor Cyan
 } else {
     Write-Host "=== Échec : installeur introuvable ===" -ForegroundColor Red
     exit 1

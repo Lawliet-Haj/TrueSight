@@ -10,7 +10,7 @@
 ;   - désinstalleur : arrête/supprime service + tâche (preuninstall.ps1).
 ;
 ; Mode SILENCIEUX (parc / GPO / Intune) :
-;   setup.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVERURL=https://srv778935.hstgr.cloud /TOKEN=<jeton> [/VERIFYTLS=true]
+;   setup.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVERURL=https://srv1867777.hstgr.cloud /TOKEN=<jeton> [/VERIFYTLS=true]
 ;
 ; Compilation : build-installer.ps1 (passe /DAppVersion=<version>) ou
 ;   ISCC.exe /DAppVersion=1.0.0 installer\truesight.iss
@@ -26,13 +26,19 @@
 #ifndef DefaultToken
   #define DefaultToken ""
 #endif
+; URL du serveur pre-remplie, injectee a la COMPILATION via
+; ISCC /DDefaultServerUrl=https://mon-serveur. Evite de rebricoler ce fichier a
+; chaque migration de serveur.
+#ifndef DefaultServerUrl
+  #define DefaultServerUrl "https://srv1867777.hstgr.cloud"
+#endif
 
 [Setup]
 AppId={{A2F4C1E8-7B3D-4E9A-9C21-5D6F8B0A1E23}
 AppName=TrueSight Agent
 AppVersion={#AppVersion}
 AppPublisher=Medicofi / Tire-Lait Express
-AppPublisherURL=https://srv778935.hstgr.cloud
+AppPublisherURL={#DefaultServerUrl}
 DefaultDirName={autopf}\TrueSight
 DisableProgramGroupPage=yes
 DisableDirPage=yes
@@ -91,7 +97,7 @@ begin
     'Renseignez l''URL du serveur et le jeton d''enrôlement fournis par l''administrateur.');
   ServerPage.Add('URL du serveur (https://...)', False);
   ServerPage.Add('Jeton d''enrôlement', False);
-  ServerPage.Values[0] := ExpandConstant('{param:SERVERURL|https://srv778935.hstgr.cloud}');
+  ServerPage.Values[0] := ExpandConstant('{param:SERVERURL|{#DefaultServerUrl}}');
   ServerPage.Values[1] := ExpandConstant('{param:TOKEN|{#DefaultToken}}');
 end;
 

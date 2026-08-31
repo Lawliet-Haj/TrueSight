@@ -151,9 +151,17 @@ volumes:
   letsencrypt:
 
 networks:
+  # « name: » FIGE le nom réel du réseau. Sans lui, Compose le préfixe avec le nom
+  # du projet (-> truesight_truesight_edge) et le label
+  # traefik.docker.network=truesight_edge ci-dessus désigne alors un réseau
+  # INEXISTANT : Traefik ne sait plus joindre le service et la requête part dans le
+  # vide (constaté sur /ws/remote : timeout, alors que le relais répond 426 en direct).
+  #
   # Réseau privé db <-> web/relay : la base n'est JAMAIS joignable depuis Traefik.
   truesight_internal:
+    name: truesight_internal
     driver: bridge
   # Réseau de bordure : Traefik <-> web/relay uniquement.
   truesight_edge:
+    name: truesight_edge
     driver: bridge

@@ -37,9 +37,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 
 # Lancement : 1 worker, 128 threads.
-# --threads 128 (et non 8) : avec le LONG-POLLING des commandes, chaque agent en
-# attente occupe un thread pendant ~25 s. Il faut donc au moins autant de threads
-# que d'agents simultanés (~100) + marge pour le dashboard. Ces threads dorment
+# --threads 256 : avec le LONG-POLLING, chaque agent en attente occupe un thread
+# pendant ~15 s. À 100 postes, 100 threads sont donc occupés EN PERMANENCE ; il
+# faut largement plus que ce nombre pour que les battements, les inventaires et le
+# dashboard ne se retrouvent pas en file d'attente derrière les agents.
+# 256 = ~2,5x le parc cible, marge pour la croissance. Ces threads dorment
 # sur un threading.Event (aucun CPU, aucune connexion base retenue — cf.
 # api_agent.get_commands qui rend la session avant d'attendre).
 # IMPORTANT : un seul worker est volontaire. Le bootstrap (create_all + seed) et
@@ -52,5 +54,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # proprement sur le simple sondage périodique.
 # --timeout 300 : marge pour le téléversement d'un paquet d'agent (~50-120 Mo)
 # depuis le dashboard (Réglages > Déploiement). Le worker gthread reste réactif.
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "1", "--threads", "128", \
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "1", "--threads", "256", \
      "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]

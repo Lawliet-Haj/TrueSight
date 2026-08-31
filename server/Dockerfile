@@ -36,7 +36,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 
-# Lancement : 1 worker, 128 threads.
+# Lancement : 1 worker, 256 threads.
 # --threads 256 : avec le LONG-POLLING, chaque agent en attente occupe un thread
 # pendant ~15 s. À 100 postes, 100 threads sont donc occupés EN PERMANENCE ; il
 # faut largement plus que ce nombre pour que les battements, les inventaires et le

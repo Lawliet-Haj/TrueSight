@@ -1,0 +1,159 @@
+# =============================================================================
+# TrueSight — Stack AUTONOME pour un VPS VIERGE (Traefik + Let's Encrypt inclus)
+# -----------------------------------------------------------------------------
+# À utiliser quand le serveur n'héberge RIEN d'autre. Contrairement à
+# docker-compose.prod.yml (qui se branche derrière un Traefik préexistant sur le
+# réseau externe « root_default »), cette pile embarque son PROPRE Traefik et
+# prend les ports 80/443.
+#
+#   traefik  : 80/443, TLS Let's Encrypt automatique (challenge TLS-ALPN)
+#   web      : gunicorn :8000  -> Host(${TRUESIGHT_HOST})
+#   relay    : :8765           -> Host(${TRUESIGHT_HOST}) && PathPrefix(/ws/remote)
+#   db       : PostgreSQL 16, volume dédié
+#
+# Le nom d'hôte n'est PAS écrit en dur : il vient de .env, ce qui évite d'éditer
+# ce fichier à chaque migration.
+#
+#   # .env (en plus des variables applicatives habituelles)
+#   TRUESIGHT_HOST=srvXXXXX.hstgr.cloud
+#   ACME_EMAIL=h.andriamitantsoa@medicofi.fr
+#
+# Démarrage :
+#   docker compose -f docker-compose.standalone.yml up -d --build
+#
+# ⚠️ Prérequis : le nom d'hôte doit DÉJÀ résoudre vers l'IP de ce serveur, sinon
+# Let's Encrypt ne peut pas valider et aucun certificat n'est émis.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Reverse proxy + terminaison TLS
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.7
+    container_name: truesight-traefik
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      # Rien n'est exposé sans label explicite : évite de publier par accident un
+      # service ajouté plus tard sur ce serveur.
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      # Tout le trafic clair est redirigé en HTTPS : les agents et le dashboard
+      # ne doivent jamais transiter en clair (jetons, captures d'écran).
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      # Challenge TLS-ALPN : ne nécessite aucune règle HTTP supplémentaire.
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Lecture seule : Traefik n'a besoin que de LIRE les conteneurs.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - truesight_edge
+
+  # ---------------------------------------------------------------------------
+  # Base de données
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16
+    container_name: truesight-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: truesight
+      POSTGRES_PASSWORD: truesight
+      POSTGRES_DB: truesight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truesight -d truesight"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - truesight_internal
+
+  # ---------------------------------------------------------------------------
+  # Application (API agents + dashboard)
+  # ---------------------------------------------------------------------------
+  web:
+    build: ./server
+    container_name: truesight-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql+psycopg://truesight:truesight@db:5432/truesight"
+      SESSION_COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      ENABLE_HSTS: "true"
+      AGENT_RELEASE_DIR: "/var/lib/truesight/releases"
+    volumes:
+      - agent_releases:/var/lib/truesight/releases
+    expose:
+      - "8000"
+    networks:
+      - truesight_internal
+      - truesight_edge
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=truesight_edge"
+      - "traefik.http.routers.truesight.rule=Host(`${TRUESIGHT_HOST}`)"
+      - "traefik.http.routers.truesight.entrypoints=websecure"
+      - "traefik.http.routers.truesight.tls=true"
+      - "traefik.http.routers.truesight.tls.certresolver=le"
+      - "traefik.http.services.truesight.loadbalancer.server.port=8000"
+
+  # ---------------------------------------------------------------------------
+  # Relais WebSocket (bureau à distance / terminal)
+  # ---------------------------------------------------------------------------
+  relay:
+    build: ./relay
+    container_name: truesight-relay
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    expose:
+      - "8765"
+    networks:
+      - truesight_internal
+      - truesight_edge
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=truesight_edge"
+      # Priorité PLUS HAUTE que le routeur applicatif : /ws/remote doit partir au
+      # relais et non à gunicorn (qui ne gère pas les WebSockets long-vivants).
+      - "traefik.http.routers.truesight-ws.rule=Host(`${TRUESIGHT_HOST}`) && PathPrefix(`/ws/remote`)"
+      - "traefik.http.routers.truesight-ws.entrypoints=websecure"
+      - "traefik.http.routers.truesight-ws.tls=true"
+      - "traefik.http.routers.truesight-ws.tls.certresolver=le"
+      - "traefik.http.routers.truesight-ws.priority=100"
+      - "traefik.http.services.truesight-ws.loadbalancer.server.port=8765"
+
+volumes:
+  pgdata:
+  agent_releases:
+  letsencrypt:
+
+networks:
+  # Réseau privé db <-> web/relay : la base n'est JAMAIS joignable depuis Traefik.
+  truesight_internal:
+    driver: bridge
+  # Réseau de bordure : Traefik <-> web/relay uniquement.
+  truesight_edge:
+    driver: bridge

@@ -67,6 +67,15 @@ class Config:
     WATCHDOG_PING_URL = os.environ.get("WATCHDOG_PING_URL", "").strip()
     WATCHDOG_PING_INTERVAL_SECONDS = _get_int("WATCHDOG_PING_INTERVAL_SECONDS", 300)
 
+    # --- Limite d'enrôlement (anti-bruteforce du jeton partagé) ----------
+    # Un DÉPLOIEMENT DE MASSE fait enrôler des dizaines de postes en quelques
+    # minutes, et tout un site sort souvent par une SEULE IP publique (NAT) : le
+    # quota par IP est alors atteint et les postes reçoivent 429, donc ne
+    # s'enrôlent pas. Ces valeurs sont volontairement configurables pour être
+    # ouvertes le temps d'une campagne puis resserrées ensuite.
+    ENROLL_RATE_MAX_ATTEMPTS = _get_int("ENROLL_RATE_MAX_ATTEMPTS", 20)
+    ENROLL_RATE_WINDOW_SECONDS = _get_int("ENROLL_RATE_WINDOW_SECONDS", 60)
+
     # --- Long-polling des commandes -------------------------------------
     # Durée maximale pendant laquelle le serveur garde ouverte la requête de
     # sondage d'un agent quand il n'y a rien à faire. L'agent est relâché dès

@@ -45,6 +45,7 @@ bp = Blueprint("api_agent", __name__, url_prefix="/api/v1")
 # --------------------------------------------------------------------------
 # Rate-limiting mémoire simple sur /enroll (anti-bruteforce du token partagé)
 # --------------------------------------------------------------------------
+# Valeurs de repli si la config n'est pas lisible (hors contexte applicatif).
 _ENROLL_WINDOW_SECONDS = 60
 _ENROLL_MAX_ATTEMPTS = 20
 _enroll_hits: dict[str, list[float]] = defaultdict(list)
@@ -52,14 +53,25 @@ _enroll_lock = Lock()
 
 
 def _enroll_rate_limited(ip: str) -> bool:
-    """Renvoie True si l'IP a dépassé le quota d'appels à /enroll sur la fenêtre glissante."""
+    """Renvoie True si l'IP a dépassé le quota d'appels à /enroll sur la fenêtre glissante.
+
+    Les bornes viennent de la CONFIG (ENROLL_RATE_*) : lors d'un déploiement de
+    masse, tout un site sort par une seule IP publique et le quota par défaut
+    (20/min) rejette les postes en 429. On peut donc l'ouvrir le temps de la
+    campagne, puis le resserrer, sans redéployer d'agent.
+    ``0`` désactive complètement la limite.
+    """
+    window = float(current_app.config.get("ENROLL_RATE_WINDOW_SECONDS", _ENROLL_WINDOW_SECONDS) or _ENROLL_WINDOW_SECONDS)
+    maximum = int(current_app.config.get("ENROLL_RATE_MAX_ATTEMPTS", _ENROLL_MAX_ATTEMPTS) or 0)
+    if maximum <= 0:
+        return False
     now = time.monotonic()
     with _enroll_lock:
         hits = _enroll_hits[ip]
         # Purge des hits hors fenêtre.
-        cutoff = now - _ENROLL_WINDOW_SECONDS
+        cutoff = now - window
         hits[:] = [t for t in hits if t > cutoff]
-        if len(hits) >= _ENROLL_MAX_ATTEMPTS:
+        if len(hits) >= maximum:
             return True
         hits.append(now)
         return False

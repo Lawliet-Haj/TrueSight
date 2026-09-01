@@ -27,6 +27,9 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.4.7 : l'auto-update pouvait enfin s'appliquer — le script de bascule etait
+# lance avec DETACHED_PROCESS, ce qui prive powershell.exe de console : le
+# processus mourait sans executer une ligne (donc sans journal). Depuis toujours.
 # 1.4.6 : CORRECTIF MAJEUR de la prise en main — la socket TLS n'est plus lue
 # et écrite par deux threads à la fois (OpenSSL ne le supporte pas : l'état TLS
 # se corrompait et la session tombait au hasard, de 5 s à quelques minutes).
@@ -37,7 +40,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.4.6"
+__version__ = "1.4.7"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

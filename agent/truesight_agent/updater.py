@@ -39,7 +39,21 @@ _logger = logging.getLogger("truesight.updater")
 _VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
 
 # Drapeaux de création Windows : processus détaché, sans fenêtre, nouveau groupe.
-_DETACHED = 0x00000008  # DETACHED_PROCESS
+# NE PAS utiliser DETACHED_PROCESS (0x8) pour lancer le script de bascule :
+# powershell.exe est une application CONSOLE, et son hôte 5.1 n'arrive pas à
+# s'initialiser sans console. Le processus est bien créé (CreateProcess rend un
+# PID, Popen ne lève pas) puis meurt AUSSITÔT sans exécuter une seule ligne —
+# donc sans même écrire son journal. C'est ce qui rendait la panne indéchiffrable.
+#
+# Mesuré (01/09/2026, script témoin écrivant un fichier) :
+#   DETACHED|NEW_GROUP|NO_WINDOW ... aucun témoin  (le script ne tourne pas)
+#   DETACHED|NEW_GROUP ........... aucun témoin
+#   NO_WINDOW|NEW_GROUP .......... témoin écrit
+#   NEW_CONSOLE|NEW_GROUP ........ témoin écrit
+#
+# CREATE_NO_WINDOW suffit : le processus a une console, simplement pas de fenêtre
+# visible — ce qui est le but. CREATE_NEW_PROCESS_GROUP l'isole des Ctrl+C/Break
+# du parent, utile puisque ce parent (le service) va être arrêté par le script.
 _NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
@@ -302,7 +316,7 @@ def apply_update(client, update_info: dict) -> bool:
         _logger.info("Auto-update : lancement de la bascule (le service va redémarrer).")
         subprocess.Popen(
             cmd,
-            creationflags=_DETACHED | _NEW_GROUP | _NO_WINDOW,
+            creationflags=_NO_WINDOW | _NEW_GROUP,
             close_fds=True,
             cwd=update_root,
         )

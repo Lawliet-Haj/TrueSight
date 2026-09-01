@@ -45,6 +45,16 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
+      # Délais de lecture/écriture d'une REQUÊTE. À défaut, Traefik v3 applique
+      # readTimeout=60 s : toute requête dont le CORPS met plus d'une minute à
+      # arriver est tuée. Symptôme vécu (01/09/2026) : impossible de téléverser
+      # le paquet agent (~35 Mo) depuis un poste — coupure à 60,7 s pile,
+      # constatée en mesure (curl : HTTP 499 après 15,5 Mo sur 18). Côté
+      # dashboard cela remontait tantôt en 502, tantôt en 400 « fichier
+      # manquant » (multipart tronqué), ce qui égarait le diagnostic.
+      # N'affecte PAS les WebSockets (connexions détournées, hors de ce délai).
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=1800"
+      - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=1800"
       # Challenge TLS-ALPN : ne nécessite aucune règle HTTP supplémentaire.
       - "--certificatesresolvers.le.acme.tlschallenge=true"
       - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"

@@ -121,6 +121,24 @@ if ($turbojpegDll -and (Test-Path $turbojpegDll)) {
     Write-Host "turbojpeg.dll introuvable : encodage Pillow (repli). Definir TURBOJPEG_DLL pour l'accelerer." -ForegroundColor Yellow
 }
 
+# 3ter. Le WRAPPER Python (PyTurboJPEG) doit etre installe dans le venv, sinon la
+#   DLL embarquee ci-dessus ne sert a RIEN : capture.py se rabat sur Pillow, en
+#   silence. Cas vecu : livre pendant des semaines avec la DLL mais sans le module,
+#   et personne ne l'a vu (une seule ligne INFO dans le journal du poste).
+#   Ecart mesure sur un ecran 1080x1920 en q70 :
+#     Pillow ....... 125 ms/trame, 211 Ko  -> plafond ~8 i/s
+#     PyTurboJPEG ..   5 ms/trame,  81 Ko  -> plafond ~200 i/s
+#   Soit 25x plus rapide ET 2,6x moins de donnees a pousser sur le reseau.
+python -c "import turbojpeg" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "ATTENTION : PyTurboJPEG n'est PAS installe dans le venv de build." -ForegroundColor Red
+    Write-Host "  L'agent produit encodera via Pillow : ~25x plus lent et ~2,6x plus" -ForegroundColor Red
+    Write-Host "  volumineux. Corriger avant de livrer :" -ForegroundColor Red
+    Write-Host "      .\.venv\Scripts\python.exe -m pip install -r requirements.txt" -ForegroundColor Red
+    Write-Host ""
+}
+
 # 4. Lance PyInstaller en mode --onefile.
 #    Le point d'entrée est __main__.py du paquet ; le service est inclus via
 #    les hidden-imports + l'import de truesight_agent.service par le runner.

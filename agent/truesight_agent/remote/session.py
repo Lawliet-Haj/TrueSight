@@ -26,6 +26,7 @@ import base64
 import json
 import logging
 import os
+import select
 import threading
 import time
 
@@ -53,6 +54,39 @@ _CONNECT_ATTEMPTS = 4
 _CONNECT_RETRY_DELAY = 2.0
 # Durée de vie maximale d'une session sans démantèlement explicite (garde-fou).
 _MAX_SESSION_SECONDS = 60 * 60  # 1 h
+# ---------------------------------------------------------------------------
+# ACCÈS À LA SOCKET : UN SEUL THREAD À LA FOIS (cf. _sock_lock)
+# ---------------------------------------------------------------------------
+# En wss://, la socket est un ``ssl.SSLSocket``. Or **OpenSSL n'autorise pas un
+# SSL_read et un SSL_write simultanés sur le même objet SSL**, et le module ssh
+# de Python n'ajoute aucun verrou. ``websocket-client`` avec
+# ``enable_multithread=True`` ne sérialise que les ÉCRITURES entre elles : il ne
+# protège rien contre « lecture en parallèle d'une écriture ».
+#
+# Le design d'origine — thread d'envoi des trames + boucle de réception sur la
+# MÊME socket — tombait donc exactement dans ce cas : l'état TLS se corrompait et
+# la connexion mourait, au hasard, entre 5 s et plusieurs minutes. Côté serveur
+# on ne voyait qu'une fermeture 1006 sans motif, et côté agent
+# « Connection to remote host was lost ».
+#
+# Mesuré en A/B sur boucle locale (Traefik + TLS, 13 Mbit/s, aucune congestion) :
+#   - client mono-thread ............ 100 s, 791/791 trames, aucune coupure
+#   - deux threads (design d'origine) ... mort à 17 s
+#
+# Correctif : TOUT accès à la socket (envoi ET réception) passe par _sock_lock,
+# et chaque opération pose son propre délai — c'est sûr puisque le verrou garantit
+# l'exclusivité. L'écriture garde un délai LARGE (une écriture interrompue en
+# cours de trame casse le cadrage WebSocket).
+#
+# Point CRUCIAL : la boucle de réception attend la lisibilité de la socket via
+# ``select`` **en dehors** du verrou, et ne le prend que si des octets sont
+# réellement là. Sans cette précaution elle reprend le verrou 20 fois par seconde
+# et AFFAME le thread d'envoi : mesuré, le débit tombait de 13 à 2,2 Mbit/s avec
+# des écritures bloquées jusqu'à 5,3 s. Le sens viewer → agent est de toute façon
+# très peu bavard (entrées clavier/souris), donc le verrou reste libre presque
+# tout le temps pour les trames d'écran.
+_READ_POLL_SECONDS = 0.05
+_WRITE_TIMEOUT_SECONDS = 30.0
 
 
 class RemoteSession:
@@ -72,8 +106,9 @@ class RemoteSession:
         self._send_thread: threading.Thread | None = None
         self._capturer = capture_mod.ScreenCapturer()
         self._injector = inject_mod.InputInjector(self._capturer.current_monitor_geometry())
-        # Sérialise les envois (le thread capture et d'éventuels acks ne se chevauchent pas).
-        self._send_lock = threading.Lock()
+        # Sérialise TOUT accès à la socket — envois ET réception. Indispensable en
+        # TLS : lire et écrire en même temps corrompt l'état SSL (cf. en-tête).
+        self._sock_lock = threading.Lock()
         self._started_at = 0.0
         # Thread « curseur » : remonte la position du curseur au viewer (surcouche).
         self._cursor_thread: threading.Thread | None = None
@@ -131,8 +166,9 @@ class RemoteSession:
                     sslopt=sslopt,
                     enable_multithread=True,  # envoi (thread) + réception (boucle) en parallèle.
                 )
-                # Au-delà du handshake, on veut une réception bloquante mais réveillable.
-                self._ws.settimeout(1.0)
+                # Valeur de départ ; chaque opération repose ensuite SON délai sous
+                # verrou (lecture courte, écriture large — cf. en-tête du module).
+                self._ws.settimeout(_READ_POLL_SECONDS)
                 _logger.info("Connecté au relais (agent) : %s (tentative %d/%d)",
                              _redact(self.ws_url), attempt, _CONNECT_ATTEMPTS)
                 return True
@@ -249,13 +285,14 @@ class RemoteSession:
                     raw, width, height = capture_mod._downscale_bgra(
                         raw, width, height, self._capturer.max_width
                     )
-                    jpeg = capture_mod._encode_jpeg(raw, width, height, self._capturer.quality)
+                    jpeg = capture_mod._encode_jpeg(
+                        raw, width, height, self._capturer.effective_quality)
                     if jpeg is not None:
                         frame = capture_mod.build_frame(jpeg, width, height, mon_idx)
                         if not self._send_binary(frame):
                             break
                 elapsed = time.monotonic() - loop_start
-                remaining = (1.0 / self._capturer.target_fps) - elapsed
+                remaining = (1.0 / self._capturer.effective_fps) - elapsed
                 if remaining > 0:
                     time.sleep(remaining)
         except Exception as exc:  # noqa: BLE001
@@ -296,7 +333,7 @@ class RemoteSession:
                                 self._stop.set()
                                 break
                             elapsed = time.monotonic() - loop_start
-                            remaining = (1.0 / self._capturer.target_fps) - elapsed
+                            remaining = (1.0 / self._capturer.effective_fps) - elapsed
                             if remaining > 0:
                                 time.sleep(remaining)
                 except Exception as exc:  # noqa: BLE001 - capture jamais fatale.
@@ -309,17 +346,35 @@ class RemoteSession:
             self._stop.set()
 
     def _send_binary(self, data: bytes) -> bool:
-        """Envoie une trame binaire ; renvoie False si la WebSocket est tombée."""
+        """Envoie une trame binaire ; renvoie False si la WebSocket est tombée.
+
+        On CHRONOMÈTRE l'écriture : sa durée est la seule mesure fiable du débit
+        réellement disponible en montée, et elle pilote le bridage automatique
+        (``ScreenCapturer.note_link``) qui évite de saturer l'upload du poste.
+        """
         ws = self._ws
         if ws is None:
             return False
+        started = time.monotonic()
         try:
-            with self._send_lock:
+            with self._sock_lock:
+                ws.settimeout(_WRITE_TIMEOUT_SECONDS)
                 ws.send_binary(data)
-            return True
         except Exception as exc:  # noqa: BLE001 - viewer parti / relais fermé.
-            _logger.info("Envoi d'une trame impossible (session probablement fermée) : %s", exc)
+            elapsed = time.monotonic() - started
+            if "timeout" in exc.__class__.__name__.lower():
+                # Écriture bloquée jusqu'au délai : l'upload du poste est saturé.
+                # L'écriture TLS étant partielle, la WebSocket n'est plus
+                # réutilisable — on termine, mais on NOMME la cause.
+                _logger.warning(
+                    "Écriture réseau bloquée %.0f s sur %d Ko : upload du poste "
+                    "saturé, fin de session.", elapsed, len(data) // 1024)
+            else:
+                _logger.info(
+                    "Envoi d'une trame impossible (session probablement fermée) : %s", exc)
             return False
+        self._capturer.note_link(len(data), time.monotonic() - started)
+        return True
 
     def _send_text(self, obj: dict) -> bool:
         """Envoie un message texte JSON (agent → viewer : confort/latence/écrans)."""
@@ -327,7 +382,8 @@ class RemoteSession:
         if ws is None:
             return False
         try:
-            with self._send_lock:
+            with self._sock_lock:
+                ws.settimeout(_WRITE_TIMEOUT_SECONDS)
                 ws.send(json.dumps(obj))
             return True
         except Exception as exc:  # noqa: BLE001
@@ -680,21 +736,56 @@ class RemoteSession:
         self._uploads.clear()
 
     # -- Boucle de réception des entrées (principal) --------------------------
+    def _readable(self, ws) -> bool:
+        """Attend (au plus ``_READ_POLL_SECONDS``) que la socket ait des octets.
+
+        Appelé SANS le verrou : c'est ce qui empêche la boucle de réception de
+        monopoliser l'accès à la socket au détriment des trames d'écran. Renvoie
+        aussi True si la couche TLS a déjà des octets déchiffrés en attente
+        (``pending()``), que ``select`` ne verrait pas.
+        """
+        sock = getattr(ws, "sock", None)
+        if sock is None:
+            return True  # pas de socket exposée : on laisse recv() décider.
+        try:
+            pending = getattr(sock, "pending", None)
+            if pending is not None and pending():
+                return True
+            readable, _, _ = select.select([sock], [], [], _READ_POLL_SECONDS)
+            return bool(readable)
+        except Exception:  # noqa: BLE001 - socket fermée / non sélectionnable.
+            return True
+
     def _recv_loop(self) -> None:
-        """Reçoit les messages texte JSON (viewer → agent) et les applique."""
+        """Reçoit les messages texte JSON (viewer → agent) et les applique.
+
+        On attend la lisibilité par ``select`` HORS du verrou, puis on lit sous
+        ``_sock_lock`` — jamais en parallèle d'une écriture (l'état TLS ne le
+        supporte pas, cf. en-tête) et sans affamer le thread d'envoi.
+        Le message est traité HORS du verrou : ``_handle_text`` peut vouloir
+        répondre (pong, ack), ce qui reprendrait le même verrou non réentrant.
+        """
+        drain = False  # True juste après une lecture réussie : des trames peuvent
+        # rester dans le tampon TLS/WebSocket, que ``select`` ne signalera pas.
         while not self._should_stop():
             ws = self._ws
             if ws is None:
                 break
+            if not drain and not self._readable(ws):
+                continue
             try:
-                message = ws.recv()
+                with self._sock_lock:
+                    ws.settimeout(_READ_POLL_SECONDS)
+                    message = ws.recv()
             except Exception as exc:  # noqa: BLE001
-                # Timeout de lecture (settimeout) : on reboucle pour vérifier l'arrêt.
+                # Timeout de lecture : normal (sondage), on reboucle.
                 name = exc.__class__.__name__
                 if "timeout" in name.lower():
+                    drain = False
                     continue
                 _logger.info("Réception terminée (session fermée) : %s", exc)
                 break
+            drain = bool(message)
             if message is None or message == "":
                 continue
             # Le viewer n'envoie que du texte JSON (entrées + contrôles).

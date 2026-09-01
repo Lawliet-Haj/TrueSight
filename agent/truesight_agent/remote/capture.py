@@ -51,6 +51,13 @@ _DEFAULT_MAX_WIDTH = 1600
 
 # Cadence cible (images/s). On ne dépasse pas pour ménager CPU/réseau.
 _DEFAULT_TARGET_FPS = 18.0
+# Bornes du bridage automatique (cf. ScreenCapturer.note_link). On accepte de
+# descendre bas — une image lente mais qui ARRIVE vaut mieux qu'une session coupée.
+_MIN_LINK_SCALE = 0.15
+_MIN_THROTTLED_FPS = 2.0
+_MIN_THROTTLED_QUALITY = 30
+# Une alerte de bridage au plus toutes les N secondes (le journal reste lisible).
+_LINK_LOG_INTERVAL = 20.0
 
 # Imports d'encodage tolérants : mss est requis pour capturer, Pillow ou
 # PyTurboJPEG pour encoder. On détecte au runtime ce qui est disponible.
@@ -194,18 +201,24 @@ def _bgra_to_numpy(raw_bgra: bytes, width: int, height: int):
 
 
 def _downscale_bgra(raw_bgra: bytes, width: int, height: int, max_width: int):
-    """Réduit l'image si sa largeur dépasse ``max_width`` (ratio conservé).
+    """Réduit l'image si son PLUS GRAND côté dépasse ``max_width`` (ratio conservé).
+
+    On borne le plus grand côté, pas la largeur : un écran **portrait**
+    (ex. 1080×1920) a une largeur déjà sous le cap, et n'était donc JAMAIS réduit
+    — il envoyait 2,07 Mpx là où un 4K paysage, lui, tombait à 1,44 Mpx. Le
+    volume émis dépendait ainsi de l'orientation de l'écran.
 
     Renvoie ``(raw_bgra, width, height)`` éventuellement réduits. Nécessite
     Pillow ; sans Pillow, on renvoie l'image inchangée.
     """
-    if max_width <= 0 or width <= max_width:
+    longest = max(width, height)
+    if max_width <= 0 or longest <= max_width:
         return raw_bgra, width, height
     if not _PIL_AVAILABLE or Image is None:
         return raw_bgra, width, height
     try:
-        scale = max_width / float(width)
-        new_w = max_width
+        scale = max_width / float(longest)
+        new_w = max(1, int(round(width * scale)))
         new_h = max(1, int(round(height * scale)))
         image = Image.frombytes("RGB", (width, height), raw_bgra, "raw", "BGRX")
         image = image.resize((new_w, new_h), Image.BILINEAR)
@@ -292,6 +305,55 @@ class ScreenCapturer:
         self.tile_size = DEFAULT_TILE_SIZE
         self._tile_hashes: dict[tuple[int, int], str] = {}
         self._frame_size: tuple[int, int] | None = None
+        # Bridage automatique selon le lien : 1.0 = lien non limitant, < 1 = on
+        # réduit ce qu'on demande au réseau. Les réglages du viewer restent le
+        # PLAFOND ; ce facteur ne fait que descendre en dessous. Sans lui, l'agent
+        # réclame ~30 Mbit/s (mesuré) et sature l'upload du poste.
+        self._link_scale = 1.0
+        self._link_logged_at = 0.0
+
+    # -- Adaptation au débit réel du lien -------------------------------------
+    @property
+    def effective_fps(self) -> float:
+        """Cadence réellement appliquée (cible du viewer, bridée par le lien)."""
+        return max(_MIN_THROTTLED_FPS, self.target_fps * self._link_scale)
+
+    @property
+    def effective_quality(self) -> int:
+        """Qualité réellement appliquée (dégradée progressivement, jamais sous le plancher)."""
+        if self._link_scale >= 1.0:
+            return self.quality
+        eased = 0.6 + 0.4 * self._link_scale  # 1.0 -> 100 %, 0.25 -> 70 %
+        return max(_MIN_THROTTLED_QUALITY, int(round(self.quality * eased)))
+
+    def note_link(self, nbytes: int, seconds: float) -> None:
+        """Mesure une écriture réseau et ajuste le bridage en conséquence.
+
+        Le seul juge fiable du débit disponible, c'est le temps qu'a pris
+        l'écriture. Si elle dure plus longtemps que l'intervalle entre deux
+        trames, le réseau — et non la capture — fixe la cadence : on descend.
+        S'il reste de la marge, on remonte lentement (pas d'oscillation).
+        """
+        if seconds <= 0 or nbytes <= 0:
+            return
+        interval = 1.0 / max(1.0, self.effective_fps)
+        before = self._link_scale
+        if seconds > interval:
+            self._link_scale = max(_MIN_LINK_SCALE, self._link_scale * 0.85)
+        elif seconds < interval * 0.4:
+            self._link_scale = min(1.0, self._link_scale * 1.03)
+        if abs(self._link_scale - before) < 1e-6:
+            return
+        now = time.monotonic()
+        if now - self._link_logged_at < _LINK_LOG_INTERVAL:
+            return
+        self._link_logged_at = now
+        _logger.info(
+            "Lien limitant : %d Ko écrits en %.2f s (%.1f Mbit/s) → bridage %.0f %% "
+            "(cadence %.1f i/s, qualité %d).",
+            nbytes // 1024, seconds, nbytes * 8 / (seconds * 1e6),
+            self._link_scale * 100, self.effective_fps, self.effective_quality,
+        )
 
     # -- Réglages pilotés par le viewer ---------------------------------------
     def set_quality(self, quality: int) -> None:
@@ -357,10 +419,11 @@ class ScreenCapturer:
                     frame = self._grab_and_encode(sct)
                     if frame is not None:
                         yield frame
-                    # Régulation de cadence : on relit target_fps à chaque tour
-                    # (réglable à chaud via set_fps) et on dort le reste de l'intervalle.
+                    # Régulation de cadence : on relit la cadence EFFECTIVE à chaque
+                    # tour (réglable à chaud via set_fps, et bridée par note_link si
+                    # le lien ne suit pas) puis on dort le reste de l'intervalle.
                     elapsed = time.monotonic() - loop_start
-                    remaining = (1.0 / self.target_fps) - elapsed
+                    remaining = (1.0 / self.effective_fps) - elapsed
                     if remaining > 0:
                         time.sleep(remaining)
         except Exception as exc:  # noqa: BLE001 - la capture ne crashe jamais.
@@ -397,7 +460,7 @@ class ScreenCapturer:
 
         if keyframe:
             # Trame PLEINE (robuste) + (ré)initialise les empreintes de tuiles.
-            jpeg = _encode_jpeg(raw, width, height, self.quality)
+            jpeg = _encode_jpeg(raw, width, height, self.effective_quality)
             if jpeg is None:
                 return None
             self._index_tiles(raw, width, height)
@@ -442,7 +505,7 @@ class ScreenCapturer:
         """Compare chaque tuile à son empreinte ; encode + renvoie les tuiles modifiées."""
         if not (_PIL_AVAILABLE and Image is not None):
             # Sans Pillow, pas de découpe en tuiles : repli sur une trame pleine.
-            jpeg = _encode_jpeg(raw, width, height, self.quality)
+            jpeg = _encode_jpeg(raw, width, height, self.effective_quality)
             return build_frame(jpeg, width, height, idx) if jpeg else None
         try:
             img = Image.frombytes("RGB", (width, height), raw, "raw", "BGRX")
@@ -459,7 +522,7 @@ class ScreenCapturer:
             self._tile_hashes[(col, row)] = digest
             try:
                 buf = io.BytesIO()
-                crop.save(buf, format="JPEG", quality=self.quality)
+                crop.save(buf, format="JPEG", quality=self.effective_quality)
                 changed.append((x, y, tw, th, buf.getvalue()))
             except Exception as exc:  # noqa: BLE001
                 _logger.debug("Encodage d'une tuile échoué (%s).", exc)

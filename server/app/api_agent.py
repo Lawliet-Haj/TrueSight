@@ -184,49 +184,58 @@ def _remote_session_for_agent(agent: Agent, ws_path: str) -> dict | None:
     }
 
 
-def _find_agent_for_enroll(machine_id: str, hardware_id: str | None) -> Agent | None:
+def _find_agent_for_enroll(machine_id: str, hardware_id: str | None,
+                           hostname: str | None) -> Agent | None:
     """Retrouve l'enregistrement du poste qui s'enrôle, ou None s'il est nouveau.
 
     La clé historique est ``machine_id`` (le MachineGuid du registre). Problème :
-    ce GUID est **dupliqué par un clonage de disque sans sysprep**. Deux postes
-    physiques distincts réclamaient donc le même enregistrement, et comme chaque
-    enrôlement fait tourner le jeton, chacun invalidait celui de l'autre : boucle
-    de 401 sans fin. Constaté le 02/09/2026 sur deux postes clonés — 1702
-    enrôlements en 24 h et 1428 refus en 2 h sur un seul agent.
+    ce GUID est **dupliqué par un clonage de disque sans sysprep**. Constaté le
+    02/09/2026 : tout un lot de machines identiques partageait le GUID
+    ``a4d88cf6-…`` ; comme chaque enrôlement fait tourner le jeton, chacune
+    invalidait celui des autres — 1702 enrôlements en 24 h, 1428 refus en 2 h.
 
-    ``hardware_id`` (UUID SMBIOS / série BIOS) lève l'ambiguïté : il diffère bien
-    entre deux machines clonées. Ordre de recherche :
+    ``hardware_id`` (UUID SMBIOS / série BIOS) diffère bien entre ces machines :
+    c'est donc LUI qui fait l'identité quand il est disponible. Ordre :
 
-      1. couple exact (machine_id, hardware_id) — le cas courant ;
-      2. enregistrement de ce machine_id dont l'empreinte n'est pas encore
-         renseignée : c'est un poste enrôlé avant cette évolution, il l'adopte ;
-      3. agent ancien qui n'envoie pas d'empreinte : comportement d'avant, à
-         l'identique (aucune régression pour le parc existant).
+      1. empreinte connue → cet enregistrement, **où qu'il soit** (y compris sous
+         un ``machine_id`` dérivé, cf. plus bas) ;
+      2. sinon, enregistrement de ce MachineGuid encore SANS empreinte : c'est un
+         poste enrôlé avant cette évolution, il l'adopte ;
+      3. agent sans empreinte (version antérieure, ou WMI hors service sur le
+         poste) : on ne lui rend qu'un enregistrement lui aussi SANS empreinte —
+         sinon il volerait le jeton d'un voisin déjà identifié. On accepte le
+         MachineGuid nu comme la forme dérivée de son nom d'hôte.
 
-    Sinon None : c'est une autre machine → nouvel enregistrement (l'appelant
-    dérive alors un ``machine_id`` distinct, la colonne étant UNIQUE).
+    Sinon None : c'est une autre machine → nouvel enregistrement, avec un
+    ``machine_id`` dérivé puisque la colonne est UNIQUE.
     """
-    base = db.session.query(Agent).filter(Agent.machine_id == machine_id)
-    if not hardware_id:
-        return base.order_by(Agent.enrolled_at.asc()).first()
+    agents = db.session.query(Agent)
+    if hardware_id:
+        found = (
+            agents.filter(Agent.hardware_id == hardware_id)
+            .order_by(Agent.enrolled_at.asc())
+            .first()
+        )
+        if found is not None:
+            return found
+        legacy = (
+            agents.filter(Agent.machine_id == machine_id, Agent.hardware_id.is_(None))
+            .order_by(Agent.enrolled_at.asc())
+            .first()
+        )
+        if legacy is not None:
+            legacy.hardware_id = hardware_id  # adoption
+            return legacy
+        return None
 
-    exact = (
-        base.filter(Agent.hardware_id == hardware_id)
+    candidates = [machine_id]
+    if hostname:
+        candidates.append(f"{machine_id}#{hostname}")
+    return (
+        agents.filter(Agent.machine_id.in_(candidates), Agent.hardware_id.is_(None))
         .order_by(Agent.enrolled_at.asc())
         .first()
     )
-    if exact is not None:
-        return exact
-
-    legacy = (
-        base.filter(Agent.hardware_id.is_(None))
-        .order_by(Agent.enrolled_at.asc())
-        .first()
-    )
-    if legacy is not None:
-        legacy.hardware_id = hardware_id  # adoption
-        return legacy
-    return None
 
 
 # --------------------------------------------------------------------------
@@ -266,20 +275,28 @@ def enroll():
     token = generate_agent_token()
     token_h = hash_token(token)
 
-    agent = _find_agent_for_enroll(machine_id, hardware_id)
+    agent = _find_agent_for_enroll(machine_id, hardware_id, hostname)
     if agent is None:
         stored_machine_id = machine_id
-        if hardware_id and db.session.query(Agent.id).filter(
+        if db.session.query(Agent.id).filter(
             Agent.machine_id == machine_id
         ).first() is not None:
             # Le MachineGuid est déjà pris par une AUTRE machine physique (image
-            # clonée). La colonne étant UNIQUE, on stocke un identifiant dérivé ;
-            # les enrôlements suivants retrouvent ce poste par son empreinte.
-            stored_machine_id = f"{machine_id}#{hardware_id}"
+            # clonée). La colonne étant UNIQUE, on stocke un identifiant dérivé.
+            # Discriminant : l'empreinte matérielle si on l'a — sinon le nom
+            # d'hôte, qui reste stable (à défaut, chaque enrôlement créerait un
+            # nouvel enregistrement et le parc gonflerait sans fin).
+            suffix = hardware_id or hostname
+            if not suffix:
+                return jsonify({
+                    "error": "machine_id déjà utilisé par un autre poste et "
+                             "aucun élément distinctif fourni (hardware_id ou hostname)"
+                }), 409
+            stored_machine_id = f"{machine_id}#{suffix}"
             current_app.logger.warning(
                 "Enrôlement : MachineGuid %s déjà utilisé par un autre matériel "
-                "(image clonée sans sysprep) — enregistrement distinct créé.",
-                machine_id,
+                "(image clonée sans sysprep) — enregistrement distinct créé (%s).",
+                machine_id, "empreinte" if hardware_id else "nom d'hôte",
             )
         agent = Agent(
             machine_id=stored_machine_id,

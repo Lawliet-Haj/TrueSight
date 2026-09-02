@@ -1113,6 +1113,22 @@ def test_clones_sharing_machine_guid_get_distinct_records(client):
     assert r_b.status_code == 200
 
 
+def test_clone_can_reenroll_repeatedly(client):
+    """Un poste cloné doit pouvoir se RÉENRÔLER, pas seulement s'enrôler une fois.
+
+    Régression : son enregistrement est stocké sous un ``machine_id`` dérivé ; si
+    la recherche ne regarde que le MachineGuid nu, on tente de le recréer et la
+    contrainte UNIQUE explose (IntegrityError, HTTP 500) au deuxième enrôlement.
+    """
+    guid = "beef0000-0000-0000-0000-000000000001"
+    _enroll_raw(client, guid, "CLONE-PREMIER", hardware_id="UUID-P")
+    second = _enroll_raw(client, guid, "CLONE-SECOND", hardware_id="UUID-S")
+    assert second.status_code == 200
+    again = _enroll_raw(client, guid, "CLONE-SECOND", hardware_id="UUID-S")
+    assert again.status_code == 200, again.get_data(as_text=True)
+    assert again.get_json()["agent_id"] == second.get_json()["agent_id"]
+
+
 def test_same_machine_reenrolls_in_place(client):
     """Le MÊME poste (même empreinte) garde son enregistrement, jeton simplement renouvelé."""
     guid = "11111111-2222-3333-4444-555555555555"
@@ -1151,6 +1167,42 @@ def test_legacy_agent_without_fingerprint_adopts_it(client):
     # Une AUTRE machine au même MachineGuid obtient alors bien un enregistrement à part.
     other = _enroll_raw(client, guid, "POSTE-CLONE", hardware_id="UUID-AUTRE")
     assert other.get_json()["agent_id"] != legacy.get_json()["agent_id"]
+
+
+def test_agent_without_fingerprint_cannot_steal_an_identified_record(client):
+    """Un poste SANS empreinte (WMI hors service) ne vole pas le jeton d'un voisin.
+
+    Cas réel : un lot de machines clonées partage le MachineGuid ; sur l'une
+    d'elles WMI est cassé, donc elle n'envoie aucune empreinte. Sans cette règle
+    elle reprenait l'enregistrement d'un voisin déjà identifié et la boucle de
+    401 repartait de plus belle.
+    """
+    guid = "cafe0000-0000-0000-0000-000000000001"
+    identified = _enroll_raw(client, guid, "POSTE-IDENTIFIE", hardware_id="UUID-CONNU")
+    id_ok, tok_ok = identified.get_json()["agent_id"], identified.get_json()["agent_token"]
+
+    # Même MachineGuid, aucune empreinte, nom d'hôte différent.
+    blind = _enroll_raw(client, guid, "POSTE-SANS-WMI")
+    assert blind.status_code == 200
+    assert blind.get_json()["agent_id"] != id_ok
+
+    # Le jeton du poste identifié reste valide : personne ne le lui a pris.
+    r = client.post(f"/api/v1/agents/{id_ok}/heartbeat",
+                    json={"metrics": {"cpu_pct": 1}}, headers=_auth(tok_ok))
+    assert r.status_code == 200
+
+
+def test_blind_agent_keeps_one_stable_record(client):
+    """Le poste sans empreinte garde LE MÊME enregistrement à chaque enrôlement.
+
+    Le discriminant de repli est le nom d'hôte : sans lui, chaque réenrôlement
+    créerait un enregistrement de plus et le parc gonflerait indéfiniment.
+    """
+    guid = "cafe0000-0000-0000-0000-000000000002"
+    _enroll_raw(client, guid, "PREMIER", hardware_id="UUID-PREMIER")
+    a = _enroll_raw(client, guid, "AVEUGLE")
+    b = _enroll_raw(client, guid, "AVEUGLE")
+    assert a.get_json()["agent_id"] == b.get_json()["agent_id"]
 
 
 def test_enroll_without_fingerprint_unchanged(client):

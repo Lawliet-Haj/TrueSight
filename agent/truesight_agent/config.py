@@ -386,30 +386,48 @@ def get_hardware_id() -> str | None:
         _logger.debug("Empreinte matérielle indisponible (wmi absent : %s).", exc)
         return None
     try:
-        conn = wmi.WMI()
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("Connexion WMI impossible (%s) : pas d'empreinte matérielle.", exc)
-        return None
+        import pythoncom  # type: ignore
+    except Exception:  # noqa: BLE001
+        pythoncom = None  # type: ignore
 
-    for getter in (
-        lambda: next(iter(conn.Win32_ComputerSystemProduct()), None),
-        lambda: next(iter(conn.Win32_BIOS()), None),
-    ):
+    # WMI passe par COM, qui DOIT être initialisé dans le thread appelant :
+    # sans ce CoInitialize, wmi.WMI() lève et l'empreinte revenait toujours
+    # vide (constaté en production : les deux postes clonés restaient sans
+    # empreinte, donc la collision persistait). Même motif que collectors.py.
+    com_initialized = False
+    try:
+        if pythoncom is not None:
+            pythoncom.CoInitialize()
+            com_initialized = True
         try:
-            obj = getter()
-        except Exception:  # noqa: BLE001 - classe WMI indisponible.
-            continue
-        if obj is None:
-            continue
-        for attr in ("UUID", "SerialNumber"):
-            value = getattr(obj, attr, None)
+            conn = wmi.WMI()
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("Connexion WMI impossible (%s) : pas d'empreinte matérielle.", exc)
+            return None
+
+        for accessor, attr in (
+            ("Win32_ComputerSystemProduct", "UUID"),
+            ("Win32_BIOS", "SerialNumber"),
+        ):
+            try:
+                obj = next(iter(getattr(conn, accessor)()), None)
+            except Exception:  # noqa: BLE001 - classe WMI indisponible.
+                continue
+            value = getattr(obj, attr, None) if obj is not None else None
             if not value:
                 continue
             value = str(value).strip()
             if value.lower() in _BOGUS_HARDWARE_IDS:
+                _logger.debug("%s.%s écarté (valeur générique) : %s", accessor, attr, value)
                 continue
             return value
-    return None
+        return None
+    finally:
+        if com_initialized and pythoncom is not None:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def get_hostname() -> str:

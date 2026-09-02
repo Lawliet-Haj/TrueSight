@@ -27,6 +27,8 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.4.9 : l'empreinte materielle de 1.4.8 revenait toujours VIDE — WMI passe par
+# COM, qui doit etre initialise dans le thread appelant (CoInitialize manquant).
 # 1.4.8 : envoie une EMPREINTE MATERIELLE a l'enrolement (UUID SMBIOS / serie
 # BIOS). Deux postes clones partagent le meme MachineGuid : ils reclamaient le
 # meme enregistrement et se volaient le jeton en boucle (401 sans fin).
@@ -43,7 +45,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.4.8"
+__version__ = "1.4.9"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -70,6 +70,14 @@ class Agent(db.Model):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     machine_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
+    # Empreinte du MATÉRIEL (UUID SMBIOS / série BIOS), envoyée par l'agent.
+    # Le ``machine_id`` ci-dessus vient du MachineGuid du registre, qui est
+    # DUPLIQUÉ par un clonage d'image sans sysprep : deux postes physiques
+    # distincts réclamaient alors le même enregistrement et se volaient le jeton
+    # à chaque réenrôlement. Cette empreinte lève l'ambiguïté (cf. api_agent).
+    # Nulle pour les postes enrôlés avant son introduction : ils l'adoptent au
+    # premier réenrôlement.
+    hardware_id: Mapped[str | None] = mapped_column(Text, index=True)
     hostname: Mapped[str | None] = mapped_column(Text)
     # Nom convivial donné par l'admin (sinon on affiche le hostname).
     display_name: Mapped[str | None] = mapped_column(Text)

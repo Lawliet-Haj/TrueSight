@@ -184,12 +184,62 @@ def _remote_session_for_agent(agent: Agent, ws_path: str) -> dict | None:
     }
 
 
+def _find_agent_for_enroll(machine_id: str, hardware_id: str | None) -> Agent | None:
+    """Retrouve l'enregistrement du poste qui s'enrôle, ou None s'il est nouveau.
+
+    La clé historique est ``machine_id`` (le MachineGuid du registre). Problème :
+    ce GUID est **dupliqué par un clonage de disque sans sysprep**. Deux postes
+    physiques distincts réclamaient donc le même enregistrement, et comme chaque
+    enrôlement fait tourner le jeton, chacun invalidait celui de l'autre : boucle
+    de 401 sans fin. Constaté le 02/09/2026 sur deux postes clonés — 1702
+    enrôlements en 24 h et 1428 refus en 2 h sur un seul agent.
+
+    ``hardware_id`` (UUID SMBIOS / série BIOS) lève l'ambiguïté : il diffère bien
+    entre deux machines clonées. Ordre de recherche :
+
+      1. couple exact (machine_id, hardware_id) — le cas courant ;
+      2. enregistrement de ce machine_id dont l'empreinte n'est pas encore
+         renseignée : c'est un poste enrôlé avant cette évolution, il l'adopte ;
+      3. agent ancien qui n'envoie pas d'empreinte : comportement d'avant, à
+         l'identique (aucune régression pour le parc existant).
+
+    Sinon None : c'est une autre machine → nouvel enregistrement (l'appelant
+    dérive alors un ``machine_id`` distinct, la colonne étant UNIQUE).
+    """
+    base = db.session.query(Agent).filter(Agent.machine_id == machine_id)
+    if not hardware_id:
+        return base.order_by(Agent.enrolled_at.asc()).first()
+
+    exact = (
+        base.filter(Agent.hardware_id == hardware_id)
+        .order_by(Agent.enrolled_at.asc())
+        .first()
+    )
+    if exact is not None:
+        return exact
+
+    legacy = (
+        base.filter(Agent.hardware_id.is_(None))
+        .order_by(Agent.enrolled_at.asc())
+        .first()
+    )
+    if legacy is not None:
+        legacy.hardware_id = hardware_id  # adoption
+        return legacy
+    return None
+
+
 # --------------------------------------------------------------------------
 # 2.1 POST /enroll
 # --------------------------------------------------------------------------
 @bp.post("/enroll")
 def enroll():
-    """Enrôlement d'un poste. Idempotent sur ``machine_id`` (rotation du token si déjà connu)."""
+    """Enrôlement d'un poste : idempotent sur (``machine_id``, ``hardware_id``).
+
+    Rotation du jeton quand le poste est déjà connu. Deux postes clonés qui
+    partagent le même ``machine_id`` obtiennent des enregistrements DISTINCTS
+    (cf. ``_find_agent_for_enroll``).
+    """
     ip = request.remote_addr or "unknown"
     if _enroll_rate_limited(ip):
         return jsonify({"error": "trop de tentatives d'enrôlement"}), 429
@@ -208,15 +258,32 @@ def enroll():
     hostname = data.get("hostname")
     os_version = data.get("os_version")
     agent_version = data.get("agent_version")
+    raw_hardware = data.get("hardware_id")
+    hardware_id = raw_hardware.strip() if isinstance(raw_hardware, str) else None
+    hardware_id = hardware_id or None
 
     # Génère un nouveau token à chaque enrôlement (rotation).
     token = generate_agent_token()
     token_h = hash_token(token)
 
-    agent = db.session.query(Agent).filter_by(machine_id=machine_id).one_or_none()
+    agent = _find_agent_for_enroll(machine_id, hardware_id)
     if agent is None:
+        stored_machine_id = machine_id
+        if hardware_id and db.session.query(Agent.id).filter(
+            Agent.machine_id == machine_id
+        ).first() is not None:
+            # Le MachineGuid est déjà pris par une AUTRE machine physique (image
+            # clonée). La colonne étant UNIQUE, on stocke un identifiant dérivé ;
+            # les enrôlements suivants retrouvent ce poste par son empreinte.
+            stored_machine_id = f"{machine_id}#{hardware_id}"
+            current_app.logger.warning(
+                "Enrôlement : MachineGuid %s déjà utilisé par un autre matériel "
+                "(image clonée sans sysprep) — enregistrement distinct créé.",
+                machine_id,
+            )
         agent = Agent(
-            machine_id=machine_id,
+            machine_id=stored_machine_id,
+            hardware_id=hardware_id,
             hostname=hostname,
             os_version=os_version,
             agent_version=agent_version,
@@ -236,6 +303,8 @@ def enroll():
         agent.os_version = os_version or agent.os_version
         agent.agent_version = agent_version or agent.agent_version
         agent.token_hash = token_h
+        if hardware_id:
+            agent.hardware_id = hardware_id
 
     # Emplacement (installeur par site) : le poste indique son site via config.ini.
     # On l'affecte UNIQUEMENT s'il n'a pas déjà d'emplacement (ne pas écraser une

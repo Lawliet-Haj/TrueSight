@@ -49,12 +49,15 @@ def ensure_enrolled(
 def _perform_enroll(client: ApiClient, agent_config: cfg.AgentConfig) -> cfg.AgentState:
     """Effectue l'appel d'enrôlement et persiste l'état obtenu."""
     machine_id = cfg.get_machine_id()
+    # Empreinte matérielle : distingue deux postes clonés qui partagent le même
+    # MachineGuid (cf. cfg.get_hardware_id).
+    hardware_id = cfg.get_hardware_id() or ""
     hostname = cfg.get_hostname()
     os_version = cfg.get_os_version()
 
     _logger.info(
-        "Enrôlement en cours : hostname=%s, machine_id=%s, os=%s",
-        hostname, machine_id, os_version,
+        "Enrôlement en cours : hostname=%s, machine_id=%s, empreinte=%s, os=%s",
+        hostname, machine_id, hardware_id or "aucune", os_version,
     )
 
     result = client.enroll(
@@ -64,6 +67,7 @@ def _perform_enroll(client: ApiClient, agent_config: cfg.AgentConfig) -> cfg.Age
         os_version=os_version,
         agent_version=__version__,
         site=getattr(agent_config, "site", ""),
+        hardware_id=hardware_id,
     )
 
     if not result.ok:

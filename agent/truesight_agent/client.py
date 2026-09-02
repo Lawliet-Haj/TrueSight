@@ -251,11 +251,16 @@ class ApiClient:
         os_version: str,
         agent_version: str,
         site: str = "",
+        hardware_id: str = "",
     ) -> ApiResult:
         """POST /api/v1/enroll (aucune auth) → renvoie agent_id + agent_token.
 
         ``site`` (optionnel) : emplacement à pré-affecter au poste (installeur par
         site). Le serveur ne l'applique que si le poste n'a pas déjà un emplacement.
+
+        ``hardware_id`` (optionnel) : empreinte du matériel, qui lève l'ambiguïté
+        entre deux postes clonés partageant le même ``machine_id``. Omis, le
+        serveur garde son comportement historique.
         """
         body = {
             "enrollment_token": enrollment_token,
@@ -264,6 +269,8 @@ class ApiClient:
             "os_version": os_version,
             "agent_version": agent_version,
         }
+        if hardware_id:
+            body["hardware_id"] = hardware_id
         if site:
             body["site"] = site
         # /enroll : pas de Bearer ; 401 = token d'enrôlement invalide, on remonte

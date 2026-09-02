@@ -1074,6 +1074,93 @@ def test_publish_requires_superadmin(app, client, admin_session, tmp_path):
     assert r.status_code == 403
 
 
+def _enroll_raw(client, machine_id, hostname, hardware_id=None):
+    """Enrôlement brut : renvoie la réponse (pour tester les cas de collision)."""
+    body = {
+        "enrollment_token": TestConfig.ENROLLMENT_TOKEN,
+        "machine_id": machine_id,
+        "hostname": hostname,
+        "os_version": "Windows 11 Pro 26100",
+        "agent_version": "1.4.8",
+    }
+    if hardware_id:
+        body["hardware_id"] = hardware_id
+    return client.post("/api/v1/enroll", json=body)
+
+
+def test_clones_sharing_machine_guid_get_distinct_records(client):
+    """Deux postes CLONÉS (même MachineGuid, matériel différent) ne se volent plus le jeton.
+
+    Sans empreinte matérielle, le second enrôlement récupérait l'enregistrement
+    du premier et faisait tourner son jeton : chacun invalidait l'autre, boucle
+    de 401 sans fin (constaté sur deux postes réels, 1702 enrôlements en 24 h).
+    """
+    guid = "a4d88cf6-57e6-4a78-8ffe-cad551c2e3d8"  # MachineGuid dupliqué par le clonage
+    a = _enroll_raw(client, guid, "POSTE-A", hardware_id="UUID-MATERIEL-A")
+    b = _enroll_raw(client, guid, "POSTE-B", hardware_id="UUID-MATERIEL-B")
+    assert a.status_code == 200 and b.status_code == 200
+    id_a, tok_a = a.get_json()["agent_id"], a.get_json()["agent_token"]
+    id_b, tok_b = b.get_json()["agent_id"], b.get_json()["agent_token"]
+
+    # Enregistrements distincts...
+    assert id_a != id_b
+    # ...et SURTOUT : le jeton du premier reste valide après l'arrivée du second.
+    r_a = client.post(f"/api/v1/agents/{id_a}/heartbeat",
+                      json={"metrics": {"cpu_pct": 1}}, headers=_auth(tok_a))
+    r_b = client.post(f"/api/v1/agents/{id_b}/heartbeat",
+                      json={"metrics": {"cpu_pct": 2}}, headers=_auth(tok_b))
+    assert r_a.status_code == 200, "le poste A a perdu son jeton : la boucle de 401 revient"
+    assert r_b.status_code == 200
+
+
+def test_same_machine_reenrolls_in_place(client):
+    """Le MÊME poste (même empreinte) garde son enregistrement, jeton simplement renouvelé."""
+    guid = "11111111-2222-3333-4444-555555555555"
+    first = _enroll_raw(client, guid, "POSTE-X", hardware_id="UUID-X")
+    second = _enroll_raw(client, guid, "POSTE-X", hardware_id="UUID-X")
+    assert first.get_json()["agent_id"] == second.get_json()["agent_id"]
+    # Rotation : l'ancien jeton ne vaut plus rien.
+    old = first.get_json()["agent_token"]
+    r = client.post(f"/api/v1/agents/{first.get_json()['agent_id']}/heartbeat",
+                    json={"metrics": {"cpu_pct": 1}}, headers=_auth(old))
+    assert r.status_code == 401
+
+
+def test_renamed_machine_keeps_its_record(client):
+    """Un poste RENOMMÉ garde son enregistrement : c'est l'empreinte qui l'identifie.
+
+    Distinction essentielle avec le cas cloné : ici le matériel est le même, donc
+    on ne doit PAS créer de doublon (sinon chaque renommage polluerait le parc).
+    """
+    guid = "66666666-7777-8888-9999-000000000000"
+    before = _enroll_raw(client, guid, "ANCIEN-NOM", hardware_id="UUID-STABLE")
+    after = _enroll_raw(client, guid, "NOUVEAU-NOM", hardware_id="UUID-STABLE")
+    assert before.get_json()["agent_id"] == after.get_json()["agent_id"]
+    agents = client.get("/api/v1/agents")  # non authentifié : on vérifie juste l'absence de doublon
+    assert agents.status_code in (401, 403)
+
+
+def test_legacy_agent_without_fingerprint_adopts_it(client):
+    """Un poste enrôlé AVANT l'empreinte l'adopte à son réenrôlement, sans doublon."""
+    guid = "abcdef01-0000-0000-0000-000000000001"
+    legacy = _enroll_raw(client, guid, "POSTE-ANCIEN")  # aucune empreinte
+    assert legacy.status_code == 200
+    upgraded = _enroll_raw(client, guid, "POSTE-ANCIEN", hardware_id="UUID-ADOPTE")
+    assert upgraded.get_json()["agent_id"] == legacy.get_json()["agent_id"]
+
+    # Une AUTRE machine au même MachineGuid obtient alors bien un enregistrement à part.
+    other = _enroll_raw(client, guid, "POSTE-CLONE", hardware_id="UUID-AUTRE")
+    assert other.get_json()["agent_id"] != legacy.get_json()["agent_id"]
+
+
+def test_enroll_without_fingerprint_unchanged(client):
+    """Sans empreinte des deux côtés : comportement historique strictement identique."""
+    guid = "abcdef01-0000-0000-0000-000000000002"
+    first = _enroll_raw(client, guid, "POSTE-LEGACY-1")
+    second = _enroll_raw(client, guid, "POSTE-LEGACY-2")
+    assert first.get_json()["agent_id"] == second.get_json()["agent_id"]
+
+
 def test_heartbeat_advertises_update(app, client, admin_session, tmp_path):
     """Le heartbeat annonce agent_update pour un agent plus ancien, pas pour un à jour."""
     app.config["AGENT_RELEASE_DIR"] = str(tmp_path)

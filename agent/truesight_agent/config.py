@@ -355,6 +355,63 @@ def get_machine_id() -> str:
     return f"hostname:{get_hostname()}"
 
 
+# Valeurs d'UUID SMBIOS notoirement bidons livrees par certains fabricants :
+# elles seraient partagees par des milliers de machines, donc inutilisables.
+_BOGUS_HARDWARE_IDS = {
+    "",
+    "00000000-0000-0000-0000-000000000000",
+    "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "03000200-0400-0500-0006-000700080009",  # valeur d'exemple AMI tres repandue
+}
+
+
+def get_hardware_id() -> str | None:
+    """Empreinte du MATÉRIEL, indépendante de l'installation Windows.
+
+    Pourquoi elle existe : ``get_machine_id()`` renvoie le ``MachineGuid`` du
+    registre, qui est **dupliqué par un clonage de disque sans sysprep**. Deux
+    postes physiques distincts réclament alors le même enregistrement côté
+    serveur et se volent le jeton à chaque réenrôlement — boucle de 401 sans
+    fin (constaté sur deux postes : 1702 enrôlements en 24 h).
+
+    Cette empreinte, elle, diffère bien entre deux machines clonées :
+      1. ``Win32_ComputerSystemProduct.UUID`` (UUID SMBIOS) ;
+      2. repli sur ``Win32_BIOS.SerialNumber``.
+    Renvoie None si rien d'exploitable — le serveur retombe alors sur son
+    comportement historique (unicité sur le seul ``machine_id``).
+    """
+    try:
+        import wmi  # type: ignore
+    except Exception as exc:  # noqa: BLE001 - hors Windows / module absent.
+        _logger.debug("Empreinte matérielle indisponible (wmi absent : %s).", exc)
+        return None
+    try:
+        conn = wmi.WMI()
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("Connexion WMI impossible (%s) : pas d'empreinte matérielle.", exc)
+        return None
+
+    for getter in (
+        lambda: next(iter(conn.Win32_ComputerSystemProduct()), None),
+        lambda: next(iter(conn.Win32_BIOS()), None),
+    ):
+        try:
+            obj = getter()
+        except Exception:  # noqa: BLE001 - classe WMI indisponible.
+            continue
+        if obj is None:
+            continue
+        for attr in ("UUID", "SerialNumber"):
+            value = getattr(obj, attr, None)
+            if not value:
+                continue
+            value = str(value).strip()
+            if value.lower() in _BOGUS_HARDWARE_IDS:
+                continue
+            return value
+    return None
+
+
 def get_hostname() -> str:
     """Nom d'hôte du poste."""
     try:

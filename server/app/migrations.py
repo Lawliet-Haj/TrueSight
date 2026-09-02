@@ -25,6 +25,9 @@ def ensure_schema():
 
     statements = [
         "ALTER TABLE agents ADD COLUMN IF NOT EXISTS display_name text",
+        # Empreinte matérielle : distingue deux postes clonés au même MachineGuid.
+        "ALTER TABLE agents ADD COLUMN IF NOT EXISTS hardware_id text",
+        "CREATE INDEX IF NOT EXISTS ix_agents_hardware_id ON agents (hardware_id)",
         "ALTER TABLE agents ADD COLUMN IF NOT EXISTS site_id uuid",
         # Emplacement pré-affecté sur un lien d'installation (si la table existait
         # déjà d'un déploiement antérieur sans cette colonne).

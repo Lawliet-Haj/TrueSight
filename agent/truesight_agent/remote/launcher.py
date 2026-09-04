@@ -84,7 +84,8 @@ def is_session_zero() -> bool:
 
 
 def _helper_command(token: str, ws_url: str, kind: str = "remote",
-                    shell: str = "powershell", unattended: bool = False) -> list[str]:
+                    shell: str = "powershell", unattended: bool = False,
+                    operator: str = "") -> list[str]:
     """Construit la ligne de commande du helper à lancer dans la session active.
 
     - Exécutable figé (.exe) : ``truesight-agent.exe remote-helper --token .. --ws-url .. --kind ..``
@@ -97,6 +98,8 @@ def _helper_command(token: str, ws_url: str, kind: str = "remote",
     args = ["remote-helper", "--token", token, "--ws-url", ws_url, "--kind", kind]
     if kind == "terminal":
         args += ["--shell", shell]
+    if operator:
+        args += ["--operator", operator]
     if unattended:
         args += ["--unattended"]
     if cfg.is_frozen():
@@ -198,7 +201,8 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
             pass
 
 
-def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote", shell: str = "powershell") -> bool:
+def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
+                              shell: str = "powershell", operator: str = "") -> bool:
     """Lance le helper dans la session console active via CreateProcessAsUser.
 
     Renvoie True si le process a été créé. Tolérant : journalise et renvoie
@@ -238,7 +242,7 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote", she
             _logger.debug("CreateEnvironmentBlock indisponible (%s), env par défaut.", exc)
             environment = None
 
-        cmdline = _helper_command(token, ws_url, kind, shell)
+        cmdline = _helper_command(token, ws_url, kind, shell, operator=operator)
         # On reconstruit une ligne de commande citée correctement.
         cmdline_str = subprocess.list2cmdline(cmdline)
 
@@ -283,7 +287,8 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote", she
 
 
 def _run_session_inline(token: str, ws_url: str, verify_tls: bool,
-                        kind: str = "remote", shell: str = "powershell") -> None:
+                        kind: str = "remote", shell: str = "powershell",
+                        operator: str = "") -> None:
     """Exécute la session dans un thread du process courant (agent en session user).
 
     Dispatche selon ``kind`` : 'remote' (capture/injection) ou 'terminal' (shell PTY).
@@ -296,7 +301,7 @@ def _run_session_inline(token: str, ws_url: str, verify_tls: bool,
                 terminal_session.run(token, ws_url, shell=shell, verify_tls=verify_tls)
             else:
                 from . import session as remote_session
-                remote_session.run(token, ws_url, verify_tls=verify_tls)
+                remote_session.run(token, ws_url, verify_tls=verify_tls, operator=operator)
         except Exception as exc:  # noqa: BLE001
             _logger.error("Session inline interrompue : %s", exc)
 
@@ -305,7 +310,8 @@ def _run_session_inline(token: str, ws_url: str, verify_tls: bool,
 
 
 def start_session(token: str, ws_url: str, verify_tls: bool = True,
-                  kind: str = "remote", shell: str = "powershell") -> bool:
+                  kind: str = "remote", shell: str = "powershell",
+                  operator: str = "") -> bool:
     """Démarre une session distante (bureau à distance OU terminal).
 
     - En session 0 (service SYSTEM) : lance un helper dans la session console
@@ -327,14 +333,15 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
             # 1) Compagnon en session utilisateur (fiable pour terminal ET bureau).
             from .. import companion
             payload = {"token": token, "ws_url": ws_url, "kind": kind,
-                       "shell": shell, "verify_tls": verify_tls}
+                       "shell": shell, "verify_tls": verify_tls,
+                       "operator": operator}
             if companion.send_session_request(payload):
                 _logger.info("Service en session 0 : session %s confiée au compagnon utilisateur.", kind)
                 return True
             # 2) Repli : helper CreateProcessAsUser dans la session de l'utilisateur
             #    connecté (bureau à distance OK ; terminal peu fiable).
             _logger.info("Compagnon indisponible : repli sur le helper utilisateur (kind=%s).", kind)
-            if _launch_in_active_session(token, ws_url, kind, shell):
+            if _launch_in_active_session(token, ws_url, kind, shell, operator=operator):
                 return True
             # 3) Repli NON-ASSISTÉ : aucun utilisateur connecté (écran de connexion /
             #    verrouillage) → helper SYSTEM attaché au bureau d'entrée actif.
@@ -345,7 +352,7 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
             _logger.warning("Session %s non démarrée (aucune session utilisateur, non-assisté indisponible).", kind)
             return False
         _logger.info("Session utilisateur : exécution directe de la session (kind=%s).", kind)
-        _run_session_inline(token, ws_url, verify_tls, kind, shell)
+        _run_session_inline(token, ws_url, verify_tls, kind, shell, operator=operator)
         return True
     except Exception as exc:  # noqa: BLE001 - filet ultime.
         _logger.error("Démarrage de la session distante échoué : %s", exc)

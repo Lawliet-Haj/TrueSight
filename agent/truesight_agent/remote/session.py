@@ -93,10 +93,13 @@ class RemoteSession:
     """Pilote une session de bureau à distance jusqu'à sa fermeture."""
 
     def __init__(self, token: str, ws_url: str, verify_tls: bool = True,
-                 desktop_follow: bool = False) -> None:
+                 desktop_follow: bool = False, operator: str = "") -> None:
         self.token = token
         self.ws_url = ws_url
         self.verify_tls = verify_tls
+        # Nom de l'administrateur qui prend la main (transmis par le serveur) :
+        # affiché dans le bandeau de confidentialité sur le poste.
+        self.operator = operator or ""
         # Mode NON-ASSISTÉ : la capture ET l'injection suivent le bureau d'entrée
         # actif (Default ↔ Winlogon). Activé par le helper SYSTEM (--unattended).
         self._desktop_follow = desktop_follow
@@ -116,6 +119,7 @@ class RemoteSession:
         self._input_locked = False            # saisie physique locale bloquée (BlockInput)
         self._lock_on_disconnect = False      # verrouiller le poste en fin de session
         self._privacy = None                  # PrivacyScreen (voile noir local) ou None
+        self._notice = None                   # SessionNotice (bandeau visible par l'utilisateur)
         # Écoute audio (son système du poste) : capture à la demande du viewer.
         self._audio = None                    # AudioCapture ou None
         self._audio_thread: threading.Thread | None = None
@@ -822,6 +826,19 @@ class RemoteSession:
             return
         if msg_type == "request_keyframe":
             self._capturer.request_keyframe()
+            # On REJOUE aussi les métadonnées (liste des écrans, utilisateur).
+            # Elles ne sont envoyées qu'une fois, juste après la connexion de
+            # l'agent — et le relais JETTE tout message dont le pair n'est pas
+            # encore connecté. Quand l'agent s'enregistre avant le viewer (ordre
+            # observé une fois sur deux dans les journaux du relais), la liste
+            # des écrans était donc perdue et le sélecteur n'apparaissait jamais.
+            # Le viewer demande toujours une keyframe à l'ouverture : ce point de
+            # passage est le bon endroit pour la renvoyer.
+            self._send_metadata()
+            return
+        if msg_type == "request_monitors":
+            # Demande explicite du viewer (viewers récents).
+            self._send_metadata()
             return
         if msg_type == "set_monitor":
             self._capturer.set_monitor(data.get("i", 0))
@@ -910,6 +927,12 @@ class RemoteSession:
         # Infos de confort au viewer (écrans + utilisateur connecté).
         self._send_metadata()
 
+        # CONFIDENTIALITÉ : la personne devant le poste doit voir qu'on regarde
+        # son écran. Uniquement en mode assisté — en non-assisté il n'y a
+        # personne devant l'écran (session verrouillée / écran de connexion).
+        if not self._desktop_follow:
+            self._start_notice()
+
         # Thread d'envoi (trames) ; la boucle principale reçoit les entrées.
         send_target = self._send_loop_unattended if self._desktop_follow else self._send_loop
         self._send_thread = threading.Thread(
@@ -928,9 +951,37 @@ class RemoteSession:
         finally:
             self._teardown()
 
+    def _start_notice(self) -> None:
+        """Affiche le bandeau « assistance à distance en cours » sur le poste."""
+        try:
+            from . import notice as notice_mod
+            banner = notice_mod.SessionNotice(notice_mod.build_text(self.operator))
+            if banner.start():
+                self._notice = banner
+                _logger.info("Bandeau de prise en main affiché (opérateur : %s).",
+                             self.operator or "non communiqué")
+            else:
+                # Volontairement en WARNING : l'utilisateur du poste n'est alors
+                # PAS informé qu'on regarde son écran. Ça doit se voir.
+                _logger.warning(
+                    "Bandeau de prise en main NON affiché : l'utilisateur du poste "
+                    "n'est pas informé de la session."
+                )
+        except Exception as exc:  # noqa: BLE001 - jamais fatal pour la session.
+            _logger.warning("Bandeau de prise en main impossible : %s", exc)
+
     def _teardown(self) -> None:
         """Ferme proprement : libère le contrôle exclusif, ferme la WebSocket, joint les threads."""
         self._stop.set()
+
+        # Retire le bandeau : il ne doit JAMAIS survivre à la session (sinon il
+        # affirmerait à tort que quelqu'un regarde l'écran).
+        if self._notice is not None:
+            try:
+                self._notice.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._notice = None
 
         # Libère tout contrôle exclusif éventuellement posé pendant la session,
         # AVANT de fermer (sinon le poste resterait clavier/souris bloqués).
@@ -980,7 +1031,8 @@ class RemoteSession:
         _logger.info("Session de bureau à distance terminée.")
 
 
-def run(token: str, ws_url: str, verify_tls: bool = True, desktop_follow: bool = False) -> int:
+def run(token: str, ws_url: str, verify_tls: bool = True, desktop_follow: bool = False,
+        operator: str = "") -> int:
     """Point d'entrée de la session (utilisé par le helper et le mode console).
 
     ``desktop_follow`` (mode non-assisté) : la capture/injection suivent le bureau
@@ -993,7 +1045,8 @@ def run(token: str, ws_url: str, verify_tls: bool = True, desktop_follow: bool =
         _logger.error("Session impossible : token ou ws_url manquant.")
         return 1
     try:
-        session = RemoteSession(token, ws_url, verify_tls=verify_tls, desktop_follow=desktop_follow)
+        session = RemoteSession(token, ws_url, verify_tls=verify_tls,
+                                desktop_follow=desktop_follow, operator=operator)
         session.run()
         return 0
     except Exception as exc:  # noqa: BLE001 - filet ultime.

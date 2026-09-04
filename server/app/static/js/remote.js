@@ -447,6 +447,10 @@
       // Applique le mode de fluidité choisi (qualité + cadence + largeur) puis
       // demande une keyframe pleine trame.
       applyPreset(currentPreset);
+      // Demande explicitement la liste des écrans : l'agent ne l'envoie qu'une
+      // fois, à sa connexion, et le relais la JETTE si notre socket n'est pas
+      // encore appariée — d'où un sélecteur d'écran absent une fois sur deux.
+      sendInput({ t: "request_monitors" });
     };
 
     ws.onmessage = function (ev) {

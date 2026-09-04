@@ -127,6 +127,7 @@ def _dispatch(msg: dict) -> None:
     ws_url = msg.get("ws_url")
     kind = (msg.get("kind") or "remote").lower()
     shell = (msg.get("shell") or "powershell").lower()
+    operator = (msg.get("operator") or "").strip()
     verify_tls = bool(msg.get("verify_tls", True))
     if not token or not ws_url:
         _logger.warning("Demande de session compagnon incomplète, ignorée.")
@@ -139,7 +140,7 @@ def _dispatch(msg: dict) -> None:
                 terminal_session.run(token, ws_url, shell=shell, verify_tls=verify_tls)
             else:
                 from .remote import session as remote_session
-                remote_session.run(token, ws_url, verify_tls=verify_tls)
+                remote_session.run(token, ws_url, verify_tls=verify_tls, operator=operator)
         except Exception as exc:  # noqa: BLE001 - jamais fatal pour le compagnon.
             _logger.error("Session compagnon (%s) interrompue : %s", kind, exc)
 

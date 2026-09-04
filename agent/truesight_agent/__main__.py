@@ -98,6 +98,9 @@ def _run_remote_helper(argv: list[str]) -> int:
                         help="Type de session : 'remote' (bureau) ou 'terminal' (shell PTY).")
     parser.add_argument("--shell", default="powershell", choices=["powershell", "cmd"],
                         help="Shell à lancer si --kind terminal.")
+    parser.add_argument("--operator", default="",
+                        help="Nom de l'administrateur : affiché sur le poste "
+                             "pendant la prise en main (bandeau de confidentialité).")
     parser.add_argument("--unattended", action="store_true",
                         help="Mode non-assisté : suit le bureau d'entrée (helper SYSTEM, écran de connexion).")
     # argv[2:] : on saute le nom du programme et la sous-commande 'remote-helper'.
@@ -158,7 +161,8 @@ def _run_remote_helper(argv: list[str]) -> int:
         _hlog.info("Capture disponible : mss=%s, DXGI=%s, audio=%s ; non-assisté=%s.",
                    remote_capture.is_available(), _dxgi_ok, _audio_ok, args.unattended)
         rc = remote_session.run(args.token, args.ws_url, verify_tls=verify_tls,
-                                desktop_follow=args.unattended)
+                                desktop_follow=args.unattended,
+                                operator=getattr(args, "operator", ""))
         # Si la capture DXGI (comtypes) a été utilisée, le GC de comtypes crashe à
         # la finalisation (access violation). Le helper étant mono-usage (la
         # session est terminée), on sort « dur » via os._exit() pour court-circuiter

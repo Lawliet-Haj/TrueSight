@@ -346,6 +346,26 @@ def test_remote_session_create_by_admin(client, admin_session):
     assert status.get_json()["status"] == "requested"
 
 
+def test_remote_session_payload_names_the_operator(client, admin_session):
+    """La signalisation nomme l'admin : l'agent l'affiche sur le poste (confidentialité).
+
+    La personne assise devant l'écran doit pouvoir voir QUI le regarde, pas
+    seulement qu'une session est en cours.
+    """
+    agent_id, token = _enroll(client, "MACHINE-OPERATEUR")
+    created = admin_session.post(f"/api/v1/agents/{agent_id}/remote-session")
+    assert created.status_code == 201
+
+    hb = client.post(
+        f"/api/v1/agents/{agent_id}/heartbeat",
+        json={"metrics": {"cpu_pct": 1}},
+        headers=_auth(token),
+    )
+    payload = hb.get_json()["remote_session"]
+    assert payload is not None, "la session n'a pas été signalée à l'agent"
+    assert payload["operator"] == TestConfig.ADMIN_EMAIL, payload
+
+
 def test_remote_session_requires_admin(client):
     """Créer une session de bureau à distance sans session admin est refusé (401/403)."""
     agent_id, _ = _enroll(client, "MACHINE-REMOTE-NOADMIN")

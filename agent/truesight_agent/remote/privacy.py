@@ -25,10 +25,14 @@ from ctypes import wintypes
 
 _logger = logging.getLogger("truesight.remote.privacy")
 
+# Instances PRIVÉES : ``ctypes.windll.user32`` est un objet PARTAGÉ et mis en
+# cache, donc y déclarer des ``argtypes`` les impose à tout le process — et
+# ``notice.py`` déclare les siennes sur les mêmes fonctions avec ses propres
+# structures. Les deux modules s'écrasaient mutuellement.
 try:
-    _user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-    _gdi32 = ctypes.windll.gdi32  # type: ignore[attr-defined]
-    _kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+    _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)  # type: ignore[attr-defined]
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     _WIN = True
 except (AttributeError, OSError):  # pragma: no cover - hors Windows.
     _user32 = _gdi32 = _kernel32 = None  # type: ignore
@@ -79,6 +83,17 @@ if _WIN:
             wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
         ]
         _user32.CreateWindowExW.restype = wintypes.HWND
+        # argtypes OBLIGATOIRES : sans elles, ctypes déduit les types des valeurs
+        # et tente de faire tenir hInstance (handle 64 bits) — ainsi que le style
+        # WS_POPUP = 0x80000000 — dans un ``c_int`` signé 32 bits, d'où
+        # « OverflowError: int too long to convert » : la fenêtre n'était JAMAIS
+        # créée et l'écran de confidentialité restait inopérant. Constaté le
+        # 02/09/2026 en écrivant notice.py, qui souffrait du même défaut.
+        _user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        ]
         _user32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASS)]
         _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
         _gdi32.GetStockObject.restype = wintypes.HGDIOBJ

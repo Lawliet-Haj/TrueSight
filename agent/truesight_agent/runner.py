@@ -188,6 +188,8 @@ class AgentRunner:
         ws_url = remote_session.get("ws_url")
         kind = (remote_session.get("kind") or "remote").lower()
         shell = (remote_session.get("shell") or "powershell").lower()
+        # Qui prend la main : affiché sur le poste (bandeau de confidentialité).
+        operator = (remote_session.get("operator") or "").strip()
         if not session_id or not token:
             _logger.warning("Demande de session distante incomplète, ignorée : %s",
                             {k: ("***" if k == "token" else v) for k, v in remote_session.items()})
@@ -216,7 +218,8 @@ class AgentRunner:
             # ÉCRAN mais aussi pour le TERMINAL (ConPTY peu fiable en session 0).
             from .remote import launcher as remote_launcher
             started = remote_launcher.start_session(
-                token, ws_url, verify_tls=self.config.verify_tls, kind=kind, shell=shell
+                token, ws_url, verify_tls=self.config.verify_tls, kind=kind, shell=shell,
+                operator=operator,
             )
             if not started:
                 _logger.warning("Session distante %s non démarrée.", session_id)

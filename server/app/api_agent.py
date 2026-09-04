@@ -23,6 +23,7 @@ from .models import (
     RemoteSession,
     Site,
     SoftwareInventory,
+    User,
 )
 from .models import utcnow
 from .security import (
@@ -181,7 +182,18 @@ def _remote_session_for_agent(agent: Agent, ws_path: str) -> dict | None:
         "ws_url": f"{_ws_base_url()}{ws_path}?token={token}",
         "kind": sess.kind,
         "shell": sess.shell,
+        # Qui prend la main : l'agent l'affiche dans un bandeau sur le poste, pour
+        # que la personne présente devant l'écran sache QUI le regarde.
+        "operator": _operator_label(sess),
     }
+
+
+def _operator_label(sess: RemoteSession) -> str:
+    """Nom de l'administrateur à l'origine de la session (vide si inconnu)."""
+    if sess.admin_user_id is None:
+        return ""
+    user = db.session.get(User, sess.admin_user_id)
+    return (user.email if user is not None else "") or ""
 
 
 def _find_agent_for_enroll(machine_id: str, hardware_id: str | None,

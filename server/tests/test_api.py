@@ -346,6 +346,39 @@ def test_remote_session_create_by_admin(client, admin_session):
     assert status.get_json()["status"] == "requested"
 
 
+def test_remote_window_page_renders_for_admin(client, admin_session):
+    """La fenêtre dédiée s'ouvre pour un admin et contient bien le panneau distant."""
+    agent_id, _ = _enroll(client, "MACHINE-FENETRE")
+    r = admin_session.get(f"/agents/{agent_id}/remote")
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    html = r.get_data(as_text=True)
+    # Le gabarit partagé est bien inclus (mêmes identifiants que l'onglet).
+    assert 'id="pv-remote-canvas"' in html
+    assert 'id="remote-start"' in html
+    # Mise en page « seule à l'écran » + agent transmis au JS.
+    assert "solo-remote" in html
+    assert agent_id in html
+
+
+def test_remote_window_requires_admin(app, client, admin_session):
+    """Un compte lecture seule n'ouvre pas la fenêtre de prise en main."""
+    agent_id, _ = _enroll(client, "MACHINE-FENETRE-RO")
+    admin_session.post(
+        "/api/v1/users",
+        json={"email": "ro@medicofi.fr", "password": "lecture12345", "role": "viewer"},
+    )
+    viewer = _new_session(app, "ro@medicofi.fr", "lecture12345")
+    r = viewer.get(f"/agents/{agent_id}/remote")
+    assert r.status_code in (302, 403), r.status_code
+
+
+def test_remote_window_unknown_agent_is_404(client, admin_session):
+    """Poste inconnu → 404 (et non une page vide qui attendrait une session)."""
+    import uuid as _u
+    assert admin_session.get(f"/agents/{_u.uuid4()}/remote").status_code == 404
+    assert admin_session.get("/agents/pas-un-uuid/remote").status_code == 404
+
+
 def test_remote_session_payload_names_the_operator(client, admin_session):
     """La signalisation nomme l'admin : l'agent l'affiche sur le poste (confidentialité).
 

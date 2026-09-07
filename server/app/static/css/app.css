@@ -817,3 +817,52 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 @media (prefers-reduced-motion:reduce){
   *{animation:none !important;transition:none !important}
 }
+
+/* ============================================================================
+   Fenêtre DÉDIÉE à la prise en main (remote_window.html, body.solo-remote)
+   ----------------------------------------------------------------------------
+   Même panneau que l'onglet de la fiche, mais seul à l'écran : on efface le rail
+   de navigation, la barre du haut et la barre d'état pour que l'écran distant
+   occupe toute la fenêtre. Rien de tout cela n'affecte les autres pages.
+   ========================================================================== */
+body.solo-remote .rail,
+body.solo-remote .topbar,
+body.solo-remote .statusbar,
+body.solo-remote .solo-hide { display: none; }
+
+body.solo-remote .app,
+body.solo-remote .main { height: 100vh; min-height: 0; }
+
+body.solo-remote .scroll {
+  padding: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Le panneau prend toute la hauteur restante, et l'écran distant tout l'espace. */
+body.solo-remote .rwin {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+body.solo-remote .rscreen { flex: 1 1 auto; min-height: 0; }
+
+/* Bandeau d'identification du poste, propre à cette fenêtre. */
+.solo-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+  flex: 0 0 auto;
+}
+.solo-head .solo-title { font-weight: 600; letter-spacing: .02em; }
+.solo-head .solo-back { margin-left: auto; font-size: 12px; opacity: .75; }
+.solo-head .solo-back:hover { opacity: 1; }

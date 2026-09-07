@@ -21,7 +21,7 @@
 
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
-<body{% if not (user is defined and user) %} class="auth-body"{% endif %}>
+<body class="{% block body_class %}{% endblock %}{% if not (user is defined and user) %} auth-body{% endif %}">
 
 {% if user is defined and user %}
 {# ========================= Application (utilisateur connecté) ========================= #}

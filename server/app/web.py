@@ -11,6 +11,7 @@ from threading import Lock
 import pyotp
 from flask import (
     Blueprint,
+    abort,
     current_app,
     flash,
     g,
@@ -265,6 +266,37 @@ def agent_detail_page(agent_id):
         ai_enabled=is_admin and bool((current_app.config.get("OPENAI_API_KEY") or "").strip()),
         tab_order=user_tab_order(g.user),
         not_found=False,
+    )
+
+
+@bp.get("/agents/<agent_id>/remote")
+@admin_required
+def agent_remote_window(agent_id):
+    """Prise en main d'un poste dans une FENÊTRE DÉDIÉE.
+
+    Même panneau que l'onglet de la fiche (gabarit partagé), mais seul à l'écran :
+    on garde la session distante devant soi sans la mêler au reste du dashboard,
+    et on peut travailler sur la fiche du poste dans une autre fenêtre pendant
+    que la prise en main continue.
+
+    Réservée aux administrateurs : c'est la même prérogative que la prise en main
+    elle-même (POST /agents/<id>/remote-session).
+    """
+    try:
+        aid = uuid.UUID(str(agent_id))
+    except (ValueError, TypeError):
+        abort(404)
+
+    agent = db.session.get(Agent, aid)
+    if agent is None:
+        abort(404)
+
+    return render_template(
+        "remote_window.html",
+        user=g.user,
+        agent_id=str(agent.id),
+        agent_hostname=agent.hostname or str(agent.id),
+        is_admin=True,
     )
 
 

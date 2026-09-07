@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{# Fenêtre DÉDIÉE à la prise en main d'un poste.
+   Même panneau que l'onglet de la fiche (_remote_panel.html), mais seul à
+   l'écran : rail de navigation, barre du haut et barre d'état sont masqués par
+   la classe « solo-remote » (cf. app.css), pour que l'écran distant occupe
+   toute la fenêtre. Ouverte par le bouton « Fenêtre dédiée » de la fiche. #}
+{% block title %}{{ agent_hostname }} — prise en main{% endblock %}
+{% block body_class %}solo-remote{% endblock %}
+
+{% block content %}
+  <div id="page-data"
+       data-agent-id="{{ agent_id }}"
+       data-is-admin="{{ '1' if is_admin else '0' }}"
+       data-ai-enabled="0"
+       data-tab-order='[]'
+       class="hidden"></div>
+
+  <div class="solo-head">
+    <span class="solo-title">{{ agent_hostname }}</span>
+    <a class="solo-back" href="{{ url_for('web.agent_detail_page', agent_id=agent_id) }}"
+       target="_blank" rel="noopener">Fiche du poste</a>
+  </div>
+
+  {% include "_remote_panel.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/remote.js') }}"></script>
+{% endblock %}

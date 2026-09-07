@@ -24,6 +24,7 @@
   var elStop = document.getElementById("remote-stop");
   var elControl = document.getElementById("remote-control");
   var elFull = document.getElementById("remote-fullscreen");
+  var elWindow = document.getElementById("remote-window");
   var elShot = document.getElementById("remote-shot");
   var elScreen = document.getElementById("remote-screen");
   var elCanvas = document.getElementById("pv-remote-canvas");
@@ -94,6 +95,23 @@
   var lastFrameAt = 0;
   var pingTimer = null;
   var lastPingSentAt = 0;
+
+  // --- Souris : regroupement des déplacements + curseur prédit localement ---
+  // Le navigateur émet 60 à 240 « mousemove » par seconde. En envoyer un message
+  // chacun saturait la voie viewer → agent, et chaque message dispute au flux
+  // d'images le verrou de la socket côté agent : l'image saccadait DÈS qu'on
+  // bougeait la souris. On n'envoie donc au plus qu'une position par trame
+  // d'affichage (~60/s), en ne gardant que la DERNIÈRE — les positions
+  // intermédiaires n'apportent rien au pointage.
+  var pendingMove = null;
+  var moveRaf = 0;
+  var lastSentMove = null;
+  // Le curseur affiché venait de l'ÉCHO de l'agent, donc en retard d'un
+  // aller-retour complet : c'est ce décalage qu'on ressent comme un manque de
+  // fluidité. Pendant qu'on a le contrôle, on le dessine tout de suite à la
+  // position locale, et on ignore l'écho le temps de cette fenêtre.
+  var localCursorUntil = 0;
+  var LOCAL_CURSOR_HOLD_MS = 500;
 
   // --- Fluidité : presets de flux + mode Auto adaptatif (selon la latence) ---
   // q = qualité JPEG, fps = cadence cible, w = largeur max (0 = pleine résolution).
@@ -306,6 +324,15 @@
 
   function setControlling(on) {
     controlling = on;
+    // Quand on pilote, le curseur est dessiné localement : inutile que l'agent
+    // nous renvoie sa position 25 fois par seconde, ces messages ne faisaient
+    // que disputer la socket aux trames d'écran. En observation, au contraire,
+    // c'est la seule façon de voir bouger la souris de l'utilisateur du poste.
+    sendInput({ t: "set_cursor_reports", on: !on });
+    if (!on) {
+      // On rend la main : l'écho de l'agent redevient la source du curseur.
+      localCursorUntil = 0;
+    }
     if (on) {
       elCanvas.classList.add("controlling");
       elControl.classList.add("go");
@@ -670,7 +697,13 @@
     } else if (msg.t === "user" && elUser) {
       elUser.textContent = msg.name || "—";
     } else if (msg.t === "cursor") {
-      updateCursor(msg.x, msg.y, msg.v);
+      // Pendant qu'on pilote, la position LOCALE fait foi : appliquer l'écho de
+      // l'agent ferait sauter le curseur en arrière d'un aller-retour. Hors
+      // contrôle (observation), l'écho est au contraire la seule source — il
+      // montre la souris de l'utilisateur du poste.
+      if (Date.now() >= localCursorUntil) {
+        updateCursor(msg.x, msg.y, msg.v);
+      }
     } else if (msg.t === "lock_state") {
       // Confirmation agent : la saisie locale est (dé)verrouillée.
       lockInputOn = !!msg.on;
@@ -859,6 +892,29 @@
   // ---------------------------------------------------------------------------
   // Envoi : entrées viewer→agent (JSON texte, coords normalisées 0..1)
   // ---------------------------------------------------------------------------
+  // Empile une position et programme son envoi à la prochaine trame d'affichage.
+  function queueMouseMove(c) {
+    pendingMove = c;
+    if (moveRaf) return;
+    moveRaf = requestAnimationFrame(flushMouseMove);
+  }
+
+  function flushMouseMove() {
+    moveRaf = 0;
+    var c = pendingMove;
+    pendingMove = null;
+    if (!c) return;
+    // Position inchangée : rien à envoyer (souris immobile mais événements qui
+    // continuent d'arriver, cas fréquent avec une souris à haute fréquence).
+    if (lastSentMove
+        && Math.abs(c.x - lastSentMove.x) < 0.0005
+        && Math.abs(c.y - lastSentMove.y) < 0.0005) {
+      return;
+    }
+    lastSentMove = c;
+    sendInput({ t: "mouse_move", x: c.x, y: c.y });
+  }
+
   function sendInput(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       try { ws.send(JSON.stringify(obj)); } catch (e) { /* ignore */ }
@@ -900,7 +956,10 @@
     elCanvas.addEventListener("mousemove", function (ev) {
       if (!controlling) return;
       var c = normCoords(ev);
-      sendInput({ t: "mouse_move", x: c.x, y: c.y });
+      // Retour visuel IMMÉDIAT : aucun aller-retour réseau dans la boucle.
+      localCursorUntil = Date.now() + LOCAL_CURSOR_HOLD_MS;
+      updateCursor(c.x, c.y, true);
+      queueMouseMove(c);
     });
 
     elCanvas.addEventListener("mousedown", function (ev) {
@@ -1069,6 +1128,27 @@
   // pour une reconnexion (boutons et compteur non réinitialisés).
   elStart.addEventListener("click", function () { startSession(false); });
   elStop.addEventListener("click", stopSession);
+
+  // Fenêtre dédiée : la prise en main sort du dashboard et occupe sa propre
+  // fenêtre, dimensionnée à l'écran disponible. Le nom de fenêtre dépend du
+  // poste, donc rappuyer sur le bouton REVIENT à la fenêtre déjà ouverte pour ce
+  // poste au lieu d'en empiler une deuxième.
+  if (elWindow) {
+    elWindow.addEventListener("click", function () {
+      var w = Math.max(900, Math.round((window.screen.availWidth || 1440) * 0.9));
+      var h = Math.max(600, Math.round((window.screen.availHeight || 900) * 0.9));
+      var features = "noopener,width=" + w + ",height=" + h
+        + ",left=" + Math.max(0, Math.round(((window.screen.availWidth || w) - w) / 2))
+        + ",top=" + Math.max(0, Math.round(((window.screen.availHeight || h) - h) / 2));
+      var win = window.open("/agents/" + AGENT_ID + "/remote",
+                            "truesight-remote-" + AGENT_ID, features);
+      if (win) {
+        win.focus();
+      } else if (window.TS && TS.toast) {
+        TS.toast("Le navigateur a bloqué la fenêtre : autorisez les pop-ups pour ce site.", "error");
+      }
+    });
+  }
 
   elControl.addEventListener("click", function () {
     if (elControl.disabled) return;

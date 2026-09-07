@@ -120,6 +120,11 @@ class RemoteSession:
         self._lock_on_disconnect = False      # verrouiller le poste en fin de session
         self._privacy = None                  # PrivacyScreen (voile noir local) ou None
         self._notice = None                   # SessionNotice (bandeau visible par l'utilisateur)
+        # Remontée de la position du curseur (agent → viewer). Le viewer la coupe
+        # pendant qu'il PILOTE : il dessine alors son curseur localement, donc ces
+        # ~25 messages/s ne servaient plus à rien — ils prenaient juste le verrou
+        # de la socket au détriment des trames d'écran.
+        self._cursor_reports = True
         # Écoute audio (son système du poste) : capture à la demande du viewer.
         self._audio = None                    # AudioCapture ou None
         self._audio_thread: threading.Thread | None = None
@@ -437,6 +442,10 @@ class RemoteSession:
         try:
             while not self._should_stop():
                 loop_start = time.monotonic()
+                if not self._cursor_reports:
+                    # Coupé par le viewer : on dort sans rien émettre.
+                    time.sleep(interval)
+                    continue
                 idx = self._capturer.monitor_index
                 # Géométrie du moniteur courant : rafraîchie au changement / ~1 s.
                 if geo is None or idx != geo_idx or (loop_start - geo_at) > 1.0:
@@ -839,6 +848,11 @@ class RemoteSession:
         if msg_type == "request_monitors":
             # Demande explicite du viewer (viewers récents).
             self._send_metadata()
+            return
+        if msg_type == "set_cursor_reports":
+            # Le viewer coupe la remontée du curseur quand il pilote (il prédit
+            # la position localement) et la rétablit en mode observation.
+            self._cursor_reports = bool(data.get("on", True))
             return
         if msg_type == "set_monitor":
             self._capturer.set_monitor(data.get("i", 0))

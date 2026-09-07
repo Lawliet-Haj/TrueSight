@@ -113,6 +113,14 @@
   var localCursorUntil = 0;
   var LOCAL_CURSOR_HOLD_MS = 500;
 
+  // --- Presse-papiers TRANSPARENT (Ctrl+V / Ctrl+C) ---
+  // Codes de touches virtuelles Windows, pour rejouer la combinaison sur le poste.
+  var VK_CONTROL = 17, VK_V = 86, VK_C = 67, VK_X = 88;
+  // Vrai quand un « clip_get » a été déclenché automatiquement par un Ctrl+C :
+  // on récupère alors le presse-papiers du poste SANS ouvrir le panneau, pour ne
+  // pas interrompre le dépannage à chaque copie.
+  var clipAutoPull = false;
+
   // --- Fluidité : presets de flux + mode Auto adaptatif (selon la latence) ---
   // q = qualité JPEG, fps = cadence cible, w = largeur max (0 = pleine résolution).
   var PRESETS = {
@@ -749,6 +757,11 @@
         fsStartNextUpload();
       }
       if (msg.id && fsDownloads[msg.id]) delete fsDownloads[msg.id];
+    } else if (msg.t === "clip" && clipAutoPull) {
+      // Déclenché par un Ctrl+C sur le poste : on dépose discrètement chez nous,
+      // sans ouvrir le panneau ni afficher de message.
+      clipAutoPull = false;
+      if (msg.text) copyToLocalClipboard(msg.text);
     } else if (msg.t === "clip") {
       // Presse-papiers du poste reçu : on le montre ET on tente de le copier
       // localement (writeText est autorisé sur geste utilisateur, ce qui est le cas).
@@ -915,6 +928,16 @@
     sendInput({ t: "mouse_move", x: c.x, y: c.y });
   }
 
+  // Rejoue Ctrl+V sur le poste. Séquence complète (Ctrl bas → V → Ctrl haut)
+  // plutôt que la seule touche V : l'état des modificateurs sur le poste ne
+  // dépend ainsi pas du moment où l'utilisateur relâche réellement Ctrl.
+  function sendRemoteCombo(vk, unicode) {
+    sendInput({ t: "key_down", vk: VK_CONTROL });
+    sendInput({ t: "key_down", vk: vk, unicode: unicode });
+    sendInput({ t: "key_up", vk: vk, unicode: unicode });
+    sendInput({ t: "key_up", vk: VK_CONTROL });
+  }
+
   function sendInput(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       try { ws.send(JSON.stringify(obj)); } catch (e) { /* ignore */ }
@@ -990,10 +1013,30 @@
 
     elCanvas.addEventListener("keydown", function (ev) {
       if (!controlling) return;
+      var mod = (ev.ctrlKey || ev.metaKey) && !ev.altKey;
+      var k = (ev.key || "").toLowerCase();
+
+      // Ctrl+V : on NE bloque PAS l'événement et on ne transmet rien ici. C'est
+      // ce preventDefault() qui empêchait de coller : il annulait l'événement
+      // « paste » du navigateur, seul moyen de lire le presse-papiers LOCAL sans
+      // demander de permission. Le poste recevait bien Ctrl+V et collait donc
+      // SON propre presse-papiers, jamais le nôtre. Le handler « paste »
+      // ci-dessous prend le relais.
+      if (mod && k === "v") return;
+
       ev.preventDefault();
       var msg = { t: "key_down", vk: ev.keyCode };
       if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
       sendInput(msg);
+
+      // Ctrl+C / Ctrl+X : la touche part normalement au poste ; on récupère
+      // ensuite son presse-papiers pour le déposer chez nous, afin que la copie
+      // fonctionne aussi dans ce sens. Meilleur effort : si le navigateur refuse
+      // l'écriture, le panneau « Presse-papiers » reste la voie fiable.
+      if (mod && (k === "c" || k === "x")) {
+        clipAutoPull = true;
+        setTimeout(function () { sendInput({ t: "clip_get" }); }, 140);
+      }
     });
 
     elCanvas.addEventListener("keyup", function (ev) {
@@ -1002,6 +1045,25 @@
       var msg = { t: "key_up", vk: ev.keyCode };
       if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
       sendInput(msg);
+    });
+
+    // Ctrl+V : le navigateur nous livre ici le presse-papiers LOCAL (aucune
+    // permission requise, contrairement à navigator.clipboard.readText). On le
+    // pousse sur le poste, PUIS on rejoue Ctrl+V : la WebSocket préserve l'ordre
+    // et l'agent traite ses messages en séquence, donc le presse-papiers du
+    // poste est déjà à jour quand la combinaison arrive.
+    elCanvas.addEventListener("paste", function (ev) {
+      if (!controlling) return;
+      ev.preventDefault();
+      var text = "";
+      try {
+        var dt = ev.clipboardData || window.clipboardData;
+        text = (dt && dt.getData("text/plain")) || "";
+      } catch (e) { /* presse-papiers illisible : on retombe sur celui du poste */ }
+      if (text) {
+        sendInput({ t: "clip_set", text: text });
+      }
+      sendRemoteCombo(VK_V, "v");
     });
 
     // Sortie du canvas : on relâche le contrôle clavier (sécurité).

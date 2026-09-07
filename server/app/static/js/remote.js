@@ -121,6 +121,14 @@
   // pas interrompre le dépannage à chaque copie.
   var clipAutoPull = false;
 
+  // --- Touches et boutons actuellement ENFONCÉS sur le poste ---
+  // Quand le canvas perd le focus (on clique sur une autre fenêtre), les
+  // événements « keyup »/« mouseup » ne nous parviennent plus : sans précaution,
+  // un Ctrl ou un bouton de souris resterait enfoncé côté poste indéfiniment.
+  // On garde donc la liste de ce qui est baissé pour pouvoir tout relâcher.
+  var heldKeys = {};
+  var heldButtons = {};
+
   // --- Fluidité : presets de flux + mode Auto adaptatif (selon la latence) ---
   // q = qualité JPEG, fps = cadence cible, w = largeur max (0 = pleine résolution).
   var PRESETS = {
@@ -990,6 +998,7 @@
       ev.preventDefault();
       elCanvas.focus();
       var c = normCoords(ev);
+      heldButtons[ev.button] = true;
       sendInput({ t: "mouse_down", button: mouseButtonName(ev.button), x: c.x, y: c.y });
     });
 
@@ -997,6 +1006,7 @@
       if (!controlling) return;
       ev.preventDefault();
       var c = normCoords(ev);
+      delete heldButtons[ev.button];
       sendInput({ t: "mouse_up", button: mouseButtonName(ev.button), x: c.x, y: c.y });
     });
 
@@ -1027,6 +1037,7 @@
       ev.preventDefault();
       var msg = { t: "key_down", vk: ev.keyCode };
       if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
+      heldKeys[ev.keyCode] = true;
       sendInput(msg);
 
       // Ctrl+C / Ctrl+X : la touche part normalement au poste ; on récupère
@@ -1044,6 +1055,7 @@
       ev.preventDefault();
       var msg = { t: "key_up", vk: ev.keyCode };
       if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
+      delete heldKeys[ev.keyCode];
       sendInput(msg);
     });
 
@@ -1066,9 +1078,29 @@
       sendRemoteCombo(VK_V, "v");
     });
 
-    // Sortie du canvas : on relâche le contrôle clavier (sécurité).
+    // Sortie du canvas : on relâche les touches et boutons ENFONCÉS, mais on
+    // GARDE le contrôle.
+    //
+    // Avant, le blur coupait le contrôle. C'était très gênant : pour copier
+    // quelque chose depuis son propre poste il faut cliquer sur une autre
+    // fenêtre — donc quitter le canvas — et l'on revenait sans contrôle, avec un
+    // Ctrl+V sans effet. Or ce relâchement n'apportait aucune sécurité : tous
+    // les écouteurs sont posés sur le CANVAS, donc rien n'est transmis au poste
+    // quand il n'a pas le focus, que l'on soit « en contrôle » ou non.
+    //
+    // Le vrai risque du blur, c'est la touche restée baissée : si le focus part
+    // pendant qu'on tient Ctrl, le « keyup » ne nous parvient jamais et le poste
+    // garde Ctrl enfoncé. C'est CELA qu'on corrige, précisément.
     elCanvas.addEventListener("blur", function () {
-      if (controlling) setControlling(false);
+      if (!controlling) return;
+      Object.keys(heldKeys).forEach(function (vk) {
+        sendInput({ t: "key_up", vk: parseInt(vk, 10) });
+      });
+      heldKeys = {};
+      Object.keys(heldButtons).forEach(function (b) {
+        sendInput({ t: "mouse_up", button: mouseButtonName(parseInt(b, 10)) });
+      });
+      heldButtons = {};
     });
   }
 

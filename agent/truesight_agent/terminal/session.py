@@ -362,6 +362,47 @@ class TerminalSession:
         _logger.info("Session de terminal terminée.")
 
 
+# Résultat de la sonde ConPTY, calculé une seule fois par process.
+_conpty_probe: bool | None = None
+
+
+def conpty_usable_here() -> bool:
+    """Un ConPTY peut-il réellement démarrer dans CE contexte ? (mesuré, pas supposé)
+
+    Le terminal était historiquement délégué au compagnon — donc lancé sous
+    l'identité de l'UTILISATEUR — au motif que « ConPTY n'est pas fiable dans la
+    session 0 headless d'un service ». Résultat : le canal de commandes tournait
+    en SYSTEM mais le terminal non, ce qui est incohérent pour un outil
+    d'administration.
+
+    Plutôt que de reconduire cette supposition, on lance un PTY jetable et on
+    regarde ce qui se passe. Le résultat est mis en cache : la sonde coûte un
+    process, on ne la refait pas à chaque session.
+    """
+    global _conpty_probe
+    if _conpty_probe is not None:
+        return _conpty_probe
+    if not _PTY_AVAILABLE:
+        _conpty_probe = False
+        return False
+    proc = None
+    try:
+        proc = PtyProcess.spawn("cmd.exe")
+        _conpty_probe = True
+    except Exception as exc:  # noqa: BLE001
+        _logger.info("Sonde ConPTY : indisponible dans ce contexte (%s).", exc)
+        _conpty_probe = False
+    finally:
+        if proc is not None:
+            try:
+                proc.terminate(force=True)
+            except Exception:  # noqa: BLE001
+                pass
+    _logger.info("Sonde ConPTY : %s.",
+                 "utilisable ici" if _conpty_probe else "inutilisable ici")
+    return _conpty_probe
+
+
 def run(token: str, ws_url: str, shell: str = "powershell", verify_tls: bool = True) -> int:
     """Point d'entrée de la session terminal (utilisé en thread inline / helper).
 

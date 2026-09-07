@@ -292,6 +292,21 @@ class AgentRunner:
     # -- Boucle heartbeat -----------------------------------------------------
     def _heartbeat_loop(self) -> None:
         _logger.info("Boucle heartbeat démarrée (intervalle %ss).", self.config.heartbeat_interval)
+        # Sonde ConPTY dès le démarrage : elle détermine si le TERMINAL pourra
+        # tourner en SYSTEM (dans ce service) ou devra retomber sur le compagnon,
+        # avec les droits de l'utilisateur. La journaliser ici permet de le savoir
+        # sur tout le parc SANS avoir à ouvrir un terminal sur chaque poste.
+        try:
+            from .terminal import session as terminal_session
+            usable = terminal_session.conpty_usable_here()
+            _logger.info(
+                "Terminal : droits %s (terminal_system=%s, ConPTY %s).",
+                "SYSTEM" if (usable and self.config.terminal_system) else "utilisateur",
+                self.config.terminal_system,
+                "utilisable" if usable else "inutilisable",
+            )
+        except Exception as exc:  # noqa: BLE001 - purement informatif.
+            _logger.debug("Sonde ConPTY impossible au démarrage : %s", exc)
         # Métadonnées du poste, jointes au heartbeat pour que le serveur les
         # rafraîchisse sans ré-enrôlement (ex. correction Windows 10 → 11, MAJ agent).
         meta = {

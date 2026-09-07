@@ -108,6 +108,14 @@ def _helper_command(token: str, ws_url: str, kind: str = "remote",
     return [sys.executable, "-m", "truesight_agent", *args]
 
 
+def _terminal_system_enabled() -> bool:
+    """True si le terminal doit tourner en SYSTEM (config, défaut True)."""
+    try:
+        return bool(cfg.load_config().terminal_system)
+    except Exception:  # noqa: BLE001 - config illisible → on garde le défaut.
+        return True
+
+
 def _unattended_enabled() -> bool:
     """True si la prise de main non-assistée est autorisée (config, défaut True)."""
     try:
@@ -314,11 +322,11 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
                   operator: str = "") -> bool:
     """Démarre une session distante (bureau à distance OU terminal).
 
-    - En session 0 (service SYSTEM) : lance un helper dans la session console
-      active (CreateProcessAsUser). C'est INDISPENSABLE non seulement pour la
-      capture écran mais AUSSI pour le terminal : ConPTY/pywinpty n'est pas fiable
-      dans la session 0 headless d'un service → le shell s'y lance dans la session
-      interactive de l'utilisateur.
+    - TERMINAL en session 0 : exécuté DANS le service, donc en SYSTEM (sous
+      réserve de la sonde ConPTY ; repli sur le compagnon sinon).
+    - BUREAU À DISTANCE en session 0 : lance un helper dans la session console
+      active (CreateProcessAsUser). C'est INDISPENSABLE pour la capture écran,
+      qui n'existe pas dans la session 0.
     - Sinon (mode console / agent en session utilisateur) : exécute directement
       dans un thread du process courant.
 
@@ -330,6 +338,26 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
 
     try:
         if is_session_zero():
+            # 0) TERMINAL : on l'exécute dans le SERVICE, donc avec les droits
+            #    SYSTEM — c'est ce qu'on attend d'un outil d'administration, et
+            #    c'est déjà le cas du canal de commandes. Historiquement il était
+            #    confié au compagnon (identité de l'utilisateur connecté) au motif
+            #    que ConPTY serait inutilisable en session 0 : on ne le suppose
+            #    plus, on le MESURE (sonde jetable), et on retombe sur le
+            #    compagnon si la sonde échoue — on ne perd donc jamais la
+            #    fonction.
+            if kind == "terminal" and _terminal_system_enabled():
+                from ..terminal import session as terminal_session
+                if terminal_session.conpty_usable_here():
+                    _logger.info("Terminal : exécution dans le service (droits SYSTEM).")
+                    _run_session_inline(token, ws_url, verify_tls, kind, shell,
+                                        operator=operator)
+                    return True
+                _logger.warning(
+                    "Terminal : ConPTY inutilisable dans le service — repli sur le "
+                    "compagnon, le shell aura les droits de l'utilisateur connecté."
+                )
+
             # 1) Compagnon en session utilisateur (fiable pour terminal ET bureau).
             from .. import companion
             payload = {"token": token, "ws_url": ws_url, "kind": kind,

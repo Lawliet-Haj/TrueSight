@@ -116,6 +116,7 @@ class AgentConfig:
         inventory_interval_hours: float,
         site: str = "",
         remote_unattended: bool = True,
+        terminal_system: bool = True,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.enrollment_token = enrollment_token
@@ -130,6 +131,12 @@ class AgentConfig:
         # SYSTEM attaché au bureau d'entrée actif. False → comportement historique
         # (capture uniquement dans la session d'un utilisateur connecté).
         self.remote_unattended = bool(remote_unattended)
+        # Terminal exécuté avec les droits SYSTEM (dans le service) plutôt que
+        # sous l'identité de l'utilisateur connecté. C'est ce qu'on attend d'un
+        # outil d'administration : le canal de commandes est déjà en SYSTEM, le
+        # terminal doit l'être aussi. False → comportement historique (shell
+        # lancé par le compagnon, donc avec les droits de l'utilisateur).
+        self.terminal_system = bool(terminal_system)
 
     def apply_server_config(self, server_config: dict) -> bool:
         """Applique les intervalles renvoyés par le serveur dans le heartbeat.
@@ -201,6 +208,7 @@ def load_config(path: str | None = None) -> AgentConfig:
     site = parser.get("agent", "site", fallback="").strip()
     # Prise de main non-assistée (défaut : activée).
     remote_unattended = _str_to_bool(parser.get("agent", "remote_unattended", fallback="true"))
+    terminal_system = _str_to_bool(parser.get("agent", "terminal_system", fallback="true"))
 
     return AgentConfig(
         server_url=server_url,
@@ -211,6 +219,7 @@ def load_config(path: str | None = None) -> AgentConfig:
         inventory_interval_hours=inventory_interval_hours,
         site=site,
         remote_unattended=remote_unattended,
+        terminal_system=terminal_system,
     )
 
 

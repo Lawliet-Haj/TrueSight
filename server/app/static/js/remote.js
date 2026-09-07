@@ -120,6 +120,12 @@
   // on récupère alors le presse-papiers du poste SANS ouvrir le panneau, pour ne
   // pas interrompre le dépannage à chaque copie.
   var clipAutoPull = false;
+  // Après un Ctrl+C / Ctrl+X effectué DANS le poste, c'est le presse-papiers du
+  // POSTE qui fait foi : on ne le réécrit pas avec notre contenu local, qui
+  // serait périmé. Sans ce garde-fou, copier puis coller à l'intérieur du poste
+  // collait l'ancien contenu de l'administrateur.
+  var remoteClipFreshUntil = 0;
+  var REMOTE_CLIP_HOLD_MS = 10000;
 
   // --- Touches et boutons actuellement ENFONCÉS sur le poste ---
   // Quand le canvas perd le focus (on clique sur une autre fenêtre), les
@@ -939,11 +945,40 @@
   // Rejoue Ctrl+V sur le poste. Séquence complète (Ctrl bas → V → Ctrl haut)
   // plutôt que la seule touche V : l'état des modificateurs sur le poste ne
   // dépend ainsi pas du moment où l'utilisateur relâche réellement Ctrl.
-  function sendRemoteCombo(vk, unicode) {
+  function sendRemoteCombo(vk) {
+    // AUCUN « unicode » ici : il ferait ignorer le code de touche côté agent et
+    // injecterait un caractère littéral, qui ne déclenche aucun raccourci.
     sendInput({ t: "key_down", vk: VK_CONTROL });
-    sendInput({ t: "key_down", vk: vk, unicode: unicode });
-    sendInput({ t: "key_up", vk: vk, unicode: unicode });
+    sendInput({ t: "key_down", vk: vk });
+    sendInput({ t: "key_up", vk: vk });
     sendInput({ t: "key_up", vk: VK_CONTROL });
+  }
+
+  // Colle dans le poste. La combinaison Ctrl+V part TOUJOURS — c'est ce qui
+  // garantit que le copier-coller interne au poste fonctionne, quoi qu'il arrive
+  // du côté navigateur. Le presse-papiers local est poussé AVANT, mais seulement
+  // s'il est pertinent et lisible.
+  function pasteIntoRemote() {
+    // Juste après un Ctrl+C dans le poste : son presse-papiers fait foi, on n'y
+    // touche pas.
+    if (Date.now() < remoteClipFreshUntil) {
+      sendRemoteCombo(VK_V);
+      return;
+    }
+    var clip = navigator.clipboard;
+    if (!clip || !clip.readText) {
+      sendRemoteCombo(VK_V);
+      return;
+    }
+    // Lecture asynchrone : la combinaison n'est envoyée qu'APRÈS, pour que le
+    // presse-papiers du poste soit déjà à jour. Si la lecture est refusée
+    // (permission non accordée), on colle simplement celui du poste.
+    clip.readText().then(function (text) {
+      if (text) sendInput({ t: "clip_set", text: text });
+      sendRemoteCombo(VK_V);
+    }).catch(function () {
+      sendRemoteCombo(VK_V);
+    });
   }
 
   function sendInput(obj) {
@@ -973,6 +1008,28 @@
       x: Math.max(0, Math.min(1, x)),
       y: Math.max(0, Math.min(1, y)),
     };
+  }
+
+  // Faut-il joindre le CARACTÈRE (injection Unicode) ou s'en tenir au code de
+  // touche ?
+  //
+  // C'est décisif : côté agent, si le message porte un « unicode », le code de
+  // touche est IGNORÉ et le caractère est injecté via KEYEVENTF_UNICODE. Or
+  // cette injection ne se combine PAS avec les modificateurs : le poste reçoit
+  // Ctrl enfoncé puis un « c » littéral, jamais un copier. C'est la raison pour
+  // laquelle Ctrl+C / Ctrl+V n'ont jamais fonctionné à distance.
+  //
+  // Règle : Ctrl, Alt ou Windows = raccourci → code de touche SEUL. Sans eux
+  // (ou avec Maj), c'est de la saisie de texte → Unicode, ce qui rend la frappe
+  // indépendante de la disposition clavier du poste.
+  //
+  // Cas particulier AltGr : sur un clavier français il vaut Ctrl+Alt et sert à
+  // taper @, #, €… C'est donc bien de la SAISIE, et l'Unicode doit être conservé.
+  function wantsUnicode(ev) {
+    if (!ev.key || ev.key.length !== 1) return false;
+    var altGr = ev.ctrlKey && ev.altKey;
+    if (altGr) return true;
+    return !(ev.ctrlKey || ev.altKey || ev.metaKey);
   }
 
   function mouseButtonName(btn) {
@@ -1026,17 +1083,24 @@
       var mod = (ev.ctrlKey || ev.metaKey) && !ev.altKey;
       var k = (ev.key || "").toLowerCase();
 
-      // Ctrl+V : on NE bloque PAS l'événement et on ne transmet rien ici. C'est
-      // ce preventDefault() qui empêchait de coller : il annulait l'événement
-      // « paste » du navigateur, seul moyen de lire le presse-papiers LOCAL sans
-      // demander de permission. Le poste recevait bien Ctrl+V et collait donc
-      // SON propre presse-papiers, jamais le nôtre. Le handler « paste »
-      // ci-dessous prend le relais.
-      if (mod && k === "v") return;
+      // Ctrl+V : on le prend en charge ici, et on le TRANSMET TOUJOURS au poste.
+      //
+      // La version précédente s'en remettait à l'événement « paste » du
+      // navigateur pour le rejouer. Mauvais pari : un <canvas> n'est pas une
+      // zone éditable et les navigateurs n'y déclenchent pas tous « paste ».
+      // Quand il ne venait pas, le Ctrl+V était purement AVALÉ — le
+      // copier-coller à l'intérieur du poste ne marchait plus du tout.
+      // Désormais la combinaison part dans tous les cas ; le presse-papiers
+      // local n'est qu'un PLUS, poussé avant si on arrive à le lire.
+      if (mod && k === "v") {
+        ev.preventDefault();
+        pasteIntoRemote();
+        return;
+      }
 
       ev.preventDefault();
       var msg = { t: "key_down", vk: ev.keyCode };
-      if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
+      if (wantsUnicode(ev)) msg.unicode = ev.key;
       heldKeys[ev.keyCode] = true;
       sendInput(msg);
 
@@ -1045,6 +1109,7 @@
       // fonctionne aussi dans ce sens. Meilleur effort : si le navigateur refuse
       // l'écriture, le panneau « Presse-papiers » reste la voie fiable.
       if (mod && (k === "c" || k === "x")) {
+        remoteClipFreshUntil = Date.now() + REMOTE_CLIP_HOLD_MS;
         clipAutoPull = true;
         setTimeout(function () { sendInput({ t: "clip_get" }); }, 140);
       }
@@ -1054,28 +1119,9 @@
       if (!controlling) return;
       ev.preventDefault();
       var msg = { t: "key_up", vk: ev.keyCode };
-      if (ev.key && ev.key.length === 1) msg.unicode = ev.key;
+      if (wantsUnicode(ev)) msg.unicode = ev.key;
       delete heldKeys[ev.keyCode];
       sendInput(msg);
-    });
-
-    // Ctrl+V : le navigateur nous livre ici le presse-papiers LOCAL (aucune
-    // permission requise, contrairement à navigator.clipboard.readText). On le
-    // pousse sur le poste, PUIS on rejoue Ctrl+V : la WebSocket préserve l'ordre
-    // et l'agent traite ses messages en séquence, donc le presse-papiers du
-    // poste est déjà à jour quand la combinaison arrive.
-    elCanvas.addEventListener("paste", function (ev) {
-      if (!controlling) return;
-      ev.preventDefault();
-      var text = "";
-      try {
-        var dt = ev.clipboardData || window.clipboardData;
-        text = (dt && dt.getData("text/plain")) || "";
-      } catch (e) { /* presse-papiers illisible : on retombe sur celui du poste */ }
-      if (text) {
-        sendInput({ t: "clip_set", text: text });
-      }
-      sendRemoteCombo(VK_V, "v");
     });
 
     // Sortie du canvas : on relâche les touches et boutons ENFONCÉS, mais on

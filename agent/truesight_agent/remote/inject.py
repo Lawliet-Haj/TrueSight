@@ -262,7 +262,16 @@ class InputInjector:
         - Si ``unicode_char`` est fourni : injection Unicode (indépendante de la
           disposition clavier) via KEYEVENTF_UNICODE.
         - Sinon : injection par Virtual-Key code (``vk``).
+
+        GARDE-FOU : l'injection Unicode ne se combine PAS avec les modificateurs.
+        Si Ctrl (ou Windows) est enfoncé, envoyer le caractère produit un « c »
+        littéral et non un Ctrl+C — c'est ce qui empêchait tout raccourci de
+        fonctionner à distance. Dans ce cas on IGNORE le caractère et on injecte
+        le code de touche. AltGr (Ctrl+Alt) est exclu de la règle : c'est de la
+        saisie de texte (@, #, € sur un clavier français), pas un raccourci.
         """
+        if unicode_char and vk is not None and self._command_modifier_down():
+            unicode_char = None
         if unicode_char:
             self._key_unicode(unicode_char, down)
             return
@@ -276,6 +285,24 @@ class InputInjector:
         ki = _KEYBDINPUT(wVk=vk_code, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
         inp = _INPUT(type=INPUT_KEYBOARD, union=_INPUTUNION(ki=ki))
         _send_input(inp)
+
+    @staticmethod
+    def _command_modifier_down() -> bool:
+        """Ctrl ou Windows enfoncé, hors AltGr (qui vaut Ctrl+Alt et sert à saisir)."""
+        if _user32 is None:
+            return False
+        try:
+            def held(code: int) -> bool:
+                return bool(_user32.GetAsyncKeyState(code) & 0x8000)
+
+            ctrl = held(0x11)   # VK_CONTROL
+            alt = held(0x12)    # VK_MENU
+            win = held(0x5B) or held(0x5C)
+            if ctrl and alt:
+                return False    # AltGr : saisie de caractère
+            return ctrl or win
+        except Exception:  # noqa: BLE001 - jamais bloquant pour l'injection.
+            return False
 
     def _key_unicode(self, char: str, down: bool) -> None:
         """Injecte un caractère Unicode (un ou plusieurs code units UTF-16)."""

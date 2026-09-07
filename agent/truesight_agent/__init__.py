@@ -27,6 +27,9 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.1 : la remontee de position du curseur (25/s) est coupable quand le viewer
+# pilote — il dessine son curseur localement. Autant de prises du verrou de la
+# socket en moins au detriment des trames d'ecran (message set_cursor_reports).
 # 1.5.0 : BANDEAU DE CONFIDENTIALITE sur le poste pendant toute la prise en main
 # (nomme l'administrateur), + le selecteur d'ecran n'est plus perdu selon l'ordre
 # de connexion, + l'ecran de confidentialite repare (il n'avait jamais fonctionne).
@@ -48,7 +51,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

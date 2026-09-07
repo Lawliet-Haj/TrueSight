@@ -15,7 +15,11 @@ Contraintes de conception :
     bien côté utilisateur ;
   - **reste au-dessus** : un ``SetWindowPos`` périodique réaffirme le rang
     topmost, qu'une autre fenêtre topmost (lecteur vidéo, plein écran…) aurait
-    pu ravir.
+    pu ravir ;
+  - **discret** : pastille ajustée au texte, gris ardoise translucide, placée en
+    BAS À DROITE au-dessus de la barre des tâches. Un bandeau rouge centré en
+    haut de l'écran donne l'impression d'un incident et monopolise le regard de
+    quelqu'un qui travaille — ce n'est pas le but.
 
 Même structure que ``privacy.py`` : création de la fenêtre ET boucle de messages
 sur un thread dédié (l'API Win32 l'exige), tolérance totale aux échecs — sans
@@ -60,27 +64,33 @@ _WM_PAINT = 0x000F
 _WM_TIMER = 0x0113
 _LWA_ALPHA = 0x00000002
 _SM_CXSCREEN = 0
+_SM_CYSCREEN = 1
+_SPI_GETWORKAREA = 0x0030
 _SWP_NOMOVE = 0x0002
 _SWP_NOSIZE = 0x0001
 _SWP_NOACTIVATE = 0x0010
 _HWND_TOPMOST = -1
-_DT_CENTER = 0x00000001
 _DT_VCENTER = 0x00000004
 _DT_SINGLELINE = 0x00000020
 _DT_END_ELLIPSIS = 0x00008000
 _TRANSPARENT_BK = 1
 _DEFAULT_CHARSET = 1
-_FW_SEMIBOLD = 600
+_FW_NORMAL = 400
 _TOPMOST_TIMER_ID = 1
 _TOPMOST_TIMER_MS = 3000
 
-# Ambre soutenu : lisible, non alarmiste. COLORREF = 0x00BBGGRR.
-_BANNER_BGR = 0x00184EC8   # ~ #C84E18
-_TEXT_BGR = 0x00FFFFFF     # blanc
-
-_BANNER_WIDTH = 620
-_BANNER_HEIGHT = 46
-_BANNER_ALPHA = 235       # léger fondu : on voit qu'il est en surcouche
+# Apparence DISCRÈTE, volontairement : le but est d'informer, pas d'alarmer.
+# Un bandeau rouge centré en haut de l'écran donne l'impression d'un incident et
+# monopolise le regard, alors que la personne travaille. On reste donc sur une
+# pastille sobre, gris ardoise, dans un COIN — présente, jamais criarde.
+# COLORREF = 0x00BBGGRR (et non RGB).
+_BANNER_BGR = 0x00302A24   # ~ #242A30, gris ardoise sombre
+_TEXT_BGR = 0x00D8D2CC     # ~ #CCD2D8, gris clair
+_BANNER_HEIGHT = 30
+_BANNER_ALPHA = 210        # nettement translucide : discret sur tout fond
+_BANNER_MARGIN = 14        # retrait par rapport aux bords de l'écran
+_TEXT_PADDING = 26         # marge intérieure horizontale (total)
+_FALLBACK_WIDTH = 380      # si la mesure du texte échoue
 
 _WNDPROC = ctypes.WINFUNCTYPE(
     ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
@@ -100,6 +110,10 @@ class _WNDCLASS(ctypes.Structure):
         ("lpszMenuName", wintypes.LPCWSTR),
         ("lpszClassName", wintypes.LPCWSTR),
     ]
+
+
+class _SIZE(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
 
 class _PAINTSTRUCT(ctypes.Structure):
@@ -159,6 +173,15 @@ if _WIN:
         _gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
         _gdi32.SetTextColor.argtypes = [wintypes.HDC, wintypes.COLORREF]
         _gdi32.SetBkMode.argtypes = [wintypes.HDC, ctypes.c_int]
+        _gdi32.GetTextExtentPoint32W.argtypes = [
+            wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(_SIZE)
+        ]
+        _user32.GetDC.restype = wintypes.HDC
+        _user32.GetDC.argtypes = [wintypes.HWND]
+        _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        _user32.SystemParametersInfoW.argtypes = [
+            wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT
+        ]
         _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
         _user32.GetMessageW.argtypes = [
             ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT
@@ -197,9 +220,13 @@ def _paint(hwnd) -> None:
             _gdi32.SelectObject(hdc, _font)
         with _text_lock:
             text = _current_text
+        # La pastille est ajustée au texte : un centrage n'apporterait rien et
+        # l'utilisateur a explicitement demandé à ne pas l'avoir centré.
+        rect.left += _TEXT_PADDING // 2
+        rect.right -= _TEXT_PADDING // 2
         _user32.DrawTextW(
             hdc, text, -1, ctypes.byref(rect),
-            _DT_CENTER | _DT_VCENTER | _DT_SINGLELINE | _DT_END_ELLIPSIS,
+            _DT_VCENTER | _DT_SINGLELINE | _DT_END_ELLIPSIS,
         )
     finally:
         _user32.EndPaint(hwnd, ctypes.byref(ps))
@@ -234,7 +261,7 @@ def _ensure_class(hinst) -> str:
     _wndproc_ref = _WNDPROC(_wnd_proc)
     _brush = _gdi32.CreateSolidBrush(_BANNER_BGR)
     _font = _gdi32.CreateFontW(
-        -18, 0, 0, 0, _FW_SEMIBOLD, 0, 0, 0,
+        -12, 0, 0, 0, _FW_NORMAL, 0, 0, 0,
         _DEFAULT_CHARSET, 0, 0, 0, 0, "Segoe UI",
     )
     wc = _WNDCLASS()
@@ -253,12 +280,60 @@ def _ensure_class(hinst) -> str:
     return _CLASS_NAME
 
 
+def _measure_text(text: str) -> int:
+    """Largeur du texte en pixels, avec la police du bandeau (0 si indisponible).
+
+    Sert à ajuster la pastille au texte : une largeur fixe donnerait soit une
+    bande trop large (donc voyante), soit un texte tronqué.
+    """
+    hdc = None
+    try:
+        hdc = _user32.GetDC(None)
+        if not hdc:
+            return 0
+        old_font = _gdi32.SelectObject(hdc, _font) if _font else None
+        size = _SIZE()
+        ok = _gdi32.GetTextExtentPoint32W(hdc, text, len(text), ctypes.byref(size))
+        if old_font:
+            _gdi32.SelectObject(hdc, old_font)
+        return int(size.cx) if ok else 0
+    except Exception:  # noqa: BLE001
+        return 0
+    finally:
+        if hdc:
+            try:
+                _user32.ReleaseDC(None, hdc)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _work_area() -> tuple[int, int, int, int]:
+    """Zone de travail du bureau (barre des tâches EXCLUE), en pixels.
+
+    On se place dedans pour ne jamais chevaucher la barre des tâches.
+    Repli sur l'écran entier si l'appel échoue.
+    """
+    try:
+        rect = wintypes.RECT()
+        if _user32.SystemParametersInfoW(_SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+            return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception:  # noqa: BLE001
+        pass
+    return (0, 0,
+            int(_user32.GetSystemMetrics(_SM_CXSCREEN) or 1920),
+            int(_user32.GetSystemMetrics(_SM_CYSCREEN) or 1080))
+
+
 def build_text(operator: str = "") -> str:
-    """Libellé du bandeau. Nomme l'opérateur quand le serveur l'a transmis."""
+    """Libellé de la pastille. Nomme l'opérateur quand le serveur l'a transmis.
+
+    Formulation volontairement factuelle et courte : la pastille doit se lire
+    d'un coup d'œil sans capter l'attention.
+    """
     who = (operator or "").strip()
     if who:
-        return f"Assistance à distance en cours — {who} voit votre écran"
-    return "Assistance à distance en cours — votre écran est partagé"
+        return f"Assistance à distance · {who}"
+    return "Assistance à distance en cours"
 
 
 class SessionNotice:
@@ -314,18 +389,26 @@ class SessionNotice:
 
     def _create_and_loop(self) -> None:
         hinst = _kernel32.GetModuleHandleW(None)
-        cls = _ensure_class(hinst)
+        cls = _ensure_class(hinst)  # crée aussi la police, nécessaire à la mesure
 
-        # Haut de l'écran PRINCIPAL, centré : l'endroit le plus visible sans
-        # recouvrir la zone de travail habituelle.
-        screen_w = _user32.GetSystemMetrics(_SM_CXSCREEN) or 1920
-        left = max(0, (int(screen_w) - _BANNER_WIDTH) // 2)
+        # BAS À DROITE, juste au-dessus de la barre des tâches : l'emplacement
+        # conventionnel d'un indicateur d'état. Discret, et il ne recouvre pas la
+        # zone où l'on travaille — contrairement à un bandeau centré en haut.
+        # Attention à la précédence : « a + b or c » vaut « (a+b) or c », donc une
+        # mesure à 0 aurait donné une pastille de _TEXT_PADDING pixels de large
+        # (26 px, illisible) au lieu du repli.
+        measured = _measure_text(self._text)
+        width = (measured + _TEXT_PADDING) if measured else _FALLBACK_WIDTH
+        wa_left, wa_top, wa_right, wa_bottom = _work_area()
+        width = min(width, max(200, wa_right - wa_left - 2 * _BANNER_MARGIN))
+        left = max(wa_left, wa_right - width - _BANNER_MARGIN)
+        top = max(wa_top, wa_bottom - _BANNER_HEIGHT - _BANNER_MARGIN)
 
         hwnd = _user32.CreateWindowExW(
             _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE
             | _WS_EX_LAYERED | _WS_EX_TRANSPARENT,
             cls, "TrueSight", _WS_POPUP,
-            left, 0, _BANNER_WIDTH, _BANNER_HEIGHT,
+            left, top, width, _BANNER_HEIGHT,
             None, None, hinst, None,
         )
         if not hwnd:

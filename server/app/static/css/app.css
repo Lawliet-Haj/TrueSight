@@ -821,48 +821,74 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 /* ============================================================================
    Fenêtre DÉDIÉE à la prise en main (remote_window.html, body.solo-remote)
    ----------------------------------------------------------------------------
-   Même panneau que l'onglet de la fiche, mais seul à l'écran : on efface le rail
-   de navigation, la barre du haut et la barre d'état pour que l'écran distant
-   occupe toute la fenêtre. Rien de tout cela n'affecte les autres pages.
+   Même panneau que l'onglet de la fiche, mais seul à l'écran. Trois pièges de
+   la mise en page de base, tous rencontrés :
+     1. « .app » est une GRILLE « 62px 1fr » : masquer le rail ne suffit pas, le
+        contenu tombe alors dans la colonne de 62 px. Il faut repasser à 1fr.
+     2. « .rscreen » porte « aspect-ratio:16/10 » : sans le neutraliser, l'écran
+        distant garde son ratio au lieu d'occuper la hauteur libre.
+     3. « .rwin » a une marge et des bords arrondis, à retirer pour du bord à bord.
+   Rien de tout ceci n'affecte les autres pages.
    ========================================================================== */
 body.solo-remote .rail,
 body.solo-remote .topbar,
 body.solo-remote .statusbar,
 body.solo-remote .solo-hide { display: none; }
 
-body.solo-remote .app,
-body.solo-remote .main { height: 100vh; min-height: 0; }
+/* (1) le contenu récupère toute la largeur laissée par le rail masqué */
+body.solo-remote .app { grid-template-columns: 1fr; }
 
 body.solo-remote .scroll {
   padding: 0;
-  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-/* Le panneau prend toute la hauteur restante, et l'écran distant tout l'espace. */
+/* (3) le panneau va d'un bord à l'autre et prend la hauteur restante */
 body.solo-remote .rwin {
+  margin: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-radius: 0;
-  border-left: 0;
-  border-right: 0;
 }
-body.solo-remote .rscreen { flex: 1 1 auto; min-height: 0; }
+
+/* (2) l'écran distant remplit l'espace libre, sans ratio imposé */
+body.solo-remote .rscreen {
+  aspect-ratio: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Les barres d'outils gardent leur hauteur naturelle. */
+body.solo-remote .rbar,
+body.solo-remote .rfoot,
+body.solo-remote .rfiles,
+body.solo-remote .rclip,
+body.solo-remote .remote-monitors,
+body.solo-remote .remote-error { flex: 0 0 auto; }
 
 /* Bandeau d'identification du poste, propre à cette fenêtre. */
 .solo-head {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 12px;
+  padding: 7px 14px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-2);
   flex: 0 0 auto;
 }
-.solo-head .solo-title { font-weight: 600; letter-spacing: .02em; }
-.solo-head .solo-back { margin-left: auto; font-size: 12px; opacity: .75; }
-.solo-head .solo-back:hover { opacity: 1; }
+.solo-head .solo-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .06em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.solo-head .solo-back { margin-left: auto; font-size: 12px; color: var(--faint); }
+.solo-head .solo-back:hover { color: var(--text); }

@@ -108,6 +108,14 @@ def _helper_command(token: str, ws_url: str, kind: str = "remote",
     return [sys.executable, "-m", "truesight_agent", *args]
 
 
+def _elevated_enabled() -> bool:
+    """True si la prise de main doit tourner en SYSTEM (config, défaut False)."""
+    try:
+        return bool(cfg.load_config().remote_elevated)
+    except Exception:  # noqa: BLE001 - config illisible → comportement historique.
+        return False
+
+
 def _terminal_system_enabled() -> bool:
     """True si le terminal doit tourner en SYSTEM (config, défaut True)."""
     try:
@@ -125,7 +133,8 @@ def _unattended_enabled() -> bool:
 
 
 def _launch_in_active_session_as_system(token: str, ws_url: str,
-                                        kind: str = "remote", shell: str = "powershell") -> bool:
+                                        kind: str = "remote", shell: str = "powershell",
+                                        operator: str = "") -> bool:
     """Lance le helper en SYSTEM dans la session console, sur le bureau d'entrée actif.
 
     Sert la prise de main NON-ASSISTÉE : aucun utilisateur connecté (écran de
@@ -179,7 +188,8 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
         from . import desktop as desk_mod
         desk_name = desk_mod.current_input_desktop_name() or "Default"
 
-        cmdline = _helper_command(token, ws_url, kind, shell, unattended=True)
+        cmdline = _helper_command(token, ws_url, kind, shell, unattended=True,
+                                  operator=operator)
         cmdline_str = subprocess.list2cmdline(cmdline)
 
         startup = win32process.STARTUPINFO()
@@ -356,6 +366,21 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
                 _logger.warning(
                     "Terminal : ConPTY inutilisable dans le service — repli sur le "
                     "compagnon, le shell aura les droits de l'utilisateur connecté."
+                )
+
+            # 0bis) PRISE DE MAIN ÉLEVÉE : helper SYSTEM dans la session console.
+            #    Seul un processus au niveau SYSTEM peut injecter un clic dans une
+            #    fenêtre élevée (invite UAC, installeur). Le compagnon, qui tourne
+            #    avec les droits de l'utilisateur, en est empêché par Windows :
+            #    on voyait l'invite sans pouvoir la valider.
+            if kind == "remote" and _elevated_enabled():
+                _logger.info("Prise de main ÉLEVÉE demandée : helper SYSTEM.")
+                if _launch_in_active_session_as_system(token, ws_url, kind, shell,
+                                                       operator=operator):
+                    return True
+                _logger.warning(
+                    "Helper SYSTEM indisponible : repli sur le compagnon (les "
+                    "fenêtres élevées ne seront pas cliquables)."
                 )
 
             # 1) Compagnon en session utilisateur (fiable pour terminal ET bureau).

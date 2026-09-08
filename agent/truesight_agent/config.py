@@ -117,6 +117,7 @@ class AgentConfig:
         site: str = "",
         remote_unattended: bool = True,
         terminal_system: bool = True,
+        remote_elevated: bool = False,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.enrollment_token = enrollment_token
@@ -137,6 +138,13 @@ class AgentConfig:
         # terminal doit l'être aussi. False → comportement historique (shell
         # lancé par le compagnon, donc avec les droits de l'utilisateur).
         self.terminal_system = bool(terminal_system)
+        # Prise de main ÉLEVÉE : la session tourne dans un helper SYSTEM placé
+        # dans la session console, au lieu du compagnon (droits de l'utilisateur).
+        # Indispensable pour CLIQUER dans une fenêtre élevée — invite UAC,
+        # installeur : Windows interdit à un processus d'injecter une entrée dans
+        # une fenêtre de niveau d'intégrité supérieur. Sans ce mode, on voit
+        # l'invite mais on ne peut pas la valider.
+        self.remote_elevated = bool(remote_elevated)
 
     def apply_server_config(self, server_config: dict) -> bool:
         """Applique les intervalles renvoyés par le serveur dans le heartbeat.
@@ -209,6 +217,7 @@ def load_config(path: str | None = None) -> AgentConfig:
     # Prise de main non-assistée (défaut : activée).
     remote_unattended = _str_to_bool(parser.get("agent", "remote_unattended", fallback="true"))
     terminal_system = _str_to_bool(parser.get("agent", "terminal_system", fallback="true"))
+    remote_elevated = _str_to_bool(parser.get("agent", "remote_elevated", fallback="false"))
 
     return AgentConfig(
         server_url=server_url,
@@ -220,6 +229,7 @@ def load_config(path: str | None = None) -> AgentConfig:
         site=site,
         remote_unattended=remote_unattended,
         terminal_system=terminal_system,
+        remote_elevated=remote_elevated,
     )
 
 

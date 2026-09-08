@@ -409,7 +409,13 @@ class RemoteSession:
             if self._desktop_follow:
                 from . import desktop as desk
                 d = (desk.current_input_desktop_name() or "").lower()
-                label = "Écran de connexion (non-assisté)" if d == "winlogon" else "Poste — non-assisté (SYSTEM)"
+                who = _console_user_name()
+                if d == "winlogon":
+                    label = "Écran de connexion (non-assisté)"
+                elif who:
+                    label = f"{who} — prise de main élevée (SYSTEM)"
+                else:
+                    label = "Poste — non-assisté (SYSTEM)"
             else:
                 label = _current_user_label()
             self._send_text({"t": "user", "name": label})
@@ -511,8 +517,8 @@ class RemoteSession:
             self._send_text({"t": "audio_state", "on": False, "ok": True})
             return
         # Pas de son à l'écran de connexion (helper SYSTEM) : on l'indique au viewer.
-        if self._desktop_follow:
-            _logger.info("Écoute audio ignorée : session non-assistée (écran de connexion).")
+        if not self._user_present():
+            _logger.info("Écoute audio ignorée : aucune session utilisateur ouverte.")
             self._send_text({"t": "audio_state", "on": False, "ok": False})
             return
         if self._audio_on:
@@ -565,7 +571,7 @@ class RemoteSession:
     # -- Presse-papiers partagé (texte) ---------------------------------------
     def _clip_send(self) -> None:
         """Renvoie le presse-papiers du poste au viewer (texte uniquement)."""
-        if self._desktop_follow:
+        if not self._user_present():
             # Écran de connexion : aucune session utilisateur, donc aucun presse-papiers.
             self._send_text({"t": "clip_error", "code": "unattended"})
             return
@@ -578,7 +584,7 @@ class RemoteSession:
 
     def _clip_apply(self, data: dict) -> None:
         """Écrit dans le presse-papiers du poste le texte envoyé par le viewer."""
-        if self._desktop_follow:
+        if not self._user_present():
             self._send_text({"t": "clip_error", "code": "unattended"})
             return
         text = data.get("text")
@@ -594,7 +600,7 @@ class RemoteSession:
     # -- Transfert de fichiers (download binaire / upload base64) -------------
     def _fs_send_roots(self) -> None:
         """Emplacements de départ (profil + lecteurs) pour l'explorateur du viewer."""
-        if self._desktop_follow:
+        if not self._user_present():
             self._send_text({"t": "fs_error", "id": 0, "code": "unattended"})
             return
         from . import fileio
@@ -602,7 +608,7 @@ class RemoteSession:
 
     def _fs_list(self, data: dict) -> None:
         """Liste un dossier du poste et renvoie son contenu au viewer."""
-        if self._desktop_follow:
+        if not self._user_present():
             self._send_text({"t": "fs_error", "id": 0, "code": "unattended"})
             return
         from . import fileio
@@ -617,7 +623,7 @@ class RemoteSession:
     def _fs_download(self, data: dict) -> None:
         """Démarre l'envoi d'un fichier (agent → viewer) en trames binaires 0x20."""
         tid = _to_int(data.get("id"))
-        if self._desktop_follow:
+        if not self._user_present():
             self._send_text({"t": "fs_error", "id": tid, "code": "unattended"})
             return
         if self._file_send_thread is not None and self._file_send_thread.is_alive():
@@ -671,7 +677,7 @@ class RemoteSession:
     def _fs_upload_start(self, data: dict) -> None:
         """Prépare la réception d'un fichier (viewer → agent) : ouvre un .tspart."""
         tid = _to_int(data.get("id"))
-        if self._desktop_follow:
+        if not self._user_present():
             self._send_text({"t": "fs_error", "id": tid, "code": "unattended"})
             return
         from . import fileio
@@ -942,9 +948,10 @@ class RemoteSession:
         self._send_metadata()
 
         # CONFIDENTIALITÉ : la personne devant le poste doit voir qu'on regarde
-        # son écran. Uniquement en mode assisté — en non-assisté il n'y a
-        # personne devant l'écran (session verrouillée / écran de connexion).
-        if not self._desktop_follow:
+        # son écran. Le critère est sa PRÉSENCE, pas le mode de capture : en
+        # prise de main élevée le helper est SYSTEM, mais quelqu'un est bien
+        # devant l'écran et doit être informé.
+        if self._user_present():
             self._start_notice()
 
         # Thread d'envoi (trames) ; la boucle principale reçoit les entrées.
@@ -964,6 +971,20 @@ class RemoteSession:
             self._recv_loop()
         finally:
             self._teardown()
+
+    def _user_present(self) -> bool:
+        """Quelqu'un est-il connecté sur le poste ?
+
+        C'est CELA qui conditionne le presse-papiers, le transfert de fichiers et
+        le bandeau de confidentialité — et non le mode de capture. Les gardes
+        étaient auparavant posées sur ``_desktop_follow``, ce qui refusait ces
+        fonctions dès qu'on suivait le bureau d'entrée, même avec une session
+        utilisateur ouverte : exactement le cas de la prise de main ÉLEVÉE, où le
+        helper est SYSTEM mais la personne bien présente devant son écran.
+        """
+        if not self._desktop_follow:
+            return True  # compagnon : par construction dans une session ouverte
+        return bool(_console_user_name())
 
     def _start_notice(self) -> None:
         """Affiche le bandeau « assistance à distance en cours » sur le poste."""
@@ -1074,6 +1095,27 @@ def _to_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _console_user_name() -> str:
+    """Utilisateur ouvert dans la session console, ou "" si personne.
+
+    Le helper SYSTEM ne peut PAS s'appuyer sur ``USERNAME`` : il vaut alors le
+    compte machine, pas la personne devant l'écran. On interroge donc le
+    gestionnaire de sessions Windows, qui répond quel que soit notre compte.
+    """
+    try:
+        import win32ts  # type: ignore
+        sid = win32ts.WTSGetActiveConsoleSessionId()
+        if sid in (0xFFFFFFFF, None):
+            return ""
+        name = win32ts.WTSQuerySessionInformation(
+            win32ts.WTS_CURRENT_SERVER_HANDLE, sid, win32ts.WTSUserName
+        )
+        return (name or "").strip()
+    except Exception as exc:  # noqa: BLE001 - pywin32 absent / appel refusé.
+        _logger.debug("Nom de l'utilisateur de session indisponible : %s", exc)
+        return ""
 
 
 def _current_user_label() -> str:

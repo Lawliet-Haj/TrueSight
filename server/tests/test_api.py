@@ -346,6 +346,83 @@ def test_remote_session_create_by_admin(client, admin_session):
     assert status.get_json()["status"] == "requested"
 
 
+def test_bulk_command_groups_into_one_batch(app, client, admin_session):
+    """Un script envoye a plusieurs postes forme UN lot, relisible d'un seul coup.
+
+    Sans identifiant de lot, il fallait ouvrir la fiche de chaque poste pour lire
+    sa sortie — ce qui rendait l'execution groupee peu exploitable.
+    """
+    # _enroll() fixe le hostname a PC-TEST-01 : ici il faut deux noms distincts
+    # pour verifier le regroupement par poste, donc on passe par _enroll_raw.
+    r1 = _enroll_raw(client, "machine-lot-a", "LOT-A", hardware_id="HW-LOT-A").get_json()
+    r2 = _enroll_raw(client, "machine-lot-b", "LOT-B", hardware_id="HW-LOT-B").get_json()
+    a1, t1 = r1["agent_id"], r1["agent_token"]
+    a2, t2 = r2["agent_id"], r2["agent_token"]
+
+    sent = admin_session.post("/api/v1/agents/bulk", json={
+        "agent_ids": [a1, a2], "kind": "command", "shell": "powershell",
+        "command_text": "Get-Date", "timeout_seconds": 60,
+    })
+    assert sent.status_code == 201, sent.get_data(as_text=True)
+    body = sent.get_json()
+    assert body["count"] == 2
+    batch = body["batch_id"]
+    assert batch
+
+    # Le lot est lisible immediatement : deux postes, tout en attente.
+    got = admin_session.get(f"/api/v1/command-batches/{batch}")
+    assert got.status_code == 200
+    d = got.get_json()
+    assert d["total"] == 2
+    assert d["tally"] == {"pending": 2, "done": 0, "failed": 0}
+    assert d["command_text"] == "Get-Date"
+    assert sorted(i["hostname"] for i in d["items"]) == ["LOT-A", "LOT-B"]
+
+    # Chaque agent recupere SA commande puis renvoie un resultat different.
+    for agent_id, token, code, out in ((a1, t1, 0, "ok"), (a2, t2, 3, "boum")):
+        pulled = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token))
+        cid = pulled.get_json()["commands"][0]["id"]
+        posted = client.post(f"/api/v1/commands/{cid}/result", headers=_auth(token), json={
+            "exit_code": code, "stdout": out, "stderr": "", "duration_seconds": 1.5,
+        })
+        assert posted.status_code in (200, 201)
+
+    d = admin_session.get(f"/api/v1/command-batches/{batch}").get_json()
+    # Un code de retour non nul est un ECHEC, meme si la commande a bien tourne.
+    assert d["tally"] == {"pending": 0, "done": 1, "failed": 1}, d["tally"]
+    par_poste = {i["hostname"]: i for i in d["items"]}
+    assert par_poste["LOT-A"]["outcome"] == "done"
+    assert par_poste["LOT-A"]["stdout"] == "ok"
+    assert par_poste["LOT-B"]["outcome"] == "failed"
+    assert par_poste["LOT-B"]["exit_code"] == 3
+
+
+def test_command_batch_requires_admin_and_valid_id(app, client, admin_session):
+    """Lot inconnu -> 404, identifiant malforme -> 400, lecture reservee aux admins."""
+    import uuid as _u
+    assert admin_session.get(f"/api/v1/command-batches/{_u.uuid4()}").status_code == 404
+    assert admin_session.get("/api/v1/command-batches/pas-un-uuid").status_code == 400
+
+    admin_session.post("/api/v1/users", json={
+        "email": "ro-lot@medicofi.fr", "password": "lecture12345", "role": "viewer"})
+    viewer = _new_session(app, "ro-lot@medicofi.fr", "lecture12345")
+    r = viewer.get(f"/api/v1/command-batches/{_u.uuid4()}")
+    assert r.status_code in (302, 403), r.status_code
+
+
+def test_single_command_has_no_batch(client, admin_session):
+    """Une commande unitaire ne porte pas de lot (batch_id NULL) : pas de melange."""
+    agent_id, _ = _enroll(client, "LOT-SOLO")
+    r = admin_session.post(f"/api/v1/agents/{agent_id}/commands", json={
+        "shell": "powershell", "command_text": "Get-Date"})
+    assert r.status_code == 201
+    from app.models import Command
+    import uuid as _u
+    with client.application.app_context():
+        cmd = db.session.get(Command, _u.UUID(r.get_json()["command_id"]))
+        assert cmd.batch_id is None
+
+
 def test_remote_window_page_renders_for_admin(client, admin_session):
     """La fenêtre dédiée s'ouvre pour un admin et contient bien le panneau distant."""
     agent_id, _ = _enroll(client, "MACHINE-FENETRE")

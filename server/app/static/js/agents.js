@@ -300,9 +300,122 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Script sur plusieurs postes : saisie multi-lignes puis retours agrégés
+  // ---------------------------------------------------------------------------
+  // Avant, c'était un window.prompt() : UNE seule ligne, PowerShell imposé,
+  // délai figé à 120 s, et aucun moyen de lire les sorties autrement qu'en
+  // ouvrant la fiche de chaque poste. Un script réel était donc impossible.
+  async function runScriptOnSelection(n) {
+    var res = await TS.form({
+      title: "Exécuter un script sur " + n + " poste(s)",
+      body: "Le script tourne avec les droits SYSTEM. Les retours de chaque poste "
+          + "s'afficheront ici au fur et à mesure.",
+      danger: true,
+      confirmLabel: "Exécuter",
+      fields: [
+        { name: "shell", label: "Interpréteur", type: "select",
+          options: [["powershell", "PowerShell"], ["cmd", "Invite de commandes"]] },
+        { name: "text", label: "Script", type: "textarea", rows: 10, mono: true,
+          placeholder: "Get-Service TrueSightAgent | Select-Object Status, StartType" },
+        { name: "timeout", label: "Délai maximum par poste (secondes)", type: "text",
+          value: "120" },
+      ],
+    });
+    if (!res.confirmed) return;
+    var text = (res.values.text || "").trim();
+    if (!text) { TS.toast("Script vide : rien n'a été envoyé.", "error"); return; }
+    var timeout = parseInt(res.values.timeout, 10);
+    if (!isFinite(timeout) || timeout <= 0 || timeout > 3600) timeout = 120;
+
+    var ids = selectedIds();
+    try {
+      var resp = await fetch("/api/v1/agents/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          agent_ids: ids, kind: "command", shell: res.values.shell || "powershell",
+          command_text: text, timeout_seconds: timeout,
+        }),
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) { TS.toast(data.error || ("Échec (" + resp.status + ")"), "error"); return; }
+      TS.toast("Script envoyé à " + data.count + " poste(s).", "success");
+      selected = {};
+      render(lastData);
+      if (data.batch_id) watchBatch(data.batch_id, timeout);
+    } catch (e) {
+      TS.toast("Erreur réseau lors de l'envoi du script.", "error");
+    }
+  }
+
+  var batchTimer = null;
+
+  // Suit un lot jusqu'à ce que tous les postes aient répondu (ou que le délai
+  // soit dépassé) et affiche les retours dans un panneau dédié.
+  function watchBatch(batchId, timeoutSeconds) {
+    var panel = document.getElementById("batch-panel");
+    var body = document.getElementById("batch-body");
+    var head = document.getElementById("batch-head");
+    if (!panel || !body) return;
+    panel.classList.remove("hidden");
+    if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+
+    // On arrête de sonder au-delà du délai accordé aux postes (plus une marge) :
+    // un poste éteint ne répondra jamais, inutile de sonder indéfiniment.
+    var deadline = Date.now() + (timeoutSeconds + 90) * 1000;
+
+    async function tick() {
+      try {
+        var r = await fetch("/api/v1/command-batches/" + batchId,
+                            { headers: { Accept: "application/json" } });
+        if (!r.ok) { stop(); return; }
+        var d = await r.json();
+        renderBatch(head, body, d);
+        if (d.tally && d.tally.pending === 0) stop();
+      } catch (e) { /* on retentera au prochain tour */ }
+      if (Date.now() > deadline) stop();
+    }
+    function stop() {
+      if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+    }
+    tick();
+    batchTimer = setInterval(tick, 3000);
+  }
+
+  function renderBatch(head, body, d) {
+    var t = d.tally || { done: 0, failed: 0, pending: 0 };
+    if (head) {
+      head.textContent = d.total + " poste(s) — " + t.done + " réussi(s), "
+        + t.failed + " en échec, " + t.pending + " en attente";
+    }
+    body.innerHTML = (d.items || []).map(function (it) {
+      var badge = it.outcome === "done" ? '<span class="pill ok">réussi</span>'
+        : it.outcome === "failed" ? '<span class="pill err">échec</span>'
+        : '<span class="pill">en attente</span>';
+      var code = it.exit_code === null || it.exit_code === undefined ? "—" : it.exit_code;
+      // Retour a la ligne construit sans sequence d'echappement : les
+      // backslashes ne survivent pas toujours a la generation de ce fichier.
+      var NL = String.fromCharCode(10);
+      var out = (it.stdout || "") + (it.stderr ? NL + it.stderr : "");
+      return "<tr><td>" + esc(it.hostname) + "</td><td>" + badge + "</td>"
+        + "<td class=\"mono\">" + esc(String(code)) + "</td>"
+        + "<td><pre class=\"batch-out\">" + esc(out.slice(0, 4000)) + "</pre></td></tr>";
+    }).join("");
+  }
+
   function setupBulk() {
     var bar = document.getElementById("bulkbar");
     if (!bar) return;
+
+    var batchClose = document.getElementById("batch-close");
+    if (batchClose) {
+      batchClose.addEventListener("click", function () {
+        if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+        var panel = document.getElementById("batch-panel");
+        if (panel) panel.classList.add("hidden");
+      });
+    }
 
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bulk]"), function (b) {
       b.addEventListener("click", function () {
@@ -318,13 +431,7 @@
           var msg = window.prompt("Message à afficher sur les " + n + " poste(s) :");
           if (msg && msg.trim()) applyBulk("quick", { action: "message", text: msg.trim() });
         } else if (kind === "command") {
-          var cmd = window.prompt("Commande PowerShell à exécuter sur les " + n + " poste(s) :");
-          if (cmd && cmd.trim()) {
-            applyBulk("command", { shell: "powershell", command_text: cmd.trim(), timeout_seconds: 120 }, {
-              title: "Exécuter sur " + n + " poste(s) ?", body: cmd.trim(),
-              danger: true, confirmLabel: "Exécuter",
-            });
-          }
+          runScriptOnSelection(n);
         }
       });
     });

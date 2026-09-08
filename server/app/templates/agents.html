@@ -90,6 +90,25 @@
     <button class="btn xs" type="button" id="bulk-site-apply"><svg><use href="#i-pin"/></svg>Affecter</button>
     <button class="btn xs" type="button" id="bulk-clear">Désélectionner</button>
   </div>
+
+  {# Retours d'un script lancé sur plusieurs postes. Sans cet écran, il fallait
+     ouvrir la fiche de chaque poste pour lire sa sortie. #}
+  <div class="batch-panel hidden" id="batch-panel">
+    <div class="batch-bar">
+      <span class="batch-title">Retours du script</span>
+      <span class="batch-head" id="batch-head"></span>
+      <span class="grow"></span>
+      <button class="btn xs" type="button" id="batch-close">Fermer</button>
+    </div>
+    <div class="scroll-y batch-scroll">
+      <table>
+        <thead>
+          <tr><th>Poste</th><th>Résultat</th><th>Code</th><th>Sortie</th></tr>
+        </thead>
+        <tbody id="batch-body"></tbody>
+      </table>
+    </div>
+  </div>
   {% endif %}
 
   <div class="scroll-y sticky-head">

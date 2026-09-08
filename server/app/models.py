@@ -231,6 +231,11 @@ class Command(db.Model):
     # Purge du ``command_text`` une fois la commande exécutée (commandes sensibles :
     # création de compte avec mot de passe). Posé par l'endpoint, appliqué dans post_result.
     redact_after_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # LOT d'exécution : même valeur pour toutes les commandes issues d'un envoi
+    # groupé. Sans lui, lancer un script sur 20 postes produisait 20 commandes
+    # sans lien entre elles — il fallait ouvrir 20 fiches pour lire les retours.
+    # NULL pour une commande unitaire.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
 
     agent = relationship("Agent", back_populates="commands")
     result = relationship(

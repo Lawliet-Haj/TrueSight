@@ -892,3 +892,47 @@ body.solo-remote .remote-error { flex: 0 0 auto; }
 }
 .solo-head .solo-back { margin-left: auto; font-size: 12px; color: var(--faint); }
 .solo-head .solo-back:hover { color: var(--text); }
+
+/* ============================================================================
+   Retours d'un script lancé sur plusieurs postes (page du parc)
+   ========================================================================== */
+.batch-panel {
+  margin: 0 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+}
+.batch-bar .batch-title { font-size: 12.5px; font-weight: 600; }
+.batch-bar .batch-head { font-family: var(--font-mono); font-size: 11px; color: var(--dim); }
+.batch-scroll { max-height: 46vh; }
+/* La sortie peut être longue : on la contient au lieu d'étirer la ligne. */
+pre.batch-out {
+  margin: 0;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+.pill { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--dim); }
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.pill.err { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+
+/* Champs d'une modale de saisie (TS.form) — script multi-lignes, etc. */
+.ts-modal.wide { max-width: 720px; width: 92vw; }
+.ts-modal-field { display: block; margin: 12px 0 0; }
+.ts-modal-field > span { display: block; font-size: 11.5px; color: var(--dim); margin-bottom: 5px; }
+.ts-modal-field .input { width: 100%; }
+.ts-modal-field textarea.input { resize: vertical; min-height: 120px; }
+.input.mono { font-family: var(--font-mono); font-size: 12px; }

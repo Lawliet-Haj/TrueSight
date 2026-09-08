@@ -1058,6 +1058,9 @@ def bulk_action():
         else:
             shell, command_text, timeout = "cmd", _QUICK_ACTIONS[action], 30
 
+    # Un identifiant de LOT commun : c'est lui qui permet de relire les retours
+    # des N postes sur un seul écran, au lieu d'ouvrir N fiches.
+    batch_id = uuid.uuid4()
     results = []
     created = 0
     for raw_id in agent_ids:
@@ -1072,6 +1075,7 @@ def bulk_action():
         cmd = Command(
             agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
             status="pending", timeout_seconds=timeout, created_at=utcnow(),
+            batch_id=batch_id,
         )
         db.session.add(cmd)
         db.session.flush()
@@ -1080,11 +1084,78 @@ def bulk_action():
 
     write_audit(
         action="command.bulk", user_id=g.user.id,
-        details={"kind": kind, "count": created, "command_text": command_text},
+        details={"kind": kind, "count": created, "command_text": command_text,
+                 "batch_id": str(batch_id)},
         commit=False,
     )
     db.session.commit()
-    return jsonify({"count": created, "results": results}), 201
+    return jsonify({"count": created, "batch_id": str(batch_id), "results": results}), 201
+
+
+# --------------------------------------------------------------------------
+# GET /command-batches/{batch_id} — retours d'un envoi groupé (admin)
+# --------------------------------------------------------------------------
+@bp.get("/command-batches/<batch_id>")
+@admin_required
+def command_batch(batch_id):
+    """Retours de TOUTES les commandes d'un même envoi groupé, sur un seul écran.
+
+    Sans cet endpoint, lancer un script sur 20 postes obligeait à ouvrir 20
+    fiches pour lire les sorties. Renvoie l'avancement (terminées / en échec /
+    encore en attente) et le détail par poste.
+    """
+    bid = _parse_uuid(batch_id)
+    if bid is None:
+        return jsonify({"error": "identifiant de lot invalide"}), 400
+
+    rows = (
+        db.session.query(Command, CommandResult, Agent)
+        .join(Agent, Agent.id == Command.agent_id)
+        .outerjoin(CommandResult, CommandResult.command_id == Command.id)
+        .filter(Command.batch_id == bid)
+        .order_by(Agent.hostname.asc())
+        .all()
+    )
+    if not rows:
+        return jsonify({"error": "lot introuvable"}), 404
+
+    items = []
+    tally = {"pending": 0, "done": 0, "failed": 0}
+    for cmd, res, agent in rows:
+        # « failed » couvre l'échec d'exécution ET un code de retour non nul :
+        # un script qui rend 1 est un échec, même si la commande a bien tourné.
+        if cmd.status in ("pending", "dispatched"):
+            bucket = "pending"
+        elif cmd.status == "done" and (res is None or (res.exit_code or 0) == 0):
+            bucket = "done"
+        else:
+            bucket = "failed"
+        tally[bucket] += 1
+        duration = None
+        if res is not None and res.duration_seconds is not None:
+            duration = float(res.duration_seconds)
+        items.append({
+            "agent_id": str(agent.id),
+            "hostname": agent.display_name or agent.hostname or str(agent.id),
+            "command_id": str(cmd.id),
+            "status": cmd.status,
+            "outcome": bucket,
+            "exit_code": res.exit_code if res is not None else None,
+            "duration_seconds": duration,
+            "stdout": (res.stdout or "") if res is not None else "",
+            "stderr": (res.stderr or "") if res is not None else "",
+        })
+
+    first = rows[0][0]
+    return jsonify({
+        "batch_id": str(bid),
+        "shell": first.shell,
+        "command_text": first.command_text,
+        "created_at": _iso_utc(first.created_at),
+        "total": len(items),
+        "tally": tally,
+        "items": items,
+    }), 200
 
 
 # --------------------------------------------------------------------------

@@ -116,7 +116,113 @@
     });
   }
 
-  window.TS = { toast: toast, confirm: confirm };
+  // Modale de SAISIE : même habillage que confirm(), mais avec des champs.
+  // Nécessaire pour lancer un script sur plusieurs postes : window.prompt() ne
+  // gère qu'une seule ligne, donc aucun script réel ne pouvait être collé.
+  //
+  // opts.fields : [{ name, label, type:'textarea'|'select'|'text', value,
+  //                  options:[[valeur, libellé]], rows, placeholder, mono }]
+  // Résolution : { confirmed, values } — values indexé par « name ».
+  function form(opts) {
+    opts = opts || {};
+    var fields = opts.fields || [];
+    return new Promise(function (resolve) {
+      var lastFocus = document.activeElement;
+      var overlay = document.createElement("div");
+      overlay.className = "ts-modal-overlay";
+      var modal = document.createElement("div");
+      modal.className = "ts-modal wide" + (opts.danger ? " danger" : "");
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+
+      var title = document.createElement("div");
+      title.className = "ts-modal-title";
+      title.textContent = opts.title || "Saisie";
+      modal.appendChild(title);
+
+      if (opts.body) {
+        var intro = document.createElement("div");
+        intro.className = "ts-modal-body";
+        intro.textContent = opts.body;
+        modal.appendChild(intro);
+      }
+
+      var inputs = {};
+      fields.forEach(function (f) {
+        var wrap = document.createElement("label");
+        wrap.className = "ts-modal-field";
+        var lab = document.createElement("span");
+        lab.textContent = f.label || f.name;
+        wrap.appendChild(lab);
+
+        var el;
+        if (f.type === "textarea") {
+          el = document.createElement("textarea");
+          el.rows = f.rows || 8;
+          el.spellcheck = false;
+        } else if (f.type === "select") {
+          el = document.createElement("select");
+          (f.options || []).forEach(function (o) {
+            var opt = document.createElement("option");
+            opt.value = o[0];
+            opt.textContent = o[1];
+            el.appendChild(opt);
+          });
+        } else {
+          el = document.createElement("input");
+          el.type = f.type || "text";
+        }
+        el.className = "input" + (f.mono ? " mono" : "");
+        if (f.placeholder) el.placeholder = f.placeholder;
+        if (f.value !== undefined && f.value !== null) el.value = f.value;
+        wrap.appendChild(el);
+        modal.appendChild(wrap);
+        inputs[f.name] = el;
+      });
+
+      var actions = document.createElement("div");
+      actions.className = "ts-modal-actions";
+      var cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "btn";
+      cancel.textContent = opts.cancelLabel || "Annuler";
+      var ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = "btn " + (opts.danger ? "danger-solid" : "go");
+      ok.textContent = opts.confirmLabel || "Valider";
+      actions.appendChild(cancel);
+      actions.appendChild(ok);
+      modal.appendChild(actions);
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(function () { overlay.classList.add("show"); });
+      var firstEl = fields.length ? inputs[fields[0].name] : ok;
+      if (firstEl && firstEl.focus) firstEl.focus();
+
+      function done(confirmed) {
+        document.removeEventListener("keydown", onKey, true);
+        overlay.classList.remove("show");
+        setTimeout(function () {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 180);
+        if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) {} }
+        var values = {};
+        Object.keys(inputs).forEach(function (k) { values[k] = inputs[k].value; });
+        resolve({ confirmed: !!confirmed, values: values });
+      }
+      function onKey(e) {
+        // Pas de validation sur Entrée : dans un script, Entrée sert à écrire.
+        if (e.key === "Escape") { e.preventDefault(); done(false); }
+      }
+      cancel.addEventListener("click", function () { done(false); });
+      ok.addEventListener("click", function () { done(true); });
+      overlay.addEventListener("mousedown", function (e) { if (e.target === overlay) done(false); });
+      document.addEventListener("keydown", onKey, true);
+    });
+  }
+
+  window.TS = { toast: toast, confirm: confirm, form: form };
 })();
 
 // ---- Bascule de thème clair / sombre (mémorisée) -------------------------

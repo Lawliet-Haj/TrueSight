@@ -422,9 +422,16 @@ class AgentRunner:
         shell = command.get("shell", "cmd")
         command_text = command.get("command_text", "")
         timeout_seconds = command.get("timeout_seconds")
+        # « user » : la commande doit tourner dans la session de la personne, pas
+        # dans la session 0 du service (verrouillage d'écran, fenêtre à afficher…).
+        # Absent ou toute autre valeur → comportement historique (SYSTEM).
+        run_as = (command.get("run_as") or "system").strip().lower()
 
         try:
-            outcome = cmd_exec.execute(shell, command_text, timeout_seconds)
+            if run_as == "user":
+                outcome = cmd_exec.execute_in_user_session(shell, command_text)
+            else:
+                outcome = cmd_exec.execute(shell, command_text, timeout_seconds)
         except Exception as exc:  # noqa: BLE001 - filet ultime.
             _logger.error("Exécution de la commande %s échouée : %s", command_id, exc)
             outcome = {

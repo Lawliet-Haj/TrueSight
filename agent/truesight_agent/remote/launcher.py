@@ -219,32 +219,35 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
             pass
 
 
-def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
-                              shell: str = "powershell", operator: str = "") -> bool:
-    """Lance le helper dans la session console active via CreateProcessAsUser.
+def run_in_console_session(cmdline_str: str, label: str = "process") -> bool:
+    """Lance une ligne de commande DANS la session de l'utilisateur connecté.
 
-    Renvoie True si le process a été créé. Tolérant : journalise et renvoie
-    False en cas d'échec (pas de session ouverte, privilèges insuffisants, …).
+    Le service tourne en session 0 : tout ce qu'il exécute y reste. Or certaines
+    actions n'ont de sens que dans la session de la personne — verrouiller
+    l'écran, afficher une fenêtre, ouvrir un lien. ``LockWorkStation`` appelé
+    depuis la session 0 verrouille le bureau de la session 0, c'est-à-dire rien
+    de visible : c'est pour cela que le bouton « Verrouiller » ne faisait rien.
+
+    Exige SYSTEM (SeTcbPrivilege) pour ``WTSQueryUserToken``. Renvoie True si le
+    process a été créé. Tolérant : journalise et renvoie False sinon (aucune
+    session ouverte, privilèges insuffisants…).
     """
     if not _PYWIN32_AVAILABLE:
-        _logger.error("pywin32 absent : impossible de lancer le helper en session active.")
+        _logger.error("pywin32 absent : impossible de lancer %s en session active.", label)
         return False
 
     user_token = None
     primary_token = None
     environment = None
     try:
-        # 1. Session console interactive active.
         console_session_id = win32ts.WTSGetActiveConsoleSessionId()
         # 0xFFFFFFFF (-1) signifie « aucune session console attachée ».
         if console_session_id in (0xFFFFFFFF, None):
-            _logger.warning("Aucune session console active : helper non lancé.")
+            _logger.warning("Aucune session console active : %s non lancé.", label)
             return False
 
-        # 2. Jeton de l'utilisateur de cette session (exige SeTcbPrivilege / SYSTEM).
+        # Jeton de l'utilisateur de cette session (exige SeTcbPrivilege / SYSTEM).
         user_token = win32ts.WTSQueryUserToken(console_session_id)
-
-        # 3. Duplication en jeton primaire (requis par CreateProcessAsUser).
         primary_token = win32security.DuplicateTokenEx(
             user_token,
             win32security.SecurityImpersonation,
@@ -252,25 +255,16 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
             win32security.TokenPrimary,
             None,
         )
-
-        # Bloc d'environnement de l'utilisateur (sinon variables manquantes).
         try:
             environment = win32profile.CreateEnvironmentBlock(primary_token, False)
         except Exception as exc:  # noqa: BLE001 - non bloquant.
             _logger.debug("CreateEnvironmentBlock indisponible (%s), env par défaut.", exc)
             environment = None
 
-        cmdline = _helper_command(token, ws_url, kind, shell, operator=operator)
-        # On reconstruit une ligne de commande citée correctement.
-        cmdline_str = subprocess.list2cmdline(cmdline)
-
         startup = win32process.STARTUPINFO()
-        # Bureau interactif de l'utilisateur (input desktop).
-        startup.lpDesktop = "winsta0\\default"
-
+        startup.lpDesktop = "winsta0\default"  # bureau interactif de l'utilisateur
         creation_flags = win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW
 
-        # 4. Création du process dans la session de l'utilisateur.
         win32process.CreateProcessAsUser(
             primary_token,
             None,            # application name (déduite de la ligne de commande)
@@ -283,14 +277,12 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
             None,            # current directory
             startup,
         )
-        _logger.info("Helper (%s) lancé dans la session console %s.",
-                     kind, console_session_id)
+        _logger.info("%s lancé dans la session console %s.", label, console_session_id)
         return True
     except Exception as exc:  # noqa: BLE001 - jamais bloquant.
-        _logger.error("Lancement du helper en session active impossible : %s", exc)
+        _logger.error("Lancement de %s en session active impossible : %s", label, exc)
         return False
     finally:
-        # Libération des handles/jetons.
         try:
             if environment is not None:
                 win32profile.DestroyEnvironmentBlock(environment)
@@ -302,6 +294,13 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
                     win32api.CloseHandle(token_handle)
             except Exception:  # noqa: BLE001
                 pass
+
+
+def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
+                              shell: str = "powershell", operator: str = "") -> bool:
+    """Lance le helper dans la session console active via CreateProcessAsUser."""
+    cmdline = _helper_command(token, ws_url, kind, shell, operator=operator)
+    return run_in_console_session(subprocess.list2cmdline(cmdline), label=f"helper ({kind})")
 
 
 def _run_session_inline(token: str, ws_url: str, verify_tls: bool,

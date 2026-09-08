@@ -231,6 +231,11 @@ class Command(db.Model):
     # Purge du ``command_text`` une fois la commande exécutée (commandes sensibles :
     # création de compte avec mot de passe). Posé par l'endpoint, appliqué dans post_result.
     redact_after_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Contexte d'exécution : 'system' (le service, session 0) ou 'user' (la
+    # session de la personne connectée). Certaines actions n'ont AUCUN effet
+    # depuis la session 0 — verrouiller l'écran, afficher une fenêtre : elles
+    # s'appliqueraient au bureau invisible de la session 0.
+    run_as: Mapped[str] = mapped_column(Text, default="system", nullable=False)
     # LOT d'exécution : même valeur pour toutes les commandes issues d'un envoi
     # groupé. Sans lui, lancer un script sur 20 postes produisait 20 commandes
     # sans lien entre elles — il fallait ouvrir 20 fiches pour lire les retours.

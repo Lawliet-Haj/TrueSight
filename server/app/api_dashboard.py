@@ -747,12 +747,23 @@ def get_remote_session(session_id):
 # Actions rapides : chaque action est traduite en une commande shell exécutée
 # par l'agent via le pipeline de commandes existant (le résultat se lit comme
 # une commande normale via GET /api/v1/commands/<id>). Toutes utilisent ``cmd``.
+# Chaque action rapide porte sa commande ET son CONTEXTE d'exécution.
+#
+# L'agent tourne en session 0 : tout ce qu'il y exécute reste invisible pour la
+# personne. « LockWorkStation » y verrouille le bureau de la session 0, et
+# « shutdown /l » y déconnecte la session 0 — c'est-à-dire rien. C'est pour cela
+# que « Verrouiller » et « Déconnecter » ne faisaient rien du tout.
+# Ces actions doivent donc s'exécuter dans la session de l'utilisateur ('user').
+# Le redémarrage, lui, est une action MACHINE : SYSTEM convient (et fonctionne
+# même sans personne connectée).
 _QUICK_ACTIONS = {
-    "lock": "rundll32.exe user32.dll,LockWorkStation",
-    "restart": 'shutdown /r /t 5 /c "TrueSight: redemarrage demande"',
-    "logoff": "shutdown /l",
+    "lock": ("rundll32.exe user32.dll,LockWorkStation", "user"),
+    "restart": ('shutdown /r /t 5 /c "TrueSight: redemarrage demande"', "system"),
+    "logoff": ("shutdown /l", "user"),
     # 'message' est construit dynamiquement à partir du champ ``text``.
 }
+# Un message s'affiche sur l'écran de la personne : session utilisateur.
+_MESSAGE_RUN_AS = "user"
 
 
 def _clean_message_text(value: str) -> str:
@@ -890,8 +901,9 @@ def quick_action(agent_id):
             return jsonify({"error": "text requis pour l'action message"}), 400
         command_text = f'msg * "{text}"'
         timeout_seconds = 15
+        run_as = _MESSAGE_RUN_AS
     else:
-        command_text = _QUICK_ACTIONS[action]
+        command_text, run_as = _QUICK_ACTIONS[action]
         timeout_seconds = 30
 
     cmd = Command(
@@ -902,6 +914,7 @@ def quick_action(agent_id):
         status="pending",
         timeout_seconds=timeout_seconds,
         created_at=utcnow(),
+        run_as=run_as,
     )
     db.session.add(cmd)
     db.session.flush()  # obtient l'id avant l'audit
@@ -1046,6 +1059,7 @@ def bulk_action():
                 timeout = 120
         except (TypeError, ValueError):
             timeout = 120
+        run_as = "system"  # un script d'administration s'exécute en SYSTEM
     else:  # quick
         action = (data.get("action") or "").strip().lower()
         if action not in ("lock", "restart", "logoff", "message"):
@@ -1055,8 +1069,10 @@ def bulk_action():
             if not text:
                 return jsonify({"error": "text requis pour l'action message"}), 400
             shell, command_text, timeout = "cmd", f'msg * "{text}"', 15
+            run_as = _MESSAGE_RUN_AS
         else:
-            shell, command_text, timeout = "cmd", _QUICK_ACTIONS[action], 30
+            quick_text, run_as = _QUICK_ACTIONS[action]
+            shell, command_text, timeout = "cmd", quick_text, 30
 
     # Un identifiant de LOT commun : c'est lui qui permet de relire les retours
     # des N postes sur un seul écran, au lieu d'ouvrir N fiches.
@@ -1075,7 +1091,7 @@ def bulk_action():
         cmd = Command(
             agent_id=aid, created_by=g.user.id, shell=shell, command_text=command_text,
             status="pending", timeout_seconds=timeout, created_at=utcnow(),
-            batch_id=batch_id,
+            batch_id=batch_id, run_as=run_as,
         )
         db.session.add(cmd)
         db.session.flush()

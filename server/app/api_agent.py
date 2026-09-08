@@ -589,6 +589,9 @@ def _collect_agent_work(agent: Agent) -> tuple[list, dict | None]:
                 "shell": cmd.shell,
                 "command_text": cmd.command_text,
                 "timeout_seconds": cmd.timeout_seconds,
+                # Contexte d'exécution : les agents anciens ignorent ce champ et
+                # gardent leur comportement (SYSTEM), ce qui est le défaut.
+                "run_as": cmd.run_as or "system",
             }
         )
 

@@ -34,6 +34,8 @@ def ensure_schema():
         "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS site_id uuid",
         # Purge du command_text après exécution (commandes sensibles).
         "ALTER TABLE commands ADD COLUMN IF NOT EXISTS redact_after_run boolean NOT NULL DEFAULT false",
+        # Contexte d'exécution d'une commande ('system' ou 'user').
+        "ALTER TABLE commands ADD COLUMN IF NOT EXISTS run_as text NOT NULL DEFAULT 'system'",
         # Lot d'exécution : regroupe les commandes d'un même envoi groupé.
         "ALTER TABLE commands ADD COLUMN IF NOT EXISTS batch_id uuid",
         "CREATE INDEX IF NOT EXISTS ix_commands_batch_id ON commands (batch_id)",

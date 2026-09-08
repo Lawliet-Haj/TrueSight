@@ -114,6 +114,50 @@ def execute(shell: str, command_text: str, timeout_seconds: int | None = None) -
     }
 
 
+def execute_in_user_session(shell: str, command_text: str) -> dict:
+    """Lance une commande DANS la session de l'utilisateur connecté.
+
+    Pourquoi c'est nécessaire : le service tourne en session 0, donc tout ce
+    qu'il exécute y reste. « rundll32 user32.dll,LockWorkStation » lancé depuis
+    la session 0 verrouille le bureau de la session 0 — rien de visible pour la
+    personne. C'est ce qui rendait le bouton « Verrouiller » inopérant.
+
+    Lancement DÉTACHÉ : on ne récupère ni la sortie ni le code de retour du
+    process créé (CreateProcessAsUser ne nous donne pas de tube ici). Le résultat
+    renvoyé indique donc si le LANCEMENT a réussi, ce qui est l'information utile
+    pour ce type d'action (verrouiller, afficher une fenêtre, ouvrir un lien).
+    """
+    start = time.monotonic()
+    argv = _build_argv((shell or "").strip().lower(), command_text or "")
+    try:
+        from .remote import launcher
+        ok = launcher.run_in_console_session(
+            subprocess.list2cmdline(argv), label="commande utilisateur"
+        )
+    except Exception as exc:  # noqa: BLE001 - jamais fatal pour l'agent.
+        _logger.error("Lancement en session utilisateur impossible : %s", exc)
+        ok = False
+        return {
+            "status": "error", "exit_code": None, "stdout": "",
+            "stderr": f"Lancement en session utilisateur impossible : {exc}",
+            "duration_seconds": round(time.monotonic() - start, 2),
+        }
+    if ok:
+        return {
+            "status": "ok", "exit_code": 0,
+            "stdout": "Commande lancée dans la session de l'utilisateur "
+                      "(sortie non capturée pour ce mode).",
+            "stderr": "",
+            "duration_seconds": round(time.monotonic() - start, 2),
+        }
+    return {
+        "status": "error", "exit_code": None, "stdout": "",
+        "stderr": "Aucune session utilisateur ouverte, ou privilèges insuffisants : "
+                  "la commande n'a pas pu être lancée dans la session.",
+        "duration_seconds": round(time.monotonic() - start, 2),
+    }
+
+
 def _build_argv(shell_normalized: str, command_text: str) -> list[str]:
     """Construit la liste d'arguments selon l'interpréteur demandé."""
     if shell_normalized == "powershell":

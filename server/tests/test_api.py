@@ -346,6 +346,69 @@ def test_remote_session_create_by_admin(client, admin_session):
     assert status.get_json()["status"] == "requested"
 
 
+def test_quick_actions_run_in_the_right_context(app, client, admin_session):
+    """Verrouiller / Deconnecter / Message doivent viser la SESSION de la personne.
+
+    L'agent tourne en session 0 : « LockWorkStation » y verrouille un bureau
+    invisible et « shutdown /l » y deconnecte la session 0. Ces boutons ne
+    faisaient donc rien. Le redemarrage, lui, est une action machine et reste
+    en SYSTEM (il doit marcher meme sans personne connectee).
+    """
+    from app.models import Command
+    import uuid as _u
+
+    attendu = {"lock": "user", "logoff": "user", "message": "user", "restart": "system"}
+    for action, contexte in attendu.items():
+        agent_id, _ = _enroll(client, f"CTX-{action}")
+        payload = {"action": action}
+        if action == "message":
+            payload["text"] = "coucou"
+        r = admin_session.post(f"/api/v1/agents/{agent_id}/quick-action", json=payload)
+        assert r.status_code == 201, (action, r.get_data(as_text=True))
+        with app.app_context():
+            cmd = db.session.get(Command, _u.UUID(r.get_json()["command_id"]))
+            assert cmd.run_as == contexte, (action, cmd.run_as, cmd.command_text)
+
+
+def test_bulk_quick_action_keeps_the_context(app, client, admin_session):
+    """Le contexte est aussi respecte en action GROUPEE (meme table de reference)."""
+    from app.models import Command
+    a1, _ = _enroll(client, "CTX-BULK-1")
+    a2, _ = _enroll(client, "CTX-BULK-2")
+    r = admin_session.post("/api/v1/agents/bulk", json={
+        "agent_ids": [a1, a2], "kind": "quick", "action": "lock"})
+    assert r.status_code == 201
+    with app.app_context():
+        rows = db.session.query(Command).filter(Command.run_as == "user").all()
+        assert len(rows) >= 2
+        assert all("LockWorkStation" in c.command_text for c in rows)
+
+
+def test_bulk_script_stays_in_system(app, client, admin_session):
+    """Un script d'administration reste en SYSTEM : c'est ce qu'on attend d'un RMM."""
+    from app.models import Command
+    import uuid as _u
+    agent_id, _ = _enroll(client, "CTX-SCRIPT")
+    r = admin_session.post("/api/v1/agents/bulk", json={
+        "agent_ids": [agent_id], "kind": "command", "shell": "powershell",
+        "command_text": "Get-Date"})
+    assert r.status_code == 201
+    cid = r.get_json()["results"][0]["command_id"]
+    with app.app_context():
+        assert db.session.get(Command, _u.UUID(cid)).run_as == "system"
+
+
+def test_agent_receives_the_execution_context(app, client, admin_session):
+    """L'agent recoit run_as dans sa file : sans ce champ il ne saurait pas ou executer."""
+    agent_id, token = _enroll(client, "CTX-FILE")
+    admin_session.post(f"/api/v1/agents/{agent_id}/quick-action", json={"action": "lock"})
+    pulled = client.get(f"/api/v1/agents/{agent_id}/commands", headers=_auth(token))
+    assert pulled.status_code == 200
+    cmds = pulled.get_json()["commands"]
+    assert len(cmds) == 1
+    assert cmds[0]["run_as"] == "user", cmds[0]
+
+
 def test_bulk_command_groups_into_one_batch(app, client, admin_session):
     """Un script envoye a plusieurs postes forme UN lot, relisible d'un seul coup.
 

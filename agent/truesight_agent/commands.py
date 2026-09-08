@@ -114,7 +114,8 @@ def execute(shell: str, command_text: str, timeout_seconds: int | None = None) -
     }
 
 
-def execute_in_user_session(shell: str, command_text: str) -> dict:
+def execute_in_user_session(shell: str, command_text: str,
+                            timeout_seconds: int | None = None) -> dict:
     """Lance une commande DANS la session de l'utilisateur connecté.
 
     Pourquoi c'est nécessaire : le service tourne en session 0, donc tout ce
@@ -128,34 +129,46 @@ def execute_in_user_session(shell: str, command_text: str) -> dict:
     pour ce type d'action (verrouiller, afficher une fenêtre, ouvrir un lien).
     """
     start = time.monotonic()
+    timeout = int(timeout_seconds) if timeout_seconds and int(timeout_seconds) > 0 else 30
     argv = _build_argv((shell or "").strip().lower(), command_text or "")
     try:
         from .remote import launcher
-        ok = launcher.run_in_console_session(
-            subprocess.list2cmdline(argv), label="commande utilisateur"
+        launched, exit_code = launcher.run_in_console_session(
+            subprocess.list2cmdline(argv), label="commande utilisateur",
+            wait_seconds=timeout,
         )
     except Exception as exc:  # noqa: BLE001 - jamais fatal pour l'agent.
         _logger.error("Lancement en session utilisateur impossible : %s", exc)
-        ok = False
         return {
             "status": "error", "exit_code": None, "stdout": "",
             "stderr": f"Lancement en session utilisateur impossible : {exc}",
             "duration_seconds": round(time.monotonic() - start, 2),
         }
-    if ok:
+
+    duration = round(time.monotonic() - start, 2)
+    note = ("Executee dans la session de l'utilisateur. La sortie n'est pas "
+            "capturee dans ce mode : seul le code de retour est remonte.")
+    if not launched:
         return {
-            "status": "ok", "exit_code": 0,
-            "stdout": "Commande lancée dans la session de l'utilisateur "
-                      "(sortie non capturée pour ce mode).",
-            "stderr": "",
-            "duration_seconds": round(time.monotonic() - start, 2),
+            "status": "error", "exit_code": None, "stdout": "",
+            "stderr": "Aucune session utilisateur ouverte, ou privileges "
+                      "insuffisants : la commande n'a pas pu etre lancee.",
+            "duration_seconds": duration,
         }
-    return {
-        "status": "error", "exit_code": None, "stdout": "",
-        "stderr": "Aucune session utilisateur ouverte, ou privilèges insuffisants : "
-                  "la commande n'a pas pu être lancée dans la session.",
-        "duration_seconds": round(time.monotonic() - start, 2),
-    }
+    if exit_code is None:
+        # Process encore vivant au bout du delai : ce n'est pas un echec (une
+        # fenetre peut rester ouverte), mais on ne pretend pas connaitre le code.
+        return {
+            "status": "ok", "exit_code": None,
+            "stdout": note + " Toujours en cours apres %d s." % timeout,
+            "stderr": "", "duration_seconds": duration,
+        }
+    if exit_code == 0:
+        return {"status": "ok", "exit_code": 0, "stdout": note,
+                "stderr": "", "duration_seconds": duration}
+    return {"status": "error", "exit_code": exit_code, "stdout": note,
+            "stderr": "La commande a rendu le code %d." % exit_code,
+            "duration_seconds": duration}
 
 
 def _build_argv(shell_normalized: str, command_text: str) -> list[str]:

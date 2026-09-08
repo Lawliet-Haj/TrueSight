@@ -429,7 +429,9 @@ class AgentRunner:
 
         try:
             if run_as == "user":
-                outcome = cmd_exec.execute_in_user_session(shell, command_text)
+                outcome = cmd_exec.execute_in_user_session(
+                    shell, command_text, timeout_seconds
+                )
             else:
                 outcome = cmd_exec.execute(shell, command_text, timeout_seconds)
         except Exception as exc:  # noqa: BLE001 - filet ultime.

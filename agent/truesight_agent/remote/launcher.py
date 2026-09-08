@@ -219,7 +219,8 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
             pass
 
 
-def run_in_console_session(cmdline_str: str, label: str = "process") -> bool:
+def run_in_console_session(cmdline_str: str, label: str = "process",
+                           wait_seconds: float | None = None):
     """Lance une ligne de commande DANS la session de l'utilisateur connecté.
 
     Le service tourne en session 0 : tout ce qu'il exécute y reste. Or certaines
@@ -228,9 +229,17 @@ def run_in_console_session(cmdline_str: str, label: str = "process") -> bool:
     depuis la session 0 verrouille le bureau de la session 0, c'est-à-dire rien
     de visible : c'est pour cela que le bouton « Verrouiller » ne faisait rien.
 
-    Exige SYSTEM (SeTcbPrivilege) pour ``WTSQueryUserToken``. Renvoie True si le
-    process a été créé. Tolérant : journalise et renvoie False sinon (aucune
-    session ouverte, privilèges insuffisants…).
+    Exige SYSTEM (SeTcbPrivilege) pour ``WTSQueryUserToken``.
+
+    ``wait_seconds`` : si fourni, on ATTEND la fin du process et on renvoie son
+    VRAI code de retour. Sans cela on ne pourrait affirmer que « le lancement a
+    réussi », ce qui est trompeur — un process qui échoue aussitôt serait
+    rapporté comme un succès. Constaté en test : la commande ne produisait rien
+    alors que le résultat annonçait 0.
+
+    Renvoie ``(lancé, code_de_retour)`` ; le code vaut None si on n'a pas
+    attendu, ou si le process tourne encore au bout du délai. Tolérant :
+    journalise et renvoie ``(False, None)`` en cas d'échec.
     """
     if not _PYWIN32_AVAILABLE:
         _logger.error("pywin32 absent : impossible de lancer %s en session active.", label)
@@ -265,7 +274,7 @@ def run_in_console_session(cmdline_str: str, label: str = "process") -> bool:
         startup.lpDesktop = "winsta0\default"  # bureau interactif de l'utilisateur
         creation_flags = win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW
 
-        win32process.CreateProcessAsUser(
+        h_process, h_thread, _pid, _tid = win32process.CreateProcessAsUser(
             primary_token,
             None,            # application name (déduite de la ligne de commande)
             cmdline_str,     # command line
@@ -278,10 +287,26 @@ def run_in_console_session(cmdline_str: str, label: str = "process") -> bool:
             startup,
         )
         _logger.info("%s lancé dans la session console %s.", label, console_session_id)
-        return True
+        exit_code = None
+        try:
+            if wait_seconds is not None:
+                import win32event  # type: ignore
+                ms = max(1, int(wait_seconds * 1000))
+                if win32event.WaitForSingleObject(h_process, ms) == win32event.WAIT_OBJECT_0:
+                    exit_code = win32process.GetExitCodeProcess(h_process)
+                else:
+                    _logger.warning("%s : toujours en cours après %.0f s.", label, wait_seconds)
+        finally:
+            for h in (h_thread, h_process):
+                try:
+                    if h is not None:
+                        win32api.CloseHandle(h)
+                except Exception:  # noqa: BLE001
+                    pass
+        return True, exit_code
     except Exception as exc:  # noqa: BLE001 - jamais bloquant.
         _logger.error("Lancement de %s en session active impossible : %s", label, exc)
-        return False
+        return False, None
     finally:
         try:
             if environment is not None:
@@ -300,7 +325,10 @@ def _launch_in_active_session(token: str, ws_url: str, kind: str = "remote",
                               shell: str = "powershell", operator: str = "") -> bool:
     """Lance le helper dans la session console active via CreateProcessAsUser."""
     cmdline = _helper_command(token, ws_url, kind, shell, operator=operator)
-    return run_in_console_session(subprocess.list2cmdline(cmdline), label=f"helper ({kind})")
+    launched, _code = run_in_console_session(
+        subprocess.list2cmdline(cmdline), label=f"helper ({kind})"
+    )
+    return launched
 
 
 def _run_session_inline(token: str, ws_url: str, verify_tls: bool,

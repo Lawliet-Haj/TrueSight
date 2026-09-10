@@ -27,6 +27,15 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.10 : LE CLIC ATTEINT ENFIN L'INVITE UAC. L'injection se faisait depuis le
+# thread de reception ; or SendInput cible le bureau du thread APPELANT et
+# SetThreadDesktop REFUSE de basculer un thread qui possede deja une fenetre, un
+# hook ou un apartment COM. L'attache echouait donc en silence — le code
+# journalisait « re-attachee au bureau Winlogon » SANS regarder le resultat — et
+# les clics partaient sur le bureau Default pendant que l'image, capturee par un
+# autre thread bien attache, montrait l'invite. D'ou « je vois l'UAC mais je ne
+# peux pas cliquer dessus ». L'injection tourne desormais dans un thread DEDIE
+# qui ne possede rien, et l'echec d'attache est journalise en ERREUR.
 # 1.5.9 : LE MODE ELEVE N'AVAIT JAMAIS PU DEMARRER. Le lanceur demandait
 # win32security.TOKEN_ADJUST_SESSIONID, constante qui vit dans win32con : chaque
 # tentative levait un AttributeError avant la premiere ligne utile, donc la
@@ -91,7 +100,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.9"
+__version__ = "1.5.10"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

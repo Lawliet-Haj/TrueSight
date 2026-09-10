@@ -26,6 +26,7 @@ import base64
 import json
 import logging
 import os
+import queue
 import select
 import threading
 import time
@@ -104,6 +105,10 @@ class RemoteSession:
         # actif (Default ↔ Winlogon). Activé par le helper SYSTEM (--unattended).
         self._desktop_follow = desktop_follow
         self._inject_desk: str | None = None  # dernier bureau attaché côté injection
+        # Les entrées passent par une FILE consommée par un thread dédié : lui
+        # seul peut s'attacher au bureau d'entrée (cf. _inject_loop).
+        self._inject_queue: queue.Queue = queue.Queue(maxsize=2000)
+        self._inject_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._ws = None
         self._send_thread: threading.Thread | None = None
@@ -892,8 +897,8 @@ class RemoteSession:
             self._set_input_lock(bool(data.get("on")))
             return
         if msg_type == "send_sas":
-            if self._desktop_follow:
-                self._ensure_inject_desktop()
+            # SendSAS agit au niveau du système : aucune attache de bureau
+            # nécessaire (et l'attache appartient au thread d'injection).
             inject_mod.send_sas()
             return
         if msg_type == "lock_on_disconnect":
@@ -934,22 +939,69 @@ class RemoteSession:
             return
         # Sinon : entrée souris/clavier effective.
         if self._desktop_follow:
-            self._ensure_inject_desktop()
+            self._queue_input(data)
+            return
         inject_mod.apply_input_message(self._injector, data)
 
+    # -- Injection sur le bureau d'entrée (thread dédié) ----------------------
+    def _queue_input(self, data: dict) -> None:
+        """Confie une entrée au thread d'injection (FIFO, ordre préservé)."""
+        try:
+            self._inject_queue.put_nowait(data)
+        except queue.Full:
+            _logger.debug("File d'injection saturée : entrée ignorée.")
+
+    def _inject_loop(self) -> None:
+        """Thread DÉDIÉ à l'injection des entrées, en mode non-assisté / élevé.
+
+        ``SendInput`` cible le bureau du thread APPELANT, et ``SetThreadDesktop``
+        refuse de basculer un thread qui possède déjà une fenêtre, un hook ou un
+        apartment COM — une fenêtre OLE cachée suffit. Le thread de réception en
+        avait : l'attache échouait, les clics continuaient donc de partir sur le
+        bureau « Default » pendant que l'image, capturée par un AUTRE thread bien
+        attaché, montrait l'invite UAC. Symptôme exact : « je vois l'UAC mais je
+        ne peux pas cliquer dessus ». On injecte donc depuis un thread qui ne
+        possède rien d'autre, ce qui garantit la bascule de bureau.
+        """
+        while not self._should_stop():
+            try:
+                data = self._inject_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if data is None:                      # sentinelle d'arrêt
+                return
+            try:
+                self._ensure_inject_desktop()
+                inject_mod.apply_input_message(self._injector, data)
+            except Exception as exc:  # noqa: BLE001 - une entrée perdue n'arrête rien.
+                _logger.debug("Injection d'une entrée impossible : %s", exc)
+
     def _ensure_inject_desktop(self) -> None:
-        """Mode non-assisté : attache le thread de réception (qui injecte) au bureau
-        d'entrée actif, et ré-attache à chaque bascule — ``SendInput`` cible le
-        bureau du thread appelant."""
+        """Attache le thread d'injection au bureau d'entrée actif.
+
+        On VÉRIFIE le résultat : la version précédente journalisait la réussite
+        sans le regarder, ce qui a masqué un échec d'attache pendant tout un
+        test — le journal affirmait « ré-attachée au bureau Winlogon » alors que
+        rien n'était attaché. Un échec n'est pas mémorisé : on réessaie à
+        l'entrée suivante.
+        """
         try:
             from . import desktop as desk
             name = desk.current_input_desktop_name()
-            if name and name != self._inject_desk:
-                desk.attach_thread_to_input_desktop()
-                self._inject_desk = name
-                _logger.info("Injection ré-attachée au bureau : %s", name)
+            if not name or name == self._inject_desk:
+                return
+            attached = desk.attach_thread_to_input_desktop()
+            if attached:
+                self._inject_desk = attached
+                _logger.info("Injection attachée au bureau : %s", attached)
+            else:
+                _logger.error(
+                    "Injection : attache au bureau « %s » REFUSÉE — les clics "
+                    "n'atteindront pas ce bureau (fenêtre ou COM sur le thread ?).",
+                    name,
+                )
         except Exception as exc:  # noqa: BLE001
-            _logger.debug("Ré-attachement de l'injection impossible : %s", exc)
+            _logger.error("Ré-attachement de l'injection impossible : %s", exc)
 
     # -- Exécution ------------------------------------------------------------
     def run(self) -> None:
@@ -988,6 +1040,14 @@ class RemoteSession:
             target=self._cursor_loop, name="truesight-remote-cursor", daemon=True
         )
         self._cursor_thread.start()
+
+        # Thread d'INJECTION : indispensable en mode non-assisté / élevé, seul
+        # un thread vierge peut basculer de bureau (cf. _inject_loop).
+        if self._desktop_follow:
+            self._inject_thread = threading.Thread(
+                target=self._inject_loop, name="truesight-remote-inject", daemon=True
+            )
+            self._inject_thread.start()
 
         try:
             self._recv_loop()

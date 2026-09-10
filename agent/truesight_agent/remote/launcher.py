@@ -158,9 +158,16 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
             return False
 
         # Jeton SYSTEM du service courant → dupliqué en jeton primaire reciblable.
+        # TOKEN_ADJUST_SESSIONID vit dans win32con, PAS dans win32security : l'y
+        # chercher levait un AttributeError avant même la première ligne utile,
+        # donc le mode élevé retombait TOUJOURS sur le compagnon (droits de
+        # l'utilisateur) — l'invite UAC restait inclicquable, et invisible dès
+        # que le bureau sécurisé était actif. Repli sur la valeur littérale
+        # (0x0100) plutôt que de dépendre d'une version de pywin32.
+        adjust_session = getattr(win32con, "TOKEN_ADJUST_SESSIONID", 0x0100)
         access = (win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
                   | win32security.TOKEN_ASSIGN_PRIMARY | win32security.TOKEN_ADJUST_DEFAULT
-                  | win32security.TOKEN_ADJUST_SESSIONID)
+                  | adjust_session)
         proc_token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), access)
         try:
             dup_token = win32security.DuplicateTokenEx(
@@ -207,11 +214,9 @@ def _launch_in_active_session_as_system(token: str, ws_url: str,
         _logger.error("Lancement non-assisté (SYSTEM) impossible : %s", exc)
         return False
     finally:
-        try:
-            if environment is not None:
-                win32profile.DestroyEnvironmentBlock(environment)
-        except Exception:  # noqa: BLE001
-            pass
+        # Pas de DestroyEnvironmentBlock : pywin32 renvoie un DICTIONNAIRE déjà
+        # converti et libère le bloc natif lui-même. La fonction n'existe pas
+        # dans le module — l'appeler échouait à chaque passage, sans bruit.
         try:
             if dup_token is not None:
                 win32api.CloseHandle(dup_token)
@@ -308,11 +313,9 @@ def run_in_console_session(cmdline_str: str, label: str = "process",
         _logger.error("Lancement de %s en session active impossible : %s", label, exc)
         return False, None
     finally:
-        try:
-            if environment is not None:
-                win32profile.DestroyEnvironmentBlock(environment)
-        except Exception:  # noqa: BLE001
-            pass
+        # Pas de DestroyEnvironmentBlock : pywin32 renvoie un DICTIONNAIRE déjà
+        # converti et libère le bloc natif lui-même. La fonction n'existe pas
+        # dans le module — l'appeler échouait à chaque passage, sans bruit.
         for token_handle in (primary_token, user_token):
             try:
                 if token_handle is not None:
@@ -405,9 +408,12 @@ def start_session(token: str, ws_url: str, verify_tls: bool = True,
                 if _launch_in_active_session_as_system(token, ws_url, kind, shell,
                                                        operator=operator):
                     return True
-                _logger.warning(
-                    "Helper SYSTEM indisponible : repli sur le compagnon (les "
-                    "fenêtres élevées ne seront pas cliquables)."
+                _logger.error(
+                    "MODE ÉLEVÉ DEMANDÉ MAIS INDISPONIBLE : repli sur le compagnon. "
+                    "Les fenêtres élevées (invite UAC, installeur) ne seront ni "
+                    "cliquables, ni même visibles si le bureau sécurisé est actif. "
+                    "La cause exacte est dans la ligne « Lancement non-assisté "
+                    "(SYSTEM) impossible » juste au-dessus."
                 )
 
             # 1) Compagnon en session utilisateur (fiable pour terminal ET bureau).

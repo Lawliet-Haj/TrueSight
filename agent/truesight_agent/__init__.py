@@ -27,6 +27,18 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.9 : LE MODE ELEVE N'AVAIT JAMAIS PU DEMARRER. Le lanceur demandait
+# win32security.TOKEN_ADJUST_SESSIONID, constante qui vit dans win32con : chaque
+# tentative levait un AttributeError avant la premiere ligne utile, donc la
+# session retombait TOUJOURS sur le compagnon (droits de l'utilisateur) — invite
+# UAC inclicquable, et invisible des que le bureau securise est actif. Le journal
+# de l'agent le disait mot pour mot. Corrige, plus DestroyEnvironmentBlock (qui
+# n'existe pas non plus dans pywin32) et un repli desormais journalise en ERREUR.
+# Meme version : le cooldown d'auto-update SURVIT au redemarrage du service
+# (fichier update-attempts.json, recul 10 min -> 20 -> 40, plafond 24 h). Un
+# poste ou le nouveau service ne demarre pas re-telechargeait sinon le paquet
+# de 37 Mo toutes les 45 s, indefiniment : le compteur vivait en memoire, que
+# la bascule remettait a zero en redemarrant l'agent.
 # 1.5.8 : l'invite UAC apparait enfin cote operateur. En prise de main elevee, la
 # capture DXGI est liee au bureau choisi a sa creation : chaque bascule (invite
 # UAC sur le bureau securise, verrouillage, changement d'ecran) obligeait l'agent
@@ -79,7 +91,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.8"
+__version__ = "1.5.9"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -17,6 +17,7 @@ jamais sur une erreur réseau ou de collecte).
 
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
 import os
@@ -111,7 +112,6 @@ class AgentRunner:
         # Auto-update : une seule bascule à la fois ; cooldown par version tentée.
         self._update_lock = threading.Lock()
         self._update_in_progress = False
-        self._update_attempts: dict[str, float] = {}
 
     # -- Cycle de vie ---------------------------------------------------------
     def stop(self) -> None:
@@ -257,10 +257,13 @@ class AgentRunner:
         with self._update_lock:
             if self._update_in_progress:
                 return
-            now = time.monotonic()
-            if now - self._update_attempts.get(version, 0.0) < _UPDATE_RETRY_COOLDOWN_SECONDS:
+            # Le cooldown doit SURVIVRE au redémarrage du service : la bascule
+            # elle-même redémarre l'agent, donc un compteur en mémoire était
+            # remis à zéro à chaque essai. Constaté le 2026-09-10 sur un poste
+            # où le service ne repartait pas : rollback, puis re-téléchargement
+            # du paquet de 37 Mo toutes les 45 s, en boucle, pendant 10 minutes.
+            if not self._update_attempt_allowed(version):
                 return
-            self._update_attempts[version] = now
             self._update_in_progress = True
 
         def _worker() -> None:
@@ -276,6 +279,63 @@ class AgentRunner:
 
         thread = threading.Thread(target=_worker, name="truesight-update", daemon=True)
         thread.start()
+
+    def _update_state_path(self) -> str:
+        """Fichier d'état des tentatives d'auto-update (répertoire de données)."""
+        return os.path.join(cfg.get_data_dir(), "update-attempts.json")
+
+    def _update_attempt_allowed(self, version: str) -> bool:
+        """Autorise (et enregistre) une tentative de bascule vers ``version``.
+
+        Recul PROGRESSIF : 10 min après le 1er échec, puis 20, 40… plafonné à
+        24 h. Un poste qui n'arrive pas à démarrer une version cesse ainsi de
+        télécharger le paquet en boucle, tout en réessayant de temps en temps —
+        une version corrigée publiée entre-temps portera un autre numéro et
+        repartira, elle, sans attendre.
+        """
+        path = self._update_state_path()
+        state: dict = {}
+        try:
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    state = loaded
+        except (OSError, ValueError) as exc:
+            _logger.debug("État des tentatives d'update illisible (%s) : ignoré.", exc)
+
+        now = time.time()
+        entry = state.get(version) if isinstance(state.get(version), dict) else None
+        if entry:
+            fails = max(1, int(entry.get("fails", 1)))
+            wait = min(_UPDATE_RETRY_COOLDOWN_SECONDS * (2 ** (fails - 1)), 86400)
+            since = now - float(entry.get("last", 0.0))
+            if since < wait:
+                _logger.info(
+                    "Auto-update %s : %d tentative(s) déjà sans succès, prochaine "
+                    "dans %d min (on ne re-télécharge pas en boucle).",
+                    version, fails, int((wait - since) / 60) + 1,
+                )
+                return False
+            entry = {"fails": fails + 1}
+        else:
+            entry = {"fails": 1}
+        entry["last"] = now
+
+        # Purge les versions désormais installées ou dépassées : l'état ne doit
+        # pas grossir indéfiniment, et une version atteinte n'a plus d'échec.
+        from . import updater as _upd
+        state = {
+            v: e for v, e in state.items()
+            if isinstance(e, dict) and v != version and _upd.is_newer(v)
+        }
+        state[version] = entry
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(state, fh)
+        except OSError as exc:
+            _logger.debug("État des tentatives d'update non enregistré (%s).", exc)
+        return True
 
     def _schedule_remote_dedup_reset(self, session_id: str) -> None:
         """Oublie ``session_id`` du dédoublonnage après le TTL (thread minuteur)."""

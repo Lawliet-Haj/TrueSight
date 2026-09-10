@@ -27,6 +27,13 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.8 : l'invite UAC apparait enfin cote operateur. En prise de main elevee, la
+# capture DXGI est liee au bureau choisi a sa creation : chaque bascule (invite
+# UAC sur le bureau securise, verrouillage, changement d'ecran) obligeait l'agent
+# a terminer la session. Le relais fermait alors le viewer avec le code 1000, lu
+# comme une fin NORMALE : le navigateur ne revenait jamais. L'agent ANNONCE
+# desormais la bascule (message « resume ») et le viewer reprend en 350 ms sur un
+# helper neuf attache au bon bureau, en reappliquant l'ecran choisi.
 # 1.5.7 : une commande lancee dans la session utilisateur remonte son VRAI code de
 # retour (on attend le process). Avant, elle annoncait 0 des que le lancement avait
 # reussi — un process qui echouait aussitot passait pour un succes.
@@ -72,7 +79,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.7"
+__version__ = "1.5.8"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

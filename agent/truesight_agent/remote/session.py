@@ -274,11 +274,17 @@ class RemoteSession:
                 # Bascule de bureau (login terminé, UAC, verrouillage) ou changement
                 # d'écran : on NE recrée PAS la duplication (crash) → fin de session,
                 # le viewer se reconnecte sur un helper neuf attaché au bon bureau.
-                if desk.current_input_desktop_name() != desk_name:
-                    _logger.info("Bascule de bureau (%s → autre) : fin de session (reconnexion attendue).", desk_name)
+                now_desk = desk.current_input_desktop_name()
+                if now_desk != desk_name:
+                    _logger.info(
+                        "Bascule de bureau (%s → %s) : fin de session, REPRISE demandée au viewer.",
+                        desk_name, now_desk or "?",
+                    )
+                    self._request_resume("desktop", now_desk)
                     break
                 if self._capturer.monitor_index != mon_idx:
-                    _logger.info("Changement d'écran demandé : fin de session (reconnexion attendue).")
+                    _logger.info("Changement d'écran demandé : fin de session, REPRISE demandée au viewer.")
+                    self._request_resume("monitor")
                     break
 
                 got = capture_dxgi.grab(cam)
@@ -398,6 +404,22 @@ class RemoteSession:
         except Exception as exc:  # noqa: BLE001
             _logger.debug("Envoi d'un message texte impossible : %s", exc)
             return False
+
+    def _request_resume(self, why: str, desk_name: str | None = None) -> None:
+        """Prévient le viewer que la coupure est TECHNIQUE et qu'il doit REVENIR.
+
+        La duplication DXGI est liée au bureau (et à l'écran) choisis à sa
+        création : à chaque bascule — invite UAC, verrouillage, connexion — il
+        faut un helper NEUF attaché au nouveau bureau, donc terminer la session.
+        Le relais ferme alors le viewer avec le code 1000, que le navigateur lit
+        comme une fin NORMALE : sans ce message il ne revenait jamais, et
+        l'opérateur ne voyait tout simplement pas l'invite UAC apparaître —
+        symptôme « j'ai testé un UAC et je n'ai pas eu la fenêtre ».
+        """
+        payload: dict = {"t": "resume", "why": why}
+        if desk_name:
+            payload["desk"] = desk_name
+        self._send_text(payload)
 
     def _send_metadata(self) -> None:
         """Transmet au viewer les infos de confort : liste des écrans + utilisateur connecté."""

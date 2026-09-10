@@ -70,6 +70,11 @@
   var sessionId = null;
   var controlling = false;     // le viewer envoie-t-il les entrées ?
   var currentMonitor = 0;
+  // Écran DEMANDÉ par l'opérateur. Distinct de currentMonitor, qui n'est que
+  // l'écran annoncé par la dernière trame reçue : en prise de main élevée, un
+  // changement d'écran termine la session (la capture DXGI est liée à l'écran),
+  // et sans mémoire du choix la reprise repartait toujours sur l'écran 1.
+  var wantedMonitor = 0;
   var canvasW = elCanvas.width;
   var canvasH = elCanvas.height;
 
@@ -88,6 +93,17 @@
   // En RECONNEXION on patiente plus longtemps : le poste peut être en train de
   // redémarrer (reprise après reboot), ce qui dépasse largement 20 s.
   var NO_FRAME_RECONNECT_MS = 45000;
+
+  // --- REPRISE technique (bascule de bureau, changement d'écran) ---
+  // En prise de main ÉLEVÉE, la capture DXGI est liée au bureau choisi à sa
+  // création : une invite UAC (bureau sécurisé), un verrouillage ou un
+  // changement d'écran obligent l'agent à terminer la session et à repartir
+  // d'un helper neuf. Le relais ferme alors le viewer avec le code 1000, qu'on
+  // lit comme une fin NORMALE : sans ce drapeau on ne revenait jamais, donc
+  // l'invite UAC n'apparaissait JAMAIS côté opérateur.
+  var resumePending = false;       // l'agent a annoncé une coupure technique
+  var resumeLabel = "";            // ce qu'on affiche pendant la reprise
+  var RESUME_DELAY_MS = 350;       // le poste est là : on revient tout de suite
 
   // --- Compteurs fps / latence ---
   var frameCount = 0;
@@ -258,6 +274,22 @@
       if (userStopped) return;
       startSession(true);
     }, delay);
+  }
+
+  // Reprise IMMÉDIATE après une coupure annoncée par l'agent (bascule de bureau
+  // ou changement d'écran). On consomme le budget de reconnexion — remis à zéro
+  // dès la première image reçue — pour ne pas boucler indéfiniment si le poste
+  // enchaîne les bascules.
+  function scheduleResume(label) {
+    reconnectAttempt += 1;
+    setLiveState("connecting");
+    setPhase(label || "Reprise de la session…");
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (userStopped) return;
+      startSession(true);
+    }, RESUME_DELAY_MS);
   }
 
   // Le relais est connecté mais l'agent n'envoie aucune image : on interroge
@@ -500,6 +532,9 @@
       // fois, à sa connexion, et le relais la JETTE si notre socket n'est pas
       // encore appariée — d'où un sélecteur d'écran absent une fois sur deux.
       sendInput({ t: "request_monitors" });
+      // Réapplique l'écran choisi : une reprise (bascule de bureau, changement
+      // d'écran) repart sur un helper NEUF, qui capture l'écran 1 par défaut.
+      if (wantedMonitor > 0) sendInput({ t: "set_monitor", i: wantedMonitor });
     };
 
     ws.onmessage = function (ev) {
@@ -519,6 +554,16 @@
       var code = ev ? ev.code : 0;
       var normal = (code === 1000 || code === 1005);
       clearNoFrameTimer();
+
+      // Coupure ANNONCÉE par l'agent (bascule de bureau / changement d'écran) :
+      // elle arrive avec le code 1000, donc AVANT le test de normalité.
+      if (!userStopped && resumePending && reconnectAttempt < MAX_RECONNECT) {
+        resumePending = false;
+        teardownTransport();
+        scheduleResume(resumeLabel);
+        return;
+      }
+      resumePending = false;
 
       // Coupure inattendue → on reconnecte automatiquement (budget limité).
       if (!userStopped && !normal && reconnectAttempt < MAX_RECONNECT) {
@@ -716,6 +761,18 @@
       maybeAdapt(rtt);
     } else if (msg.t === "monitors" && Array.isArray(msg.list)) {
       renderMonitorButtons(msg.list);
+    } else if (msg.t === "resume") {
+      // L'agent va terminer la session pour une raison TECHNIQUE, pas parce que
+      // la prise en main est finie : on arme la reprise (cf. ws.onclose).
+      resumePending = true;
+      if (msg.why === "monitor") {
+        resumeLabel = "Changement d'écran…";
+      } else if ((msg.desk || "").toLowerCase() === "winlogon") {
+        resumeLabel = "Fenêtre Windows sécurisée (UAC) — reprise…";
+      } else {
+        resumeLabel = "Bascule de bureau sur le poste — reprise…";
+      }
+      setPhase(resumeLabel);
     } else if (msg.t === "user" && elUser) {
       elUser.textContent = msg.name || "—";
     } else if (msg.t === "cursor") {
@@ -909,6 +966,7 @@
       b.style.padding = "0 12px";
       b.textContent = "Écran " + (i + 1);
       b.addEventListener("click", function () {
+        wantedMonitor = i;
         sendInput({ t: "set_monitor", i: i });
         sendInput({ t: "request_keyframe" });
       });

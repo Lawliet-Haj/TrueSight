@@ -379,11 +379,27 @@ class ScreenCapturer:
         _logger.info("Largeur max réglée à %d px.", self.max_width)
 
     def set_monitor(self, index: int) -> None:
-        """Change le moniteur capturé (0-based) ; force une keyframe."""
+        """Change le moniteur capturé (0-based) ; force une keyframe.
+
+        L'index est BORNÉ au nombre réel d'écrans. Sans cela, un index hors
+        limites restait mémorisé alors que la capture retombait sur l'écran 0 :
+        en prise de main élevée, où un changement d'écran termine la session, la
+        différence était perpétuelle et la session redémarrait en boucle toutes
+        les deux secondes — l'opérateur ne pouvait plus rien cliquer. Vécu sur
+        un poste à UN seul écran qui recevait « écran 2 ».
+        """
         try:
-            self.monitor_index = max(0, int(index))
+            wanted = max(0, int(index))
         except (TypeError, ValueError):
             return
+        count = len(list_monitors())
+        if count and wanted >= count:
+            _logger.warning(
+                "Écran %d demandé alors que le poste en compte %d : demande ignorée.",
+                wanted, count,
+            )
+            return
+        self.monitor_index = wanted
         self._force_keyframe = True
         _logger.info("Moniteur capturé réglé sur l'index %d.", self.monitor_index)
 

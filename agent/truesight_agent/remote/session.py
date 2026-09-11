@@ -31,6 +31,7 @@ import select
 import threading
 import time
 
+from .. import config as cfg
 from . import capture as capture_mod
 from . import inject as inject_mod
 
@@ -280,7 +281,9 @@ class RemoteSession:
                 # d'écran : on NE recrée PAS la duplication (crash) → fin de session,
                 # le viewer se reconnecte sur un helper neuf attaché au bon bureau.
                 now_desk = desk.current_input_desktop_name()
-                if now_desk != desk_name:
+                # Un échec de lecture (None, momentané) n'est PAS une bascule :
+                # le prendre pour tel terminait la session pour rien.
+                if now_desk and now_desk != desk_name:
                     _logger.info(
                         "Bascule de bureau (%s → %s) : fin de session, REPRISE demandée au viewer.",
                         desk_name, now_desk or "?",
@@ -288,7 +291,10 @@ class RemoteSession:
                     self._request_resume("desktop", now_desk)
                     break
                 if self._capturer.monitor_index != mon_idx:
-                    _logger.info("Changement d'écran demandé : fin de session, REPRISE demandée au viewer.")
+                    _logger.info("Changement d'écran demandé (%d → %d) : fin de session, "
+                                 "REPRISE demandée au viewer.", mon_idx,
+                                 self._capturer.monitor_index)
+                    _remember_monitor(self._capturer.monitor_index)
                     self._request_resume("monitor")
                     break
 
@@ -1016,6 +1022,13 @@ class RemoteSession:
             return
 
         self._started_at = time.monotonic()
+        # Reprend l'écran choisi par l'opérateur avant la bascule : à faire AVANT
+        # que la boucle d'envoi ne crée la duplication DXGI, sinon la différence
+        # relancerait aussitôt une fin de session.
+        if self._desktop_follow:
+            remembered = _recall_monitor()
+            if remembered is not None and remembered != self._capturer.monitor_index:
+                self._capturer.set_monitor(remembered)
         # Keyframe d'amorçage : le viewer doit recevoir une image dès l'appairage.
         self._capturer.request_keyframe()
         # Infos de confort au viewer (écrans + utilisateur connecté).
@@ -1177,6 +1190,47 @@ def _to_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+# Écran choisi par l'opérateur, MÉMORISÉ entre deux helpers. En prise de main
+# élevée, changer d'écran termine la session (la duplication DXGI est liée à
+# l'écran choisi à sa création) : le helper suivant repartait sur l'écran 0, le
+# viewer redemandait l'écran 2, et la session se terminait encore — une boucle
+# de deux secondes où plus rien n'était cliquable. On passe donc le choix par un
+# petit fichier d'état, volontairement PÉRISSABLE : une session ouverte plus
+# tard ne doit pas hériter du choix d'hier.
+_MONITOR_STATE_TTL_SECONDS = 120.0
+
+
+def _monitor_state_path() -> str:
+    return os.path.join(cfg.get_data_dir(), "remote-monitor.json")
+
+
+def _remember_monitor(index: int) -> None:
+    """Note l'écran demandé, pour le helper qui prendra la suite."""
+    try:
+        with open(_monitor_state_path(), "w", encoding="utf-8") as fh:
+            json.dump({"index": int(index), "at": time.time()}, fh)
+    except (OSError, ValueError) as exc:
+        _logger.debug("Écran demandé non mémorisé (%s).", exc)
+
+
+def _recall_monitor() -> int | None:
+    """Écran mémorisé s'il est récent, sinon None (et le fichier est effacé)."""
+    path = _monitor_state_path()
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        fresh = (time.time() - float(data.get("at", 0.0))) <= _MONITOR_STATE_TTL_SECONDS
+        if not fresh:
+            os.remove(path)
+            return None
+        return int(data.get("index", 0))
+    except (OSError, ValueError, TypeError) as exc:
+        _logger.debug("Écran mémorisé illisible (%s).", exc)
+        return None
 
 
 def _console_user_name() -> str:

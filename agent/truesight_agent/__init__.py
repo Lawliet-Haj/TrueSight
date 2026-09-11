@@ -27,6 +27,15 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.11 : CORRECTIF DE MA REGRESSION 1.5.8 — boucle de reprise. Un index
+# d'ecran hors limites etait accepte tel quel (poste a UN ecran recevant « ecran
+# 2 ») : la capture retombait sur l'ecran 0, l'ecart etait donc perpetuel et, en
+# mode eleve ou un changement d'ecran termine la session, celle-ci redemarrait
+# toutes les deux secondes — plus rien n'etait cliquable. L'index est desormais
+# BORNE au nombre reel d'ecrans, l'ecran choisi SURVIT a la reprise (fichier
+# d'etat perissable, 120 s), une lecture de bureau qui echoue n'est plus prise
+# pour une bascule, et le viewer arrete la session au-dela de 5 reprises en 30 s
+# au lieu de tourner a vide en silence.
 # 1.5.10 : LE CLIC ATTEINT ENFIN L'INVITE UAC. L'injection se faisait depuis le
 # thread de reception ; or SendInput cible le bureau du thread APPELANT et
 # SetThreadDesktop REFUSE de basculer un thread qui possede deja une fenetre, un
@@ -100,7 +109,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.10"
+__version__ = "1.5.11"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -104,6 +104,12 @@
   var resumePending = false;       // l'agent a annoncé une coupure technique
   var resumeLabel = "";            // ce qu'on affiche pendant la reprise
   var RESUME_DELAY_MS = 350;       // le poste est là : on revient tout de suite
+  // Une reprise qui s'enchaîne sans fin (bascule immédiatement re-déclenchée)
+  // rendait la session inutilisable SANS rien annoncer : elle durait deux
+  // secondes, l'opérateur croyait que ses clics ne passaient pas. On borne.
+  var resumeTimes = [];            // horodatages des reprises récentes
+  var RESUME_WINDOW_MS = 30000;
+  var RESUME_MAX_IN_WINDOW = 5;
 
   // --- Compteurs fps / latence ---
   var frameCount = 0;
@@ -532,9 +538,9 @@
       // fois, à sa connexion, et le relais la JETTE si notre socket n'est pas
       // encore appariée — d'où un sélecteur d'écran absent une fois sur deux.
       sendInput({ t: "request_monitors" });
-      // Réapplique l'écran choisi : une reprise (bascule de bureau, changement
-      // d'écran) repart sur un helper NEUF, qui capture l'écran 1 par défaut.
-      if (wantedMonitor > 0) sendInput({ t: "set_monitor", i: wantedMonitor });
+      // L'écran choisi est réappliqué à la RÉCEPTION de la liste (cf. msg
+      // « monitors ») : l'envoyer ici, à l'aveugle, pouvait demander un écran
+      // que ce poste-là ne possède pas.
     };
 
     ws.onmessage = function (ev) {
@@ -559,6 +565,19 @@
       // elle arrive avec le code 1000, donc AVANT le test de normalité.
       if (!userStopped && resumePending && reconnectAttempt < MAX_RECONNECT) {
         resumePending = false;
+        var nowMs = Date.now();
+        resumeTimes = resumeTimes.filter(function (t) { return nowMs - t < RESUME_WINDOW_MS; });
+        resumeTimes.push(nowMs);
+        if (resumeTimes.length > RESUME_MAX_IN_WINDOW) {
+          resumeTimes = [];
+          userStopped = true;
+          teardownTransport();
+          teardown();
+          showError("Le poste enchaîne les bascules d'écran ou de bureau : la session "
+            + "repartait en boucle. Session arrêtée pour ne pas tourner à vide — "
+            + "relancez « Prendre la main ».");
+          return;
+        }
         teardownTransport();
         scheduleResume(resumeLabel);
         return;
@@ -761,6 +780,12 @@
       maybeAdapt(rtt);
     } else if (msg.t === "monitors" && Array.isArray(msg.list)) {
       renderMonitorButtons(msg.list);
+      // Reprise : le helper neuf capture l'écran 1 par défaut. On réapplique le
+      // choix de l'opérateur, mais SEULEMENT s'il existe sur ce poste.
+      if (wantedMonitor > 0 && wantedMonitor < msg.list.length
+          && wantedMonitor !== currentMonitor) {
+        sendInput({ t: "set_monitor", i: wantedMonitor });
+      }
     } else if (msg.t === "resume") {
       // L'agent va terminer la session pour une raison TECHNIQUE, pas parce que
       // la prise en main est finie : on arme la reprise (cf. ws.onclose).
@@ -955,6 +980,7 @@
     if (!elMonitors) return;
     // Conserve le libellé, retire les anciens boutons.
     Array.prototype.slice.call(elMonitors.querySelectorAll(".btn")).forEach(function (b) { b.remove(); });
+    if (wantedMonitor >= list.length) wantedMonitor = 0;
     if (list.length <= 1) { elMonitors.classList.add("hidden"); return; }
     elMonitors.classList.remove("hidden");
     list.forEach(function (_, i) {

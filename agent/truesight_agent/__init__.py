@@ -27,6 +27,12 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.12 : les interpreteurs sont lances par leur CHEMIN ABSOLU. « powershell »
+# et « cmd » passes par leur nom nu laissaient CreateProcess les chercher dans le
+# PATH, qui n'est pas celui d'une session interactive quand on est un SERVICE :
+# sur un poste, TOUTE commande PowerShell echouait en « [WinError 5] Acces
+# refuse » alors que le meme binaire, appele par son chemin complet depuis ce
+# meme agent, s'executait parfaitement. Le poste n'y etait pour rien.
 # 1.5.11 : CORRECTIF DE MA REGRESSION 1.5.8 — boucle de reprise. Un index
 # d'ecran hors limites etait accepte tel quel (poste a UN ecran recevant « ecran
 # 2 ») : la capture retombait sur l'ecran 0, l'ecart etait donc perpetuel et, en
@@ -109,7 +115,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.11"
+__version__ = "1.5.12"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

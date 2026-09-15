@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import subprocess
 import time
 
@@ -171,6 +172,28 @@ def execute_in_user_session(shell: str, command_text: str,
             "duration_seconds": duration}
 
 
+def _interpreter_path(name: str) -> str:
+    """Chemin ABSOLU de l'interpréteur, avec repli sur le nom nu.
+
+    Lancer « powershell » ou « cmd » par leur nom seul laisse ``CreateProcess``
+    les chercher dans le PATH — et dans le contexte du SERVICE ce PATH n'est pas
+    celui d'une session interactive. Constaté le 2026-09-15 : toute commande
+    PowerShell échouait sur un poste avec « [WinError 5] Accès refusé », alors
+    que le MÊME binaire, appelé par son chemin complet depuis ce même agent,
+    s'exécutait sans broncher (y compris en -EncodedCommand). Le poste n'y était
+    pour rien : c'est la résolution par le PATH qui tombait sur autre chose.
+    """
+    root = os.environ.get("SystemRoot") or r"C:\Windows"
+    candidates = {
+        "powershell": os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        "cmd": os.path.join(root, "System32", "cmd.exe"),
+    }
+    path = candidates.get(name)
+    if path and os.path.isfile(path):
+        return path
+    return name
+
+
 def _build_argv(shell_normalized: str, command_text: str) -> list[str]:
     """Construit la liste d'arguments selon l'interpréteur demandé."""
     if shell_normalized == "powershell":
@@ -183,7 +206,7 @@ def _build_argv(shell_normalized: str, command_text: str) -> list[str]:
         script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " + (command_text or "")
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         return [
-            "powershell",
+            _interpreter_path("powershell"),
             "-NoProfile",
             "-NonInteractive",
             "-EncodedCommand",
@@ -191,7 +214,7 @@ def _build_argv(shell_normalized: str, command_text: str) -> list[str]:
         ]
     # 'cmd' par défaut (et pour toute valeur non reconnue). cmd.exe reçoit la
     # commande comme un seul argument et interprète lui-même &&, |, > etc.
-    return ["cmd", "/c", command_text]
+    return [_interpreter_path("cmd"), "/c", command_text]
 
 
 def _decode(data) -> str:

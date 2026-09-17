@@ -551,6 +551,7 @@ body.wz-focus .workzone .tabpanel:not(.hidden){flex:1;min-height:0}
 .auth-brand .wm b{color:var(--signal)}
 .auth-sub{text-align:center;font-size:12.5px;color:var(--dim);margin:8px 0 22px;position:relative;z-index:1}
 .auth-form{display:flex;flex-direction:column;gap:15px;position:relative;z-index:1}
+.auth-hint{font-size:11.5px;color:var(--faint);margin:-4px 0 2px;position:relative;z-index:1}
 .field{display:flex;flex-direction:column;gap:6px}
 .field label{font-family:var(--font-mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}
 .field input{
@@ -936,3 +937,6 @@ pre.batch-out {
 .ts-modal-field .input { width: 100%; }
 .ts-modal-field textarea.input { resize: vertical; min-height: 120px; }
 .input.mono { font-family: var(--font-mono); font-size: 12px; }
+
+/* Lien d'invitation affiché quand l'e-mail n'a pas pu partir. */
+.invite-link{display:flex;gap:8px;align-items:center;margin-top:8px;width:100%}

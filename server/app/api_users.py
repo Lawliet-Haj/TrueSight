@@ -14,11 +14,14 @@ sur son propre compte. Toute action est tracée dans le journal d'audit (jamais 
 mot de passe en clair).
 """
 import re
+import secrets
 import uuid
 
 from flask import Blueprint, g, jsonify, request
 
 from .extensions import db
+from .invitations import send_invitation
+from .mailer import mail_status
 from .models import Command, RemoteSession, User
 from .models import utcnow
 from .security import hash_password, superadmin_required, write_audit
@@ -51,12 +54,28 @@ def _serialize(user: User, current: User) -> dict:
     return {
         "id": str(user.id),
         "email": user.email,
+        "name": user.name or "",
         "role": user.role,
         "is_active": user.is_active,
         "mfa_enabled": bool(user.mfa_enabled),
         "created_at": _iso_utc(user.created_at),
         "is_self": user.id == current.id,
+        # « invité » = une invitation est posée et n'a pas encore servi : le
+        # compte existe mais personne ne s'y est jamais connecté.
+        "invited": bool(user.invite_token_hash),
+        "invited_at": _iso_utc(user.invited_at),
+        "invite_expires_at": _iso_utc(user.invite_expires_at),
     }
+
+
+def _random_password() -> str:
+    """Mot de passe que PERSONNE ne connaît.
+
+    Un compte invité doit être inutilisable tant que la personne n'a pas choisi
+    son mot de passe : on pose donc une valeur aléatoire jamais affichée ni
+    journalisée. Seul le lien d'invitation permet d'en définir un vrai.
+    """
+    return secrets.token_urlsafe(32)
 
 
 def _active_superadmin_count() -> int:
@@ -94,16 +113,24 @@ def list_users():
 @bp.post("/users")
 @superadmin_required
 def create_user():
-    """Crée un compte {email, password, role}. Email unique, mot de passe ≥ 8."""
+    """Crée un compte {email, name, role} et l'INVITE.
+
+    Aucun mot de passe n'est saisi ici : la personne reçoit un lien à usage
+    unique et choisit le sien. Un mot de passe transmis par messagerie est un
+    mot de passe partagé, et il survit dans la conversation.
+
+    Si l'e-mail ne part pas, le compte est créé quand même et la réponse porte
+    le lien : l'administrateur le transmet par le canal qu'il veut.
+    """
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
+    name = (data.get("name") or "").strip()
     role = (data.get("role") or "viewer").strip().lower()
 
     if not _EMAIL_RE.match(email):
         return jsonify({"error": "adresse e-mail invalide"}), 400
-    if len(password) < 8:
-        return jsonify({"error": "le mot de passe doit faire au moins 8 caractères"}), 400
+    if not name:
+        return jsonify({"error": "indiquez le nom de la personne"}), 400
     if role not in _ROLES:
         return jsonify({"error": "rôle invalide (viewer, admin, superadmin)"}), 400
 
@@ -115,7 +142,8 @@ def create_user():
 
     user = User(
         email=email,
-        password_hash=hash_password(password),
+        name=name,
+        password_hash=hash_password(_random_password()),
         role=role,
         mfa_enabled=False,
         is_active=True,
@@ -123,14 +151,62 @@ def create_user():
     )
     db.session.add(user)
     db.session.flush()
+
+    envoi = send_invitation(user, invite_par=g.user.email)
+
     write_audit(
         action="user.create",
         user_id=g.user.id,
-        details={"target_user": str(user.id), "email": email, "role": role},
+        details={"target_user": str(user.id), "email": email, "role": role, "nom": name},
+        commit=False,
+    )
+    write_audit(
+        action="user.invited" if envoi["ok"] else "user.invite_failed",
+        user_id=g.user.id,
+        details={"target_user": str(user.id), "email": email,
+                 **({} if envoi["ok"] else {"erreur": envoi["erreur"]})},
         commit=False,
     )
     db.session.commit()
-    return jsonify(_serialize(user, g.user)), 201
+
+    payload = _serialize(user, g.user)
+    payload["invitation"] = envoi
+    return jsonify(payload), 201
+
+
+# --------------------------------------------------------------------------
+# POST /users/<id>/invite — (re)envoi de l'invitation
+# --------------------------------------------------------------------------
+@bp.post("/users/<user_id>/invite")
+@superadmin_required
+def invite_user(user_id):
+    """Repose un jeton neuf et renvoie l'invitation (l'ancien lien est invalidé)."""
+    user, err = _get_target(user_id)
+    if err:
+        return jsonify(err[0]), err[1]
+    if not user.is_active:
+        return jsonify({"error": "compte désactivé : réactivez-le avant d'inviter"}), 400
+
+    envoi = send_invitation(user, invite_par=g.user.email)
+    write_audit(
+        action="user.invited" if envoi["ok"] else "user.invite_failed",
+        user_id=g.user.id,
+        details={"target_user": str(user.id), "email": user.email,
+                 **({} if envoi["ok"] else {"erreur": envoi["erreur"]})},
+        commit=False,
+    )
+    db.session.commit()
+    return jsonify({"ok": envoi["ok"], "invitation": envoi}), 200
+
+
+# --------------------------------------------------------------------------
+# GET /users/mail-status — l'envoi d'e-mail est-il configuré ?
+# --------------------------------------------------------------------------
+@bp.get("/users/mail-status")
+@superadmin_required
+def users_mail_status():
+    """Permet aux réglages d'annoncer la couleur AVANT de créer un compte."""
+    return jsonify(mail_status()), 200
 
 
 # --------------------------------------------------------------------------
@@ -215,25 +291,31 @@ def set_active(user_id):
 @bp.post("/users/<user_id>/reset-password")
 @superadmin_required
 def reset_password(user_id):
-    """Définit un nouveau mot de passe (≥ 8) pour un compte (jamais journalisé en clair)."""
+    """Réinitialise l'accès SANS choisir de mot de passe à la place de la personne.
+
+    Le mot de passe est remplacé par une valeur aléatoire que personne ne
+    connaît, les sessions ouvertes sont invalidées, et un lien d'invitation
+    neuf part par e-mail. Un administrateur n'a donc jamais à inventer ni à
+    transmettre un mot de passe — c'était le point faible de l'ancien écran.
+    """
     user, err = _get_target(user_id)
     if err:
         return jsonify(err[0]), err[1]
 
-    data = request.get_json(silent=True) or {}
-    new_password = data.get("new_password") or ""
-    if len(new_password) < 8:
-        return jsonify({"error": "le mot de passe doit faire au moins 8 caractères"}), 400
+    user.password_hash = hash_password(_random_password())
+    # Toute session ouverte AVANT cet instant est refusée (cf. web.py).
+    user.password_changed_at = utcnow()
 
-    user.password_hash = hash_password(new_password)
+    envoi = send_invitation(user, invite_par=g.user.email)
+
     write_audit(
         action="user.password_reset",
         user_id=g.user.id,
-        details={"target_user": str(user.id)},
+        details={"target_user": str(user.id), "email_envoye": envoi["ok"]},
         commit=False,
     )
     db.session.commit()
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True, "invitation": envoi}), 200
 
 
 # --------------------------------------------------------------------------

@@ -207,6 +207,19 @@ class User(db.Model):
     # l'ordre des onglets de la fiche poste. Peut être NULL sur d'anciennes lignes.
     preferences: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+    # Nom de la personne : sert à l'e-mail d'invitation et à la traçabilité —
+    # « qui est ce compte » se lit mal dans une adresse seule.
+    name: Mapped[str | None] = mapped_column(Text)
+    # INVITATION : un jeton à usage unique permet à la personne de choisir
+    # elle-même son mot de passe. Seule l'EMPREINTE est stockée — une copie de
+    # la base ne permet donc pas de reconstituer les liens encore valides.
+    invite_token_hash: Mapped[str | None] = mapped_column(Text, index=True)
+    invite_expires_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    invited_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    # Horodatage du dernier changement de mot de passe : toute session ouverte
+    # AVANT cette date est refusée (une réinitialisation doit fermer les
+    # sessions en cours, sinon le compte compromis reste ouvert).
+    password_changed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
 
 class Command(db.Model):

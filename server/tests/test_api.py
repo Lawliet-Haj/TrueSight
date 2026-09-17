@@ -466,8 +466,7 @@ def test_command_batch_requires_admin_and_valid_id(app, client, admin_session):
     assert admin_session.get(f"/api/v1/command-batches/{_u.uuid4()}").status_code == 404
     assert admin_session.get("/api/v1/command-batches/pas-un-uuid").status_code == 400
 
-    admin_session.post("/api/v1/users", json={
-        "email": "ro-lot@medicofi.fr", "password": "lecture12345", "role": "viewer"})
+    _invite_and_activate(admin_session, app, "ro-lot@medicofi.fr", "lecture12345", "viewer")
     viewer = _new_session(app, "ro-lot@medicofi.fr", "lecture12345")
     r = viewer.get(f"/api/v1/command-batches/{_u.uuid4()}")
     assert r.status_code in (302, 403), r.status_code
@@ -503,10 +502,7 @@ def test_remote_window_page_renders_for_admin(client, admin_session):
 def test_remote_window_requires_admin(app, client, admin_session):
     """Un compte lecture seule n'ouvre pas la fenêtre de prise en main."""
     agent_id, _ = _enroll(client, "MACHINE-FENETRE-RO")
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "ro@medicofi.fr", "password": "lecture12345", "role": "viewer"},
-    )
+    _invite_and_activate(admin_session, app, "ro@medicofi.fr", "lecture12345", "viewer")
     viewer = _new_session(app, "ro@medicofi.fr", "lecture12345")
     r = viewer.get(f"/agents/{agent_id}/remote")
     assert r.status_code in (302, 403), r.status_code
@@ -903,13 +899,9 @@ def test_users_unauthenticated(client):
     assert client.get("/api/v1/users", headers={"Accept": "application/json"}).status_code == 401
 
 
-def test_users_management_forbidden_for_admin(client, admin_session):
+def test_users_management_forbidden_for_admin(app, client, admin_session):
     """Un simple administrateur (non superadmin) ne peut pas gérer les accès (403)."""
-    r = admin_session.post(
-        "/api/v1/users",
-        json={"email": "adm@medicofi.fr", "password": "adminpass1", "role": "admin"},
-    )
-    assert r.status_code == 201, r.get_data(as_text=True)
+    _invite_and_activate(admin_session, app, "adm@medicofi.fr", "adminpass1", "admin")
 
     admin_session.get("/logout")
     login = admin_session.post(
@@ -922,49 +914,56 @@ def test_users_management_forbidden_for_admin(client, admin_session):
     ).status_code == 403
     assert admin_session.post(
         "/api/v1/users",
-        json={"email": "z@z.fr", "password": "abcdefgh", "role": "viewer"},
+        json={"email": "z@z.fr", "name": "Zed", "role": "viewer"},
     ).status_code == 403
 
 
-def test_user_management_cycle(client, admin_session):
+def test_user_management_cycle(app, client, admin_session):
     """CRUD complet d'un accès par le superadmin + validations + audit."""
-    # Validations de création.
+    # Validations de création : plus aucun mot de passe n'est accepté ici, mais
+    # le NOM devient obligatoire (un compte sans nom n'est pas traçable).
     assert admin_session.post(
-        "/api/v1/users", json={"email": "bad", "password": "abcdefgh", "role": "viewer"}
+        "/api/v1/users", json={"email": "bad", "name": "Bad", "role": "viewer"}
     ).status_code == 400
     assert admin_session.post(
-        "/api/v1/users", json={"email": "a@b.fr", "password": "court", "role": "viewer"}
+        "/api/v1/users", json={"email": "a@b.fr", "name": "", "role": "viewer"}
     ).status_code == 400
     assert admin_session.post(
-        "/api/v1/users", json={"email": "a@b.fr", "password": "abcdefgh", "role": "king"}
+        "/api/v1/users", json={"email": "a@b.fr", "name": "Roi", "role": "king"}
     ).status_code == 400
 
-    # Création OK.
+    # Création OK : la réponse porte le lien d'invitation.
     created = admin_session.post(
         "/api/v1/users",
-        json={"email": "op@medicofi.fr", "password": "motdepasse1", "role": "admin"},
+        json={"email": "op@medicofi.fr", "name": "Operateur", "role": "admin"},
     )
     assert created.status_code == 201, created.get_data(as_text=True)
     uid = created.get_json()["id"]
+    assert "/invitation/" in created.get_json()["invitation"]["lien"]
 
     # E-mail en doublon -> 409.
     assert admin_session.post(
         "/api/v1/users",
-        json={"email": "op@medicofi.fr", "password": "motdepasse1", "role": "viewer"},
+        json={"email": "op@medicofi.fr", "name": "Doublon", "role": "viewer"},
     ).status_code == 409
 
     # Changement de rôle, activation/désactivation, reset de mot de passe.
     assert admin_session.post(f"/api/v1/users/{uid}/role", json={"role": "viewer"}).status_code == 200
     assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": False}).status_code == 200
     assert admin_session.post(f"/api/v1/users/{uid}/active", json={"active": True}).status_code == 200
-    assert admin_session.post(
-        f"/api/v1/users/{uid}/reset-password", json={"new_password": "court"}
-    ).status_code == 400
-    assert admin_session.post(
-        f"/api/v1/users/{uid}/reset-password", json={"new_password": "nouveaupass1"}
-    ).status_code == 200
+    # La réinitialisation ne CHOISIT pas un mot de passe : elle renvoie un lien.
+    reset = admin_session.post(f"/api/v1/users/{uid}/reset-password", json={})
+    assert reset.status_code == 200
+    lien = reset.get_json()["invitation"]["lien"]
+    assert "/invitation/" in lien
 
-    # Le nouveau mot de passe permet de se connecter.
+    # C'est la personne qui définit le sien, et il lui ouvre la session.
+    invite = app.test_client()
+    jeton = lien.rsplit("/", 1)[-1]
+    assert invite.post(
+        f"/invitation/{jeton}",
+        data={"password": "nouveaupass1", "confirm": "nouveaupass1"},
+    ).status_code in (302, 303)
     admin_session.get("/logout")
     assert admin_session.post(
         "/login", data={"email": "op@medicofi.fr", "password": "nouveaupass1"}
@@ -1060,13 +1059,10 @@ def test_agent_detail_workzone_visible_for_superadmin(client, admin_session):
         assert marker in html, f"marqueur zone de travail manquant : {marker}"
 
 
-def test_agent_detail_workzone_hidden_for_viewer(client, admin_session):
+def test_agent_detail_workzone_hidden_for_viewer(app, client, admin_session):
     """Un viewer (lecture seule) ne voit PAS la zone de travail admin."""
     agent_id, _ = _enroll(client, "MACHINE-WZ2")
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "vv@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
-    )
+    _invite_and_activate(admin_session, app, "vv@medicofi.fr", "viewerpass1", "viewer")
     admin_session.get("/logout")
     admin_session.post("/login", data={"email": "vv@medicofi.fr", "password": "viewerpass1"})
     html = admin_session.get(f"/agents/{agent_id}").get_data(as_text=True)
@@ -1204,6 +1200,30 @@ def _make_agent_zip(version="1.1.0"):
     return buf
 
 
+def _invite_and_activate(admin_session, app, email, password, role="viewer"):
+    """Crée un compte PAR INVITATION et lui donne son mot de passe.
+
+    Depuis le passage à l'invitation, un compte naît sans mot de passe : c'est
+    la personne qui choisit le sien via un lien à usage unique. Les tests de
+    permissions ont besoin d'un compte RÉELLEMENT utilisable : ce helper
+    déroule donc le parcours complet, comme le ferait un humain.
+    """
+    nom = email.split("@")[0]
+    resp = admin_session.post(
+        "/api/v1/users", json={"email": email, "name": nom, "role": role}
+    )
+    assert resp.status_code == 201, resp.get_data(as_text=True)
+    lien = resp.get_json()["invitation"]["lien"]
+    jeton = lien.rsplit("/", 1)[-1]
+
+    invite = app.test_client()
+    r = invite.post(
+        f"/invitation/{jeton}", data={"password": password, "confirm": password}
+    )
+    assert r.status_code in (302, 303), r.get_data(as_text=True)
+    return resp.get_json()["id"]
+
+
 def _new_session(app, email, password):
     """Ouvre une session fraîche pour un compte donné (client dédié)."""
     c = app.test_client()
@@ -1253,10 +1273,7 @@ def test_publish_release_and_current(app, admin_session, tmp_path):
 def test_publish_requires_superadmin(app, client, admin_session, tmp_path):
     """Un admin (non superadmin) ne peut PAS publier de paquet (403) mais peut lister."""
     app.config["AGENT_RELEASE_DIR"] = str(tmp_path)
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "adm@medicofi.fr", "password": "adminpass1", "role": "admin"},
-    )
+    _invite_and_activate(admin_session, app, "adm@medicofi.fr", "adminpass1", "admin")
     adm = _new_session(app, "adm@medicofi.fr", "adminpass1")
     assert adm.get("/api/v1/agent-releases").status_code == 200  # lecture OK (admin)
     r = adm.post(
@@ -1615,14 +1632,8 @@ def test_install_script_force_kills_and_retries(client, admin_session):
 
 def test_install_token_permissions(app, client, admin_session):
     """Création de lien : admin OK, viewer refusé (403)."""
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "adm2@medicofi.fr", "password": "adminpass1", "role": "admin"},
-    )
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "vw2@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
-    )
+    _invite_and_activate(admin_session, app, "adm2@medicofi.fr", "adminpass1", "admin")
+    _invite_and_activate(admin_session, app, "vw2@medicofi.fr", "viewerpass1", "viewer")
     adm = _new_session(app, "adm2@medicofi.fr", "adminpass1")
     vw = _new_session(app, "vw2@medicofi.fr", "viewerpass1")
 
@@ -1637,10 +1648,7 @@ def test_enrollment_token_superadmin_only(app, client, admin_session):
     assert r.status_code == 200
     assert r.get_json()["token"] == TestConfig.ENROLLMENT_TOKEN
 
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "adm3@medicofi.fr", "password": "adminpass1", "role": "admin"},
-    )
+    _invite_and_activate(admin_session, app, "adm3@medicofi.fr", "adminpass1", "admin")
     adm = _new_session(app, "adm3@medicofi.fr", "adminpass1")
     assert adm.get("/api/v1/enrollment-token", headers={"Accept": "application/json"}).status_code == 403
 
@@ -1731,10 +1739,7 @@ def test_overview_and_health(client, admin_session):
 def test_socle_permissions(app, client, admin_session):
     """Lecture pour tous, mutations réservées aux admins."""
     a, _ = _enroll(client, "M-PERM")
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "vw3@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
-    )
+    _invite_and_activate(admin_session, app, "vw3@medicofi.fr", "viewerpass1", "viewer")
     vw = _new_session(app, "vw3@medicofi.fr", "viewerpass1")
     assert vw.get("/api/v1/overview").status_code == 200
     assert vw.get("/api/v1/sites").status_code == 200
@@ -1943,10 +1948,7 @@ def test_software_requires_admin(client, app, admin_session):
     ).status_code == 401
     assert fresh.get("/api/v1/software/catalog", headers={"Accept": "application/json"}).status_code == 401
     # Viewer connecté -> 403.
-    admin_session.post(
-        "/api/v1/users",
-        json={"email": "vwsw@medicofi.fr", "password": "viewerpass1", "role": "viewer"},
-    )
+    _invite_and_activate(admin_session, app, "vwsw@medicofi.fr", "viewerpass1", "viewer")
     vw = _new_session(app, "vwsw@medicofi.fr", "viewerpass1")
     assert vw.post(
         f"/api/v1/agents/{agent_id}/software/install",

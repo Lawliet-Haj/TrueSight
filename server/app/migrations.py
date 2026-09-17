@@ -41,6 +41,14 @@ def ensure_schema():
         "CREATE INDEX IF NOT EXISTS ix_commands_batch_id ON commands (batch_id)",
         # Préférences UI par utilisateur (ordre des onglets de la fiche poste…).
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences jsonb",
+        # Invitation d'un compte : nom de la personne + jeton à usage unique
+        # (empreinte seule) pour qu'elle choisisse son mot de passe.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS name text",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_hash text",
+        "CREATE INDEX IF NOT EXISTS ix_users_invite_token_hash ON users (invite_token_hash)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires_at timestamptz",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_at timestamptz",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at timestamptz",
         # Jeton d'installation en clair (re-affichage de la commande d'un lien actif).
         "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS token_plain text",
         # Contexte d'alerte (ex. service_down : quels services). Tables nouvelles

@@ -160,6 +160,25 @@ class Config:
     ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@truesight.local")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
+    # --- Invitation des comptes (e-mail transactionnel Brevo) -------------
+    # Un compte est créé SANS mot de passe : la personne reçoit un lien à usage
+    # unique et choisit le sien. Aucun mot de passe ne circule par messagerie.
+    # Si l'envoi n'est pas configuré, rien ne casse : l'administrateur récupère
+    # le lien à l'écran et le transmet par le canal qu'il veut.
+    BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+    MAIL_SENDER_EMAIL = os.environ.get("MAIL_SENDER_EMAIL", "").strip()
+    MAIL_SENDER_NAME = os.environ.get("MAIL_SENDER_NAME", "TrueSight").strip()
+    # Les réponses arrivent ici : l'adresse d'expédition n'est pas relevée.
+    MAIL_REPLY_TO = os.environ.get("MAIL_REPLY_TO", "").strip()
+    MAIL_REPLY_TO_NAME = os.environ.get("MAIL_REPLY_TO_NAME", "").strip()
+    INVITE_VALIDITY_DAYS = _get_int("INVITE_VALIDITY_DAYS", 7)
+    # URL publique du dashboard, pour fabriquer le lien d'invitation. À défaut,
+    # on la déduit de la requête (host_url) : correct derrière Traefik.
+    PUBLIC_BASE_URL = os.environ.get(
+        "PUBLIC_BASE_URL",
+        ("https://" + os.environ.get("TRUESIGHT_HOST", "").strip()) if os.environ.get("TRUESIGHT_HOST", "").strip() else "",
+    ).strip().rstrip("/")
+
     # --- Limite de troncature des sorties de commande (1 Mo) ------------
     COMMAND_OUTPUT_MAX_BYTES = 1024 * 1024
 

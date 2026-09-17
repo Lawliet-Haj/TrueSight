@@ -11,6 +11,7 @@ import secrets
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 
 from flask import g, jsonify, redirect, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -240,6 +241,25 @@ def current_user() -> User | None:
     user = db.session.get(User, uid)
     if user is None or not user.is_active:
         return None
+    # Une réinitialisation de mot de passe doit FERMER les sessions déjà
+    # ouvertes : sinon un accès compromis reste utilisable alors même que
+    # l'administrateur croit l'avoir coupé. On compare l'ouverture de session à
+    # la date du dernier changement de mot de passe.
+    changed = getattr(user, "password_changed_at", None)
+    if changed is not None:
+        if changed.tzinfo is None:
+            changed = changed.replace(tzinfo=timezone.utc)
+        opened_at = session.get("opened_at")
+        if not opened_at:
+            return None  # session antérieure à ce mécanisme : on la refuse
+        try:
+            opened = datetime.fromisoformat(str(opened_at))
+        except ValueError:
+            return None
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        if opened < changed:
+            return None
     return user
 
 

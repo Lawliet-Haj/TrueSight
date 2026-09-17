@@ -169,15 +169,16 @@
     <span class="tag" id="users-count">—</span>
   </div>
   <div class="pbody">
-    <!-- Création d'un accès -->
+    <!-- Invitation d'un accès : aucun mot de passe n'est saisi ici. La personne
+         reçoit un lien à usage unique et choisit le sien. -->
     <form id="user-create" class="user-create" autocomplete="off">
       <div class="field grow">
-        <label for="nu-email">E-mail du nouvel accès</label>
+        <label for="nu-email">E-mail de la personne</label>
         <input type="email" id="nu-email" class="input" placeholder="prenom.nom@medicofi.fr" required>
       </div>
       <div class="field">
-        <label for="nu-pw">Mot de passe</label>
-        <input type="password" id="nu-pw" class="input" minlength="8" autocomplete="new-password" required>
+        <label for="nu-name">Nom</label>
+        <input type="text" id="nu-name" class="input" placeholder="Prénom Nom" maxlength="120" required>
       </div>
       <div class="field">
         <label for="nu-role">Rôle</label>
@@ -187,15 +188,20 @@
           <option value="superadmin">Super-administrateur</option>
         </select>
       </div>
-      <button type="submit" class="btn go">Créer l'accès</button>
+      <button type="submit" class="btn go">Inviter</button>
       <span class="form-msg" id="uc-msg"></span>
     </form>
+    <p class="sub" id="mail-state" style="margin:10px 0 0">
+      La personne reçoit un e-mail pour choisir son mot de passe. Aucun mot de
+      passe n'est saisi ni transmis ici.
+    </p>
   </div>
   <div class="scroll-y sticky-head" style="max-height:none;border-top:1px solid var(--line)">
     <table>
       <thead>
         <tr>
           <th>Compte</th>
+          <th>Nom</th>
           <th>Rôle</th>
           <th>MFA</th>
           <th>État</th>
@@ -203,7 +209,7 @@
         </tr>
       </thead>
       <tbody id="users-body">
-        <tr><td colspan="5" class="empty-cell">Chargement…</td></tr>
+        <tr><td colspan="6" class="empty-cell">Chargement…</td></tr>
       </tbody>
     </table>
   </div>

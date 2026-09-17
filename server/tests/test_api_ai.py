@@ -87,6 +87,25 @@ def _new_session(app, email, password):
     return c
 
 
+def _invite_and_activate(admin_session, app, email, password, role="viewer"):
+    """Crée un compte par INVITATION puis définit son mot de passe.
+
+    Un compte naît désormais sans mot de passe : seule la personne invitée en
+    choisit un. Les tests de permission ont besoin d'un compte utilisable.
+    """
+    resp = admin_session.post(
+        "/api/v1/users",
+        json={"email": email, "name": email.split("@")[0], "role": role},
+    )
+    assert resp.status_code == 201, resp.get_data(as_text=True)
+    jeton = resp.get_json()["invitation"]["lien"].rsplit("/", 1)[-1]
+    invite = app.test_client()
+    r = invite.post(
+        f"/invitation/{jeton}", data={"password": password, "confirm": password}
+    )
+    assert r.status_code in (302, 303), r.get_data(as_text=True)
+
+
 def _tc(name, args, call_id="call_1"):
     return ai_client.ToolCall(id=call_id, name=name, arguments=json.dumps(args))
 
@@ -133,7 +152,7 @@ def test_ai_chat_requires_admin(app, client, admin_session):
     assert fresh.post("/api/v1/ai/chat", json={"message": "salut"},
                       headers={"Accept": "application/json"}).status_code == 401
     # Viewer connecté → 403.
-    admin_session.post("/api/v1/users", json={"email": "vai@medicofi.fr", "password": "viewerpass1", "role": "viewer"})
+    _invite_and_activate(admin_session, app, "vai@medicofi.fr", "viewerpass1", "viewer")
     vw = _new_session(app, "vai@medicofi.fr", "viewerpass1")
     assert vw.post("/api/v1/ai/chat", json={"message": "salut"}).status_code == 403
 

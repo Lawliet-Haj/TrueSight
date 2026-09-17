@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Choisir mon mot de passe{% endblock %}
+
+{% block content_auth %}
+<div class="auth-card">
+  <div class="auth-brand">
+    <span class="mk"><span></span></span>
+    <span class="wm">TRUE<b>SIGHT</b></span>
+  </div>
+  <p class="auth-sub">
+    {% if name %}Bienvenue {{ name }} —{% endif %} choisissez votre mot de passe
+  </p>
+
+  <form method="post" action="{{ url_for('web.invitation_submit', token=token) }}" class="auth-form">
+    <div class="field">
+      <label for="email">Votre compte</label>
+      <input type="email" id="email" value="{{ email }}" disabled autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" name="password" required autofocus
+             autocomplete="new-password" minlength="10">
+    </div>
+    <div class="field">
+      <label for="confirm">Confirmation</label>
+      <input type="password" id="confirm" name="confirm" required autocomplete="new-password">
+    </div>
+    <p class="auth-hint">Au moins 10 caractères, dont une lettre et un chiffre.</p>
+    <button type="submit" class="btn go full">Valider et accéder à TrueSight</button>
+  </form>
+</div>
+{% endblock %}

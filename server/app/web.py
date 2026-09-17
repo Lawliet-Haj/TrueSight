@@ -23,10 +23,12 @@ from flask import (
 )
 
 from .extensions import db
-from .models import Agent, User
+from .invitations import consume_invitation, find_by_invitation
+from .models import Agent, User, utcnow
 from .security import (
     admin_required,
     current_user,
+    hash_password,
     login_required,
     verify_password,
     write_audit,
@@ -207,12 +209,90 @@ def logout():
     return redirect(url_for("web.login"))
 
 
+# --------------------------------------------------------------------------
+# Invitation : la personne choisit elle-même son mot de passe
+# --------------------------------------------------------------------------
+# Page PUBLIQUE (le jeton fait l'authentification), volontairement avare en
+# informations : un jeton inconnu, expiré ou déjà consommé donne exactement la
+# même réponse, sans révéler si le compte existe.
+_PASSWORD_MIN = 10
+
+
+def _password_problems(password: str) -> list[str]:
+    """Règles minimales, alignées sur l'application SMS."""
+    problemes = []
+    if len(password) < _PASSWORD_MIN:
+        problemes.append(f"au moins {_PASSWORD_MIN} caractères")
+    if not any(c.isalpha() for c in password):
+        problemes.append("au moins une lettre")
+    if not any(c.isdigit() for c in password):
+        problemes.append("au moins un chiffre")
+    return problemes
+
+
+def _invitation_refusee():
+    flash(
+        "Ce lien d'invitation n'est plus valable : il a peut-être déjà servi, "
+        "ou dépassé sa durée de validité. Demandez-en un nouveau à votre "
+        "administrateur.",
+        "error",
+    )
+    return redirect(url_for("web.login"))
+
+
+@bp.get("/invitation/<token>")
+def invitation_page(token):
+    """Formulaire de choix du mot de passe (accès par jeton à usage unique)."""
+    user = find_by_invitation(token)
+    if user is None:
+        return _invitation_refusee()
+    return render_template(
+        "invitation.html", token=token, email=user.email, name=user.name or ""
+    )
+
+
+@bp.post("/invitation/<token>")
+def invitation_submit(token):
+    """Enregistre le mot de passe choisi, consomme le jeton et connecte la personne."""
+    user = find_by_invitation(token)
+    if user is None:
+        return _invitation_refusee()
+
+    password = request.form.get("password") or ""
+    confirm = request.form.get("confirm") or ""
+
+    if password != confirm:
+        flash("Les deux mots de passe ne correspondent pas.", "error")
+        return redirect(url_for("web.invitation_page", token=token))
+
+    problemes = _password_problems(password)
+    if problemes:
+        flash("Le mot de passe doit contenir " + ", ".join(problemes) + ".", "error")
+        return redirect(url_for("web.invitation_page", token=token))
+
+    user.password_hash = hash_password(password)
+    user.password_changed_at = utcnow()
+    consume_invitation(user)
+    write_audit(action="user.activated", user_id=user.id,
+                details={"email": user.email}, commit=False)
+    db.session.commit()
+
+    # La personne vient de prouver qu'elle détient le lien ET a choisi son mot
+    # de passe : on ouvre la session directement, elle n'a pas à le ressaisir.
+    _establish_session(user)
+    flash("Votre mot de passe est enregistré. Bienvenue.", "info")
+    return redirect(url_for("web.agents_page"))
+
+
 def _establish_session(user: User):
     """Ouvre une session authentifiée pour l'utilisateur donné."""
     session.clear()
     session["user_id"] = str(user.id)
     session["role"] = user.role
     session["email"] = user.email
+    # Horodatage d'ouverture : permet d'invalider cette session si le mot de
+    # passe du compte est réinitialisé ensuite (cf. security.current_user).
+    session["opened_at"] = utcnow().isoformat()
     session.permanent = True
 
 

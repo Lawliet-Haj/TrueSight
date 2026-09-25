@@ -117,7 +117,7 @@ class AgentConfig:
         site: str = "",
         remote_unattended: bool = True,
         terminal_system: bool = True,
-        remote_elevated: bool = False,
+        remote_elevated: bool = True,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.enrollment_token = enrollment_token
@@ -144,6 +144,14 @@ class AgentConfig:
         # installeur : Windows interdit à un processus d'injecter une entrée dans
         # une fenêtre de niveau d'intégrité supérieur. Sans ce mode, on voit
         # l'invite mais on ne peut pas la valider.
+        #
+        # ACTIVÉ PAR DÉFAUT depuis 1.5.13. C'était auparavant une option posée
+        # après coup, par commande, sur les postes déjà en service : tout poste
+        # enrôlé ENSUITE arrivait donc sans, et l'administrateur redécouvrait le
+        # problème machine par machine (« je vois la fenêtre, mes clics ne
+        # passent pas »). Un défaut qu'il faut se rappeler de poser n'est pas un
+        # défaut. Le repli reste sûr : si le helper SYSTEM ne peut pas démarrer,
+        # la session retombe sur le compagnon, avec une ERREUR au journal.
         self.remote_elevated = bool(remote_elevated)
 
     def apply_server_config(self, server_config: dict) -> bool:
@@ -217,7 +225,9 @@ def load_config(path: str | None = None) -> AgentConfig:
     # Prise de main non-assistée (défaut : activée).
     remote_unattended = _str_to_bool(parser.get("agent", "remote_unattended", fallback="true"))
     terminal_system = _str_to_bool(parser.get("agent", "terminal_system", fallback="true"))
-    remote_elevated = _str_to_bool(parser.get("agent", "remote_elevated", fallback="false"))
+    # Prise de main élevée (défaut : activée — cf. AgentConfig). Un config.ini
+    # existant qui porte « remote_elevated = false » reste respecté.
+    remote_elevated = _str_to_bool(parser.get("agent", "remote_elevated", fallback="true"))
 
     return AgentConfig(
         server_url=server_url,

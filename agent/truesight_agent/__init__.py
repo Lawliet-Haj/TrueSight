@@ -27,6 +27,14 @@ récupère les commandes en attente et renvoie leurs résultats.
 # du poste est cassée — cause de l'« écran noir » intermittent). 1.3.1 : connexion
 # wss au relais ré-essayée (4 tentatives + backoff). 1.3.0 : transfert de fichiers
 # (explorateur, download trame 0x20, upload base64 ; droits de l'utilisateur
+# 1.5.13 : la PRISE DE MAIN ELEVEE devient le DEFAUT. Elle etait posee apres
+# coup, par commande, sur les postes deja en service : tout poste enrole ensuite
+# arrivait donc sans, et le symptome se redecouvrait machine par machine (« je
+# vois la fenetre, mes clics ne passent pas »). Un defaut qu'il faut se rappeler
+# de poser n'est pas un defaut. Un config.ini qui porte explicitement
+# « remote_elevated = false » reste respecte, et le repli sur le compagnon en cas
+# d'echec du helper SYSTEM est inchange. Premiers tests de l'agent avec ce
+# changement (agent/tests), eprouves sur les deux bords.
 # 1.5.12 : les interpreteurs sont lances par leur CHEMIN ABSOLU. « powershell »
 # et « cmd » passes par leur nom nu laissaient CreateProcess les chercher dans le
 # PATH, qui n'est pas celui d'une session interactive quand on est un SERVICE :
@@ -115,7 +123,7 @@ récupère les commandes en attente et renvoie leurs résultats.
 # système (WASAPI loopback). 1.1.2 : navigation à distance (curseur, verrou
 # saisie, Ctrl+Alt+Suppr, lock sortie, écran de confidentialité). 1.1.1 : capture
 # DXGI (écran noir au login). Un numéro supérieur déclenche l'auto-update.
-__version__ = "1.5.12"
+__version__ = "1.5.13"
 
 # Nom du service Windows (référencé par service.py et install-service.ps1).
 SERVICE_NAME = "TrueSightAgent"

@@ -666,6 +666,10 @@ def post_result(command_id):
     L'authentification (décorateur ``agent_required_by_command``) garantit déjà
     que le Bearer token correspond à l'agent propriétaire de la commande et
     expose celle-ci via ``g.command``.
+
+    Résultat TARDIF : accepté, même si la commande a déjà été déclarée perdue
+    (``timeout`` posé par ``command_expiry``). Il remplace alors le résultat
+    synthétique — la perte n'était qu'une présomption, la vraie sortie fait foi.
     """
     cmd: Command = g.command
     cmd_uuid = cmd.id

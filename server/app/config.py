@@ -182,6 +182,12 @@ class Config:
     # --- Limite de troncature des sorties de commande (1 Mo) ------------
     COMMAND_OUTPUT_MAX_BYTES = 1024 * 1024
 
+    # --- Commandes perdues (cf. command_expiry) --------------------------
+    # Marge accordée à CHAQUE commande, en plus de son délai, avant de la
+    # déclarer perdue : lancement du processus et envoi du résultat. Un résultat
+    # arrivé après reste accepté et remplace le constat.
+    COMMAND_RESULT_GRACE_SECONDS = _get_int("COMMAND_RESULT_GRACE_SECONDS", 60)
+
     # --- Activation du thread de fond -----------------------------------
     ENABLE_BACKGROUND_TASKS = _get_bool("ENABLE_BACKGROUND_TASKS", True)
 

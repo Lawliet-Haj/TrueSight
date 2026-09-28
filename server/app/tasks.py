@@ -1,6 +1,8 @@
 """Tâches de fond (cf. SPEC §7).
 
 Un unique thread daemon :
+- toutes les 60 s : passe en ``timeout`` les commandes remises dont le résultat
+  n'arrivera plus — agent disparu pendant l'exécution (cf. ``command_expiry``) ;
 - toutes les 60 s : évalue les règles d'alerte (offline, disk_low, cpu_high, ram_high) ;
 - une fois par jour : purge les métriques plus anciennes que ``METRICS_RETENTION_DAYS`` ;
 - toutes les ``WATCHDOG_PING_INTERVAL_SECONDS`` : émet un signal de vie vers une
@@ -16,6 +18,7 @@ import time
 from datetime import timedelta
 
 from .alerts import evaluate_all
+from .command_expiry import expire_lost_commands
 from .extensions import db
 from .models import Metric
 from .models import utcnow
@@ -54,6 +57,16 @@ def _run_loop(app):
     last_ping = 0.0
     while True:
         cycle_start = time.monotonic()
+
+        # --- Commandes perdues ---
+        # AVANT les alertes : la remédiation refuse de relancer un service tant
+        # qu'une commande précédente est « en vol ». Une commande perdue libérée
+        # ici peut ainsi être retentée dès ce cycle.
+        try:
+            with app.app_context():
+                expire_lost_commands()
+        except Exception:  # pragma: no cover - robustesse
+            _logger.exception("Erreur durant l'expiration des commandes perdues")
 
         # --- Évaluation des alertes ---
         # On retient si le cycle a réussi : c'est ce qui autorise le signal de
@@ -124,7 +137,8 @@ def _purge_metrics(app):
 
 
 def run_once(app):
-    """Exécute un cycle complet (alertes + purge) — utile pour les tests."""
+    """Exécute un cycle complet (commandes perdues + alertes + purge) — utile pour les tests."""
     with app.app_context():
+        expire_lost_commands()
         evaluate_all(app)
         _purge_metrics(app)

@@ -102,6 +102,41 @@ def create(output_idx: int = 0):
     return cam
 
 
+def captured_screen_rect(cam) -> dict | None:
+    """Position RÉELLE, sur le bureau Windows, de l'écran que cette caméra duplique.
+
+    Renvoie ``{"left", "top", "width", "height"}`` en pixels, ou ``None`` si DXGI
+    ne la donne pas (caméra absente, description illisible, rectangle vide).
+
+    POURQUOI CETTE FONCTION : un NUMÉRO d'écran ne dit pas quel écran est
+    capturé. DXGI numérote les SORTIES d'un adaptateur ; la liste présentée au
+    viewer vient, elle, de GDI (``capture.list_monitors``). Rien n'impose le
+    même ordre aux deux, et ``create`` ci-dessus se rabat de surcroît sur la
+    sortie 0 quand l'index demandé n'existe pas sur l'adaptateur. Placer les
+    clics d'après l'index revenait donc à viser un autre écran que celui
+    affiché — vécu le 30/09/2026 sur un poste à deux écrans : seule la barre des
+    tâches, que Windows 11 dessine au même endroit sur chaque écran, semblait
+    réagir. ``DesktopCoordinates`` est la seule donnée qui désigne l'écran
+    effectivement dupliqué ; c'est elle qui doit ancrer l'injection.
+    """
+    try:
+        out = getattr(cam, "_output", None)
+        if out is None:
+            out = getattr(cam, "output", None)
+        rect = getattr(getattr(out, "desc", None), "DesktopCoordinates", None)
+        if rect is None:
+            return None
+        left, top = int(rect.left), int(rect.top)
+        width, height = int(rect.right) - left, int(rect.bottom) - top
+    except Exception as exc:  # noqa: BLE001 - on ne fait jamais tomber la session.
+        _logger.debug("Position de l'écran capturé illisible : %s", exc)
+        return None
+    if width <= 0 or height <= 0:
+        _logger.debug("Position de l'écran capturé incohérente (%dx%d).", width, height)
+        return None
+    return {"left": left, "top": top, "width": width, "height": height}
+
+
 def grab(cam):
     """Capture une trame. Renvoie ``(raw_bgra: bytes, width, height)`` ou ``None``.
 

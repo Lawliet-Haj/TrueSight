@@ -155,19 +155,33 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/truesight-reload.sh
 
 ### 1.7 Exploitation
 
-- **Sauvegardes PostgreSQL** (quotidiennes, à planifier via cron) :
+> **D'abord : quel fichier compose ?** La production tourne avec
+> **`docker-compose.standalone.yml`** (Traefik + certificats ACME). Le
+> `docker-compose.yml` par défaut décrit l'AUTRE topologie (nginx + certbot) et
+> `docker-compose.prod.yml` vise encore l'ancien hôte. Un `docker compose` nu qui
+> tombe sur l'un d'eux recrée base, web et relais sur un réseau neuf : Traefik
+> reste seul sur l'ancien et ne route plus rien, pendant que nginx échoue sur le
+> port 80 déjà pris. Vécu le 01/10/2026 en suivant cette page, ~3 minutes de
+> coupure. Le VPS porte donc `COMPOSE_FILE=docker-compose.standalone.yml` dans
+> son `.env`, ce qui rend la commande nue sûre — mais vérifiez-le avant toute
+> mise à jour (voir ci-dessous).
 
-  ```bash
-  docker compose exec -T db pg_dump -U truesight truesight | gzip > truesight-$(date +%F).sql.gz
-  ```
+- **Sauvegardes PostgreSQL** : `deploy/backup.sh` (base + `.env`, dump relu et
+  vérifié, rotation sur 14 jours), planifié à 3h15 par cron sur le VPS.
 
 - **Mises à jour applicatives** :
 
   ```bash
+  cd /opt/truesight
+  docker compose config --services   # DOIT lister traefik : sinon, mauvais fichier
+  ./deploy/backup.sh                 # avant toute migration de schéma
   git pull
   docker compose build web
   docker compose up -d
   ```
+
+  Le schéma est mis à niveau au démarrage de `web` (`migrations.py`, en
+  `ADD COLUMN IF NOT EXISTS`) : aucune commande de migration à lancer.
 
 - **Mises à jour de sécurité de l'OS** : activez `unattended-upgrades` sur le VPS.
 

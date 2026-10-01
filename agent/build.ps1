@@ -162,6 +162,15 @@ Write-Host "Compilation de l'exécutable (cela peut prendre un moment)..." -Fore
 # casseraient (« relative import with no known parent package »).
 $entryPoint = Join-Path $scriptDir "run_agent.py"
 
+# --exclude-module cv2 : dxcam propose un processeur d'image OpenCV, mais l'agent
+# demande du BGRA BRUT (output_color="BGRA") — aucune conversion de couleur n'est
+# donc jamais demandee, et dxcam charge cv2 paresseusement. Si OpenCV traine sur
+# le poste de build, --collect-all dxcam l'embarque quand meme : 98 Mo pour rien,
+# soit un paquet de 84 Mo au lieu de 37, a telecharger par tout le parc en
+# auto-update. Les paquets en production (1.5.13 et avant) n'ont jamais contenu
+# OpenCV et capturent tres bien ; verifie en plus en rendant cv2 introuvable
+# (camera DXGI creee, trame 1920x1080 complete).
+#
 # --onedir (et NON --onefile) : produit un dossier dist\truesight-agent\ (exe +
 # _internal\). Pas d'extraction temporaire au lancement → fiable quand le service
 # SYSTEM relance le helper dans la session utilisateur via CreateProcessAsUser
@@ -178,6 +187,7 @@ python -m PyInstaller `
     --collect-submodules "mss" `
     --collect-all "winpty" `
     --collect-all "dxcam" `
+    --exclude-module "cv2" `
     --collect-all "comtypes" `
     --collect-all "pyaudiowpatch" `
     --hidden-import "_portaudiowpatch" `

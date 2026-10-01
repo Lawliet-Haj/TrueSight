@@ -11,10 +11,15 @@
 
   <form method="post" action="{{ url_for('web.mfa') }}" class="auth-form">
     <div class="field">
-      <label for="code">Code TOTP</label>
-      <input type="text" id="code" name="code" required autofocus inputmode="numeric"
-             pattern="[0-9 ]*" maxlength="9" autocomplete="one-time-code" class="code-input">
+      <label for="code">Code</label>
+      {# Pas de pattern chiffres-seuls ni de maxlength court : un code de secours
+         (XXXXX-XXXXX) serait refusé PAR LE NAVIGATEUR avant même d'être envoyé. #}
+      <input type="text" id="code" name="code" required autofocus maxlength="24"
+             autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"
+             class="code-input">
     </div>
+    <p class="auth-sub" style="margin-top:0">Téléphone perdu ? Saisissez l'un de vos
+      <strong>codes de secours</strong> (format XXXXX-XXXXX).</p>
     <button type="submit" class="btn go full">Valider</button>
     <a href="{{ url_for('web.logout') }}" class="auth-cancel">Annuler</a>
   </form>

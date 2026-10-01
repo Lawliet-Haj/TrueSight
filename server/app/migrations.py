@@ -49,6 +49,8 @@ def ensure_schema():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires_at timestamptz",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_at timestamptz",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at timestamptz",
+        # Codes de secours de la double authentification (empreintes seules).
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes jsonb",
         # Jeton d'installation en clair (re-affichage de la commande d'un lien actif).
         "ALTER TABLE install_tokens ADD COLUMN IF NOT EXISTS token_plain text",
         # Contexte d'alerte (ex. service_down : quels services). Tables nouvelles

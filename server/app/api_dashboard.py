@@ -15,6 +15,7 @@ import pyotp
 import qrcode
 from flask import Blueprint, current_app, g, jsonify, request, session
 
+from . import mfa_recovery
 from . import wol
 from .extensions import db
 from .health import PROBLEM_LABELS, agent_health, is_online
@@ -2445,8 +2446,12 @@ def settings_password():
 @bp.get("/settings/mfa")
 @login_required
 def settings_mfa_status():
-    """Indique si le MFA est activé pour l'utilisateur courant."""
-    return jsonify({"enabled": bool(g.user.mfa_enabled)}), 200
+    """Indique si le MFA est activé, et combien de codes de secours il reste."""
+    enabled = bool(g.user.mfa_enabled)
+    return jsonify({
+        "enabled": enabled,
+        "recovery_codes_remaining": mfa_recovery.remaining(g.user) if enabled else 0,
+    }), 200
 
 
 @bp.post("/settings/mfa/setup")
@@ -2508,10 +2513,38 @@ def settings_mfa_enable():
     user = g.user
     user.mfa_secret = pending_secret
     user.mfa_enabled = True
+    # Codes de secours : remis UNE fois, ici ; seules leurs empreintes restent.
+    codes, empreintes = mfa_recovery.generate()
+    user.mfa_recovery_codes = empreintes
     session.pop("pending_mfa_secret", None)
-    write_audit(action="settings.mfa.enable", user_id=user.id, details={}, commit=False)
+    write_audit(action="settings.mfa.enable", user_id=user.id,
+                details={"codes_de_secours": len(codes)}, commit=False)
     db.session.commit()
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True, "recovery_codes": codes}), 200
+
+
+@bp.post("/settings/mfa/recovery-codes")
+@login_required
+def settings_mfa_recovery_codes():
+    """Régénère les codes de secours (mot de passe exigé) ; les anciens ne valent plus.
+
+    Body : ``{password}``. Le mot de passe est redemandé : une session laissée
+    ouverte ne doit pas suffire à s'approprier des codes. 200 ``{recovery_codes}``
+    / 400 si la double authentification est inactive / 401 si mot de passe faux.
+    """
+    data = request.get_json(silent=True) or {}
+    user = g.user
+    if not user.mfa_enabled:
+        return jsonify({"error": "double authentification inactive"}), 400
+    if not verify_password(user.password_hash, data.get("password") or ""):
+        return jsonify({"error": "mot de passe incorrect"}), 401
+
+    codes, empreintes = mfa_recovery.generate()
+    user.mfa_recovery_codes = empreintes
+    write_audit(action="settings.mfa.recovery_codes", user_id=user.id,
+                details={"codes_de_secours": len(codes)}, commit=False)
+    db.session.commit()
+    return jsonify({"recovery_codes": codes}), 200
 
 
 @bp.post("/settings/mfa/disable")
@@ -2531,6 +2564,7 @@ def settings_mfa_disable():
 
     user.mfa_secret = None
     user.mfa_enabled = False
+    user.mfa_recovery_codes = None  # des codes d'une ancienne activation ne valent plus rien
     write_audit(action="settings.mfa.disable", user_id=user.id, details={}, commit=False)
     db.session.commit()
     return jsonify({"ok": True}), 200

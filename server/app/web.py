@@ -22,6 +22,7 @@ from flask import (
     url_for,
 )
 
+from . import mfa_recovery
 from .extensions import db
 from .invitations import consume_invitation, find_by_invitation
 from .models import Agent, User, utcnow
@@ -181,20 +182,39 @@ def mfa_post():
         flash("Session MFA invalide.", "error")
         return redirect(url_for("web.login"))
 
-    totp = pyotp.TOTP(user.mfa_secret)
-    if not totp.verify(code, valid_window=1):
+    if mfa_recovery.is_totp_format(code):
+        ok = pyotp.TOTP(user.mfa_secret).verify(code, valid_window=1)
+        methode, raison = True, "code MFA invalide"
+    else:
+        # Téléphone perdu : un code de secours (usage unique) remplace le code
+        # TOTP. Même limite de tentatives, même refus générique.
+        ok = mfa_recovery.consume(user, code)
+        methode, raison = "code_de_secours", "code de secours invalide"
+    if not ok:
         _record_login_failure(ip)
         write_audit(
             action="login.fail",
             user_id=user.id,
-            details={"reason": "code MFA invalide"},
+            details={"reason": raison},
         )
         flash("Code MFA invalide.", "error")
         return render_template("mfa.html"), 401
 
     _clear_login_failures(ip)
     _establish_session(user)
-    write_audit(action="login.success", user_id=user.id, details={"mfa": True})
+    details = {"mfa": methode}
+    if methode == "code_de_secours":
+        reste = mfa_recovery.remaining(user)
+        details["codes_restants"] = reste
+        flash(
+            f"Code de secours utilisé : il vous en reste {reste}. Régénérez-les "
+            "depuis Réglages, et réactivez un téléphone si vous avez perdu le vôtre.",
+            "info",
+        )
+    # Une seule transaction : le code consommé est retiré EN MÊME TEMPS que la
+    # connexion est journalisée.
+    write_audit(action="login.success", user_id=user.id, details=details, commit=False)
+    db.session.commit()
     return _redirect_after_login(next_url)
 
 

@@ -115,6 +115,11 @@ class RemoteSession:
         self._send_thread: threading.Thread | None = None
         self._capturer = capture_mod.ScreenCapturer()
         self._injector = inject_mod.InputInjector(self._capturer.current_monitor_geometry())
+        # Écran RÉELLEMENT dupliqué par DXGI en prise de main élevée, avec sa
+        # position exacte sur le bureau. C'est lui — et non le numéro d'écran de
+        # la liste GDI — qui place les clics et la surcouche curseur : les deux
+        # énumérations n'ont pas le même ordre (cf. capture_dxgi.captured_screen_rect).
+        self._captured_screen: dict | None = None
         # Sérialise TOUT accès à la socket — envois ET réception. Indispensable en
         # TLS : lire et écrire en même temps corrompt l'état SSL (cf. en-tête).
         self._sock_lock = threading.Lock()
@@ -150,6 +155,49 @@ class RemoteSession:
                 ws.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # -- Écran de référence (clics + surcouche curseur) -----------------------
+    def _injection_geometry(self) -> dict | None:
+        """Écran servant de repère pour placer les clics et le curseur distant.
+
+        En prise de main élevée, c'est l'écran que DXGI capture, repéré par SA
+        position sur le bureau ; sinon (prise de main assistée, capture mss),
+        l'écran choisi dans la liste GDI — qui est alors aussi celui capturé.
+        """
+        return self._captured_screen or self._capturer.current_monitor_geometry()
+
+    def _anchor_input_on_camera(self, dxgi_mod, cam) -> None:
+        """Ancre les clics sur l'écran que la caméra DXGI duplique réellement.
+
+        Sans cela, on place les entrées d'après l'index d'écran, qui ne désigne
+        pas le même écran des deux côtés : l'opérateur voit un écran et clique
+        sur l'autre (cf. ``capture_dxgi.captured_screen_rect``).
+        """
+        geo = dxgi_mod.captured_screen_rect(cam)
+        if not geo:
+            _logger.warning(
+                "Position de l'écran capturé introuvable : les clics suivent la "
+                "liste GDI — décalage possible sur un poste à plusieurs écrans."
+            )
+            return
+        self._captured_screen = geo
+        self._injector.set_monitor(geo)
+        _logger.info(
+            "Clics et curseur ancrés sur l'écran capturé : %dx%d en (%d, %d).",
+            geo["width"], geo["height"], geo["left"], geo["top"],
+        )
+        # Dire tout haut quand le poste est de ceux que le défaut touchait :
+        # établir ce décalage a demandé un aller-retour avec l'opérateur, le
+        # journal du poste le signale désormais de lui-même.
+        liste = self._capturer.current_monitor_geometry()
+        if liste and (liste.get("left"), liste.get("top")) != (geo["left"], geo["top"]):
+            _logger.warning(
+                "L'écran capturé n'est PAS celui que porte ce numéro dans la liste "
+                "GDI (capturé %dx%d en (%d, %d) ; numéroté %sx%s en (%s, %s)). Les "
+                "clics suivent l'écran capturé, donc l'image affichée.",
+                geo["width"], geo["height"], geo["left"], geo["top"],
+                liste.get("width"), liste.get("height"), liste.get("left"), liste.get("top"),
+            )
 
     def _should_stop(self) -> bool:
         if self._stop.is_set():
@@ -270,6 +318,9 @@ class RemoteSession:
                 self._send_loop_unattended_mss()
                 return
             _logger.info("Capture DXGI active sur le bureau « %s » (écran %d).", desk_name, mon_idx)
+            # L'écran que DXGI vient d'ouvrir n'est pas forcément celui qui porte
+            # ce numéro dans la liste GDI : on place les clics d'après SA position.
+            self._anchor_input_on_camera(capture_dxgi, cam)
 
             # Dernière trame brute (raw, w, h) : permet de re-servir une keyframe
             # (connexion viewer, changement de qualité/largeur) même si DXGI ne
@@ -488,7 +539,7 @@ class RemoteSession:
                 idx = self._capturer.monitor_index
                 # Géométrie du moniteur courant : rafraîchie au changement / ~1 s.
                 if geo is None or idx != geo_idx or (loop_start - geo_at) > 1.0:
-                    geo = self._capturer.current_monitor_geometry()
+                    geo = self._injection_geometry()
                     geo_idx = idx
                     geo_at = loop_start
                 state = inject_mod.get_cursor_state()
@@ -895,8 +946,10 @@ class RemoteSession:
             return
         if msg_type == "set_monitor":
             self._capturer.set_monitor(data.get("i", 0))
-            # L'injection doit suivre le moniteur courant (échelle des coordonnées).
-            self._injector.set_monitor(self._capturer.current_monitor_geometry())
+            # L'injection doit suivre l'écran RÉELLEMENT capturé (échelle des
+            # coordonnées) : en prise de main élevée, la caméra DXGI reste en
+            # place jusqu'à la fin de session, donc l'ancrage ne bouge pas.
+            self._injector.set_monitor(self._injection_geometry())
             return
         # Contrôle exclusif (piloté par le viewer).
         if msg_type == "lock_input":

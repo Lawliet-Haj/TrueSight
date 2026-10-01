@@ -202,6 +202,10 @@ class User(db.Model):
     role: Mapped[str] = mapped_column(Text, default="viewer", nullable=False)
     mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Codes de secours de la double authentification (cf. mfa_recovery) : liste
+    # d'EMPREINTES SHA-256, jamais les codes. Un code utilisé est retiré. NULL
+    # pour un compte activé avant leur introduction : zéro code.
+    mfa_recovery_codes: Mapped[list | None] = mapped_column(JSONType)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Préférences UI par utilisateur (JSON souple). Ex. {"tab_order": [...]} pour
     # l'ordre des onglets de la fiche poste. Peut être NULL sur d'anciennes lignes.

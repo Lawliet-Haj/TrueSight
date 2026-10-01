@@ -84,6 +84,32 @@
 
       <!-- Bloc désactivation (MFA activé) -->
       <div id="mfa-enabled-block" class="hidden">
+        <!-- Codes de secours : le seul recours si le téléphone est perdu. -->
+        <div class="mfa-rc">
+          <h3 style="margin:0 0 6px">Codes de secours</h3>
+          <p class="sub" id="mfa-rc-status"></p>
+          <div id="mfa-rc-panel" class="mfa-rc-panel hidden">
+            <p><strong>Notez ces codes maintenant</strong> : ils ne seront plus jamais
+              affichés. Chacun ne sert qu'une fois, à la place du code du téléphone.</p>
+            <ol id="mfa-rc-list" class="mfa-rc-list"></ol>
+            <div class="form-actions">
+              <button type="button" class="btn" id="mfa-rc-copy">Copier</button>
+              <button type="button" class="btn go" id="mfa-rc-done">J'ai noté mes codes</button>
+              <span class="form-msg" id="mfa-rc-copy-msg"></span>
+            </div>
+          </div>
+          <form id="mfa-rc-form" class="set-form">
+            <div class="field">
+              <label for="mfa-rc-pw">Mot de passe (pour générer de nouveaux codes)</label>
+              <input type="password" id="mfa-rc-pw" autocomplete="current-password" required>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn">Générer de nouveaux codes</button>
+              <span class="form-msg" id="mfa-rc-msg"></span>
+            </div>
+          </form>
+        </div>
+
         <form id="mfa-disable-form" class="set-form">
           <div class="field">
             <label for="mfa-pw">Mot de passe (pour désactiver)</label>

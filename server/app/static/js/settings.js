@@ -1,6 +1,7 @@
-// TrueSight — page Réglages : changement de mot de passe + activation/désactivation MFA.
+// TrueSight — page Réglages : changement de mot de passe + activation/désactivation MFA
+// + codes de secours.
 // API : POST /api/v1/settings/password, GET /api/v1/settings/mfa,
-//        POST /api/v1/settings/mfa/{setup,enable,disable}.
+//        POST /api/v1/settings/mfa/{setup,enable,disable,recovery-codes}.
 (function () {
   "use strict";
 
@@ -66,7 +67,47 @@
   var enabledBlock = $("mfa-enabled-block");
   var setup = $("mfa-setup");
 
-  function renderState(enabled) {
+  // Codes de secours : compteur, et affichage UNIQUE des codes neufs.
+  var rcStatus = $("mfa-rc-status");
+  var rcPanel = $("mfa-rc-panel");
+  var rcList = $("mfa-rc-list");
+  var rcShown = [];
+
+  function renderRecovery(remaining) {
+    if (!rcStatus) return;
+    if (remaining > 0) {
+      rcStatus.className = "sub";
+      rcStatus.textContent = "Il vous reste " + remaining + " code" + (remaining > 1 ? "s" : "") +
+        " de secours. Ils remplacent le code du téléphone si vous le perdez.";
+    } else {
+      rcStatus.className = "sub mfa-rc-warn";
+      rcStatus.textContent = "Aucun code de secours : si vous perdez votre téléphone, vous ne " +
+        "pourrez plus vous connecter. Générez-en maintenant.";
+    }
+  }
+
+  function showCodes(codes) {
+    if (!rcPanel || !rcList || !codes || !codes.length) return;
+    rcShown = codes.slice();
+    rcList.innerHTML = "";
+    codes.forEach(function (c) {
+      var li = document.createElement("li");
+      li.textContent = c;
+      rcList.appendChild(li);
+    });
+    clearMsg($("mfa-rc-copy-msg"));
+    rcPanel.classList.remove("hidden");
+    renderRecovery(codes.length);
+  }
+
+  function hideCodes() {
+    // On efface aussi la liste : les codes ne doivent pas traîner dans la page.
+    rcShown = [];
+    if (rcList) rcList.innerHTML = "";
+    if (rcPanel) rcPanel.classList.add("hidden");
+  }
+
+  function renderState(enabled, remaining) {
     if (enabled) {
       pill.className = "pill on";
       pillText.textContent = "Activé";
@@ -74,7 +115,9 @@
       help.textContent = "La double authentification est active : un code sera demandé à chaque connexion.";
       enabledBlock.classList.remove("hidden");
       disabledBlock.classList.add("hidden");
+      if (typeof remaining === "number") renderRecovery(remaining);
     } else {
+      hideCodes();
       pill.className = "pill off";
       pillText.textContent = "Désactivé";
       if (tag) tag.textContent = "inactif";
@@ -90,7 +133,7 @@
       var r = await fetch("/api/v1/settings/mfa", { headers: { Accept: "application/json" } });
       if (r.status === 401) { window.location.href = "/login"; return; }
       var d = await jsonOf(r);
-      renderState(!!d.enabled);
+      renderState(!!d.enabled, d.recovery_codes_remaining || 0);
     } catch (_) {
       // En cas d'échec réseau, on propose au moins l'activation.
       renderState(false);
@@ -128,7 +171,8 @@
         var d = await jsonOf(r);
         if (!r.ok) { setMsg(m, d.error || "Code invalide.", false); return; }
         enableForm.reset();
-        renderState(true);
+        renderState(true, (d.recovery_codes || []).length);
+        showCodes(d.recovery_codes);  // remis UNE fois, maintenant
       } catch (_) {
         setMsg(m, "Erreur réseau.", false);
       }
@@ -154,6 +198,42 @@
       }
     });
   }
+
+  var rcForm = $("mfa-rc-form");
+  if (rcForm) {
+    rcForm.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var m = $("mfa-rc-msg");
+      clearMsg(m);
+      try {
+        var r = await postJSON("/api/v1/settings/mfa/recovery-codes", { password: $("mfa-rc-pw").value });
+        if (r.status === 401) { setMsg(m, "Mot de passe incorrect.", false); return; }
+        var d = await jsonOf(r);
+        if (!r.ok) { setMsg(m, d.error || "Échec.", false); return; }
+        rcForm.reset();
+        showCodes(d.recovery_codes);
+        setMsg(m, "Nouveaux codes générés : les anciens ne valent plus rien.", true);
+      } catch (_) {
+        setMsg(m, "Erreur réseau.", false);
+      }
+    });
+  }
+
+  var rcCopy = $("mfa-rc-copy");
+  if (rcCopy) {
+    rcCopy.addEventListener("click", async function () {
+      var m = $("mfa-rc-copy-msg");
+      try {
+        await navigator.clipboard.writeText(rcShown.join(String.fromCharCode(10)));
+        setMsg(m, "Copiés.", true);
+      } catch (_) {
+        setMsg(m, "Copie impossible : recopiez-les à la main.", false);
+      }
+    });
+  }
+
+  var rcDone = $("mfa-rc-done");
+  if (rcDone) rcDone.addEventListener("click", hideCodes);
 
   loadStatus();
 
